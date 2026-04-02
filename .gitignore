@@ -5,6 +5,8 @@
 /test_pe_pb.py
 /venv
 /__pycache__
+__pycache__/
+.pytest_cache/
 # 环境变量文件
 .env
 /.cursor

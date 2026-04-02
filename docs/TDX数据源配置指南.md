@@ -271,3 +271,4 @@ fetcher = SmartMonitorDataFetcher(use_tdx=False)
 **更新日期：** 2024-11-04  
 **版本：** v1.0
 
+# 注意：本项目当前使用 `pytdx` 直连通达信行情服务器。文中旧的 `TDX_BASE_URL` 与 `/api/*` 示例仅作历史参考，实际请使用 `TDX_HOST` / `TDX_PORT` / `TDX_FALLBACK_HOSTS` 和 `python test_tdx_api.py`。

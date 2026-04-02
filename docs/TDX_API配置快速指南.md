@@ -244,3 +244,4 @@ LOW_PRICE_BULL_SCAN_INTERVAL=60    # 默认60秒，可改为30-300秒
 
 **文档版本**: v1.0  
 **更新日期**: 2024-12-12
+# 注意：本文档中的 REST 接口示例已废弃。项目现已改为使用 `pytdx` 直连通达信行情服务器，请优先参考根目录 [README.md](../README.md) 中的 `TDX_HOST` / `TDX_PORT` / `TDX_FALLBACK_HOSTS` 配置，以及执行 `python test_tdx_api.py` 做连通性诊断。

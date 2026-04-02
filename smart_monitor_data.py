@@ -15,24 +15,40 @@ from datetime import datetime, timedelta
 class SmartMonitorDataFetcher:
     """A股数据获取器（支持多数据源降级：TDX -> AKShare -> Tushare）"""
     
-    def __init__(self, use_tdx: bool = None, tdx_base_url: str = None):
+    def __init__(
+        self,
+        use_tdx: bool = None,
+        tdx_host: str = None,
+        tdx_port: int = None,
+        tdx_fallback_hosts: list[str] = None,
+        tdx_timeout: int = None,
+    ):
         """
         初始化数据获取器
         
         Args:
             use_tdx: 是否使用TDX数据源（可选，从配置读取）
-            tdx_base_url: TDX接口地址（可选，从配置读取）
+            tdx_host: TDX行情服务器地址（可选，从配置读取）
+            tdx_port: TDX行情服务器端口（可选，从配置读取）
+            tdx_fallback_hosts: 备用TDX服务器列表（可选，从配置读取）
+            tdx_timeout: TDX连接超时（可选，从配置读取）
         """
         self.logger = logging.getLogger(__name__)
         
         # TDX数据源配置
+        from config import TDX_CONFIG
+
         if use_tdx is None:
-            from config import TDX_CONFIG
             use_tdx = TDX_CONFIG.get('enabled', False)
         
-        if tdx_base_url is None:
-            from config import TDX_CONFIG
-            tdx_base_url = TDX_CONFIG.get('base_url', 'http://192.168.1.222:8181')
+        if tdx_host is None:
+            tdx_host = TDX_CONFIG.get('host')
+        if tdx_port is None:
+            tdx_port = TDX_CONFIG.get('port', 7709)
+        if tdx_fallback_hosts is None:
+            tdx_fallback_hosts = TDX_CONFIG.get('fallback_hosts', [])
+        if tdx_timeout is None:
+            tdx_timeout = TDX_CONFIG.get('timeout', 5)
         
         self.use_tdx = use_tdx
         self.tdx_fetcher = None
@@ -40,8 +56,13 @@ class SmartMonitorDataFetcher:
         if self.use_tdx:
             try:
                 from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
-                self.tdx_fetcher = SmartMonitorTDXDataFetcher(base_url=tdx_base_url)
-                self.logger.info(f"TDX数据源已启用: {tdx_base_url}")
+                self.tdx_fetcher = SmartMonitorTDXDataFetcher(
+                    host=tdx_host,
+                    port=tdx_port,
+                    fallback_hosts=tdx_fallback_hosts,
+                    timeout=tdx_timeout,
+                )
+                self.logger.info("TDX数据源已启用: pytdx 直连模式")
             except Exception as e:
                 self.logger.warning(f"TDX数据源初始化失败: {e}，将使用AKShare")
                 self.use_tdx = False

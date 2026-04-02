@@ -147,7 +147,7 @@ DEFAULT_MODEL_NAME="qwen-plus"  # 或 deepseek-chat, gpt-4o 等
 - ✅ **智能选股** - 股价<10元 + 净利润增长率≥65100% + 深圳A股
 - ✅ **策略监控** - 一键加入监控，自动跟踪持仓股票
 - ✅ **双重卖出信号** - 持股满5天自动提醒 + MA5下穿MA20技术信号
-- ✅ **实时监控** - 每分钟扫描，集成TDX API获取实时数据
+- ✅ **实时监控** - 每分钟扫描，集成 pytdx 直连获取实时数据
 - ✅ **钉钉通知** - 卖出信号自动发送钉钉消息
 - ✅ **自动移除** - 触发卖出条件后自动从监控列表移除
 - ✅ **历史记录** - 完整的监控历史和提醒记录
@@ -162,7 +162,11 @@ DEFAULT_MODEL_NAME="qwen-plus"  # 或 deepseek-chat, gpt-4o 等
 **配置说明：**
 ```bash
 # .env文件中添加
-TDX_BASE_URL=http://192.168.1.222:8181  # TDX API地址
+TDX_ENABLED=true
+TDX_HOST=
+TDX_PORT=7709
+TDX_TIMEOUT=5
+TDX_FALLBACK_HOSTS=119.147.212.81:7709,119.147.212.83:7709
 LOW_PRICE_BULL_SCAN_INTERVAL=60          # 扫描间隔（秒）
 LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 ```
@@ -170,9 +174,9 @@ LOW_PRICE_BULL_HOLDING_DAYS=5            # 持股天数限制
 详细说明请查看 [`docs/低价擒牛策略监控配置说明.md`](docs/低价擒牛策略监控配置说明.md)
 
 ---
-## 新增ai盯盘、实时监测板块获取股票行情引入本地TDX数据源
-- 项目地址https://github.com/oficcejo/tdx-api，请按照说明配置（默认docker），默认接口http://宿主机ip：8080
-- config.py中配置API接口地址
+## 新增ai盯盘、实时监测板块获取股票行情引入TDX直连数据源
+- 项目现已内置 pytdx 适配层，无需单独部署 tdx-api REST 服务
+- 可直接使用 `.env` 中的 `TDX_HOST` / `TDX_PORT` / `TDX_FALLBACK_HOSTS` 配置
 
 ## 新增按交易时段开启盯盘、监测
 
@@ -1536,22 +1540,20 @@ DEFAULT_INTERVAL = "1d"    # 默认数据间隔
    - **详细文档**：查看 `docs/Webhook通知配置指南.md` 获取完整配置教程
 
 11. **TDX数据源问题** ⭐ 2025-11-04 NEW
-   - **TDX服务无法访问**：
-     - 检查TDX Docker容器是否运行：`docker ps | grep tdx`
-     - 测试接口可用性：`curl "http://localhost:8080/api/quote?code=000001"`
-     - 检查防火墙设置（确保8080端口开放）
-     - 修改`.env`中的`TDX_BASE_URL`为正确的IP地址
+   - **TDX服务器连接失败**：
+     - 检查本机网络是否可访问外部行情服务器
+     - 运行诊断脚本：`python test_tdx_api.py`
+     - 修改`.env`中的`TDX_HOST`、`TDX_PORT`或`TDX_FALLBACK_HOSTS`
    - **TDX数据源未启用**：
      - 确认`.env`中已配置：`TDX_ENABLED=true`
      - 确认`smart_monitor_tdx_data.py`文件存在
      - 重启应用生效
    - **频繁降级到其他数据源**：
-     - 系统会自动降级到AKShare，无需干预
-     - 如频繁降级，检查TDX服务状态
-     - 查看日志：`docker logs tdx-api`
+      - 系统会自动降级到AKShare，无需干预
+      - 如频繁降级，优先检查 `python test_tdx_api.py` 的输出
    - **详细文档**：
-     - [TDX数据源快速配置.md](docs/TDX数据源快速配置.md)
-     - [TDX数据源集成完成说明.md](docs/TDX数据源集成完成说明.md)
+      - [TDX数据源快速配置.md](docs/TDX数据源快速配置.md)
+      - [TDX数据源集成完成说明.md](docs/TDX数据源集成完成说明.md)
 
 12. **智策板块分析问题** ⭐️ 全新功能
    - **数据获取失败**：
@@ -1600,9 +1602,9 @@ docker logs -f agentsstock1
 ### 相关文档
 
 **TDX数据源文档** ⭐ 2025-11-04 NEW：
-- [TDX数据源快速配置.md](docs/TDX数据源快速配置.md) - TDX本地化数据源配置指南
-- [TDX数据源集成完成说明.md](docs/TDX数据源集成完成说明.md) - TDX集成技术说明
-- [TDX API项目地址](https://github.com/oficcejo/tdx-api) - 通达信API项目
+- [TDX数据源快速配置.md](docs/TDX数据源快速配置.md) - pytdx 直连配置指南
+- [TDX数据源集成完成说明.md](docs/TDX数据源集成完成说明.md) - TDX 适配层集成说明
+- [pytdx PyPI](https://pypi.org/project/pytdx/) - pytdx 依赖安装说明
 
 **通知系统文档** ⭐️：
 - [Webhook通知配置指南.md](docs/Webhook通知配置指南.md) - Webhook完整配置教程

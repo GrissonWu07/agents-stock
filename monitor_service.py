@@ -11,6 +11,7 @@ from monitor_db import monitor_db
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status
 from notification_service import notification_service
+from config import TDX_CONFIG
 
 # 导入TDX数据源（如果可用）
 try:
@@ -31,14 +32,18 @@ class StockMonitorService:
         self.use_tdx = False
         
         # 从环境变量获取TDX配置
-        tdx_enabled = os.getenv('TDX_ENABLED', 'false').lower() == 'true'
-        tdx_base_url = os.getenv('TDX_BASE_URL', 'http://192.168.1.222:8181')
+        tdx_enabled = TDX_CONFIG.get('enabled', False)
         
         if tdx_enabled and TDX_AVAILABLE:
             try:
-                self.tdx_fetcher = SmartMonitorTDXDataFetcher(base_url=tdx_base_url)
+                self.tdx_fetcher = SmartMonitorTDXDataFetcher(
+                    host=TDX_CONFIG.get('host'),
+                    port=TDX_CONFIG.get('port', 7709),
+                    fallback_hosts=TDX_CONFIG.get('fallback_hosts', []),
+                    timeout=TDX_CONFIG.get('timeout', 5),
+                )
                 self.use_tdx = True
-                logging.info(f"✅ TDX数据源已启用: {tdx_base_url}")
+                logging.info("✅ TDX数据源已启用: pytdx 直连模式")
             except Exception as e:
                 logging.warning(f"TDX数据源初始化失败，将使用默认数据源: {e}")
         

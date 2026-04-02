@@ -305,3 +305,4 @@ WEBHOOK_KEYWORD=股票
 ---
 
 **提示**: 如有问题，请查看项目 [README.md](../README.md) 或联系技术支持。
+# 注意：本文档原先面向 `tdx-api` REST 服务。当前项目已经内置 `pytdx` 适配层，不再要求单独部署 REST 服务；请优先使用 `.env` 里的 `TDX_HOST` / `TDX_PORT` / `TDX_FALLBACK_HOSTS` 配置，并运行 `python test_tdx_api.py` 进行诊断。

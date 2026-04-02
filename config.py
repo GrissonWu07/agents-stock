@@ -26,8 +26,15 @@ MINIQMT_CONFIG = {
     'port': int(os.getenv("MINIQMT_PORT", "58610")),
 }
 
-# TDX股票数据API配置项目地址github.com/oficcejo/tdx-api
+# TDX 股票数据源配置（使用 pytdx 直连通达信行情服务器）
 TDX_CONFIG = {
     'enabled': os.getenv("TDX_ENABLED", "false").lower() == "true",
-    'base_url': os.getenv("TDX_BASE_URL", "http://192.168.1.222:8181"),
+    'host': os.getenv("TDX_HOST", "").strip() or None,
+    'port': int(os.getenv("TDX_PORT", "7709")),
+    'timeout': int(os.getenv("TDX_TIMEOUT", "5")),
+    'fallback_hosts': [
+        item.strip()
+        for item in os.getenv("TDX_FALLBACK_HOSTS", "").split(",")
+        if item.strip()
+    ],
 }

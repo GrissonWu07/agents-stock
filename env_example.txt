@@ -10,11 +10,13 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 # Tushare数据源配置（备用数据源）
 TUSHARE_TOKEN=your_tushare_token_here
 
-# TDX股票数据API配置（优先数据源）
+# TDX股票数据源配置（优先数据源，使用pytdx直连）
 # 启用TDX数据源：true=启用，false=禁用（使用AKShare）
 TDX_ENABLED=false
-# TDX接口地址
-TDX_BASE_URL=http://192.168.1.222:8181
+TDX_HOST=
+TDX_PORT=7709
+TDX_TIMEOUT=5
+TDX_FALLBACK_HOSTS=119.147.212.81:7709,119.147.212.83:7709
 
 # MiniQMT量化交易配置
 # 启用MiniQMT：true=启用真实交易，false=使用模拟交易

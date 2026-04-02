@@ -1,72 +1,131 @@
-# 1. 删除带 \r 的旧文件
-rm -f /www/wwwroot/aiagents-stock/stm /www/wwwroot/aiagents-stock/stm.py
-
-# 2. 重新写入（纯 Unix 换行）
-cat > /www/wwwroot/aiagents-stock/stm << 'EOF'
 #!/usr/bin/env python3
-import os, time, signal, subprocess, psutil
+"""
+Simple Streamlit process manager.
 
-APP_NAME  = "app.py"
-VENV_PATH = "/www/wwwroot/aiagents-stock/venv"
-APP_PATH  = "/www/wwwroot/aiagents-stock"
-PORT      = 8501
-STR = os.path.join(VENV_PATH, "bin", "streamlit")
-LOG = os.path.join(APP_PATH, "app.log")
+This replaces an old shell snippet that had been accidentally saved as a
+Python file, which broke repository-wide compile checks.
+"""
 
-def is_run():
-    for p in psutil.process_iter(['cmdline']):
-        if p.info['cmdline'] and 'streamlit' in ' '.join(p.info['cmdline']) and 'run' in p.info['cmdline']:
-            return p.pid
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - optional runtime dependency
+    psutil = None
+
+
+APP_NAME = "app.py"
+APP_PATH = Path(__file__).resolve().parent
+PORT = 8501
+
+
+def _streamlit_executable() -> str:
+    venv_root = APP_PATH / "venv"
+    windows_candidate = venv_root / "Scripts" / "streamlit.exe"
+    unix_candidate = venv_root / "bin" / "streamlit"
+
+    if windows_candidate.exists():
+        return str(windows_candidate)
+    if unix_candidate.exists():
+        return str(unix_candidate)
+    return "streamlit"
+
+
+def _log_path() -> Path:
+    return APP_PATH / "app.log"
+
+
+def is_running() -> int | None:
+    if psutil is None:
+        return None
+
+    for process in psutil.process_iter(["cmdline"]):
+        cmdline = process.info.get("cmdline") or []
+        joined = " ".join(cmdline)
+        if "streamlit" in joined and "run" in cmdline and APP_NAME in joined:
+            return process.pid
     return None
 
-def start():
-    if is_run():
-        print("⚠️  已在运行"); return
+
+def start() -> None:
+    if is_running():
+        print("already running")
+        return
+
+    streamlit_cmd = _streamlit_executable()
+    command = [
+        streamlit_cmd,
+        "run",
+        APP_NAME,
+        "--server.port",
+        str(PORT),
+        "--server.address",
+        "0.0.0.0",
+        "--server.headless",
+        "true",
+    ]
+
     os.chdir(APP_PATH)
-    with open(LOG, "a") as f:
-        subprocess.Popen(["nohup", STR, "run", APP_NAME,
-                          "--server.port", str(PORT),
-                          "--server.address", "0.0.0.0",
-                          "--server.headless", "true"],
-                         stdout=f, stderr=f, preexec_fn=os.setsid)
+    with _log_path().open("a", encoding="utf-8") as log_file:
+        creationflags = 0
+        popen_kwargs = {}
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["preexec_fn"] = os.setsid
+
+        subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=log_file,
+            creationflags=creationflags,
+            **popen_kwargs,
+        )
+
     time.sleep(3)
-    print("✅ 启动成功 | http://服务器IP:8501")
+    print(f"started on http://127.0.0.1:{PORT}")
 
-def stop():
-    pid = is_run()
+
+def stop() -> None:
+    pid = is_running()
     if not pid:
-        print("⚠️  未运行"); return
-    os.kill(pid, signal.SIGTERM)
-    time.sleep(2)
-    if is_run():
-        os.kill(pid, signal.SIGKILL)
-    print("✅ 已停止")
+        print("not running")
+        return
 
-menu = """1) 启动  2) 停止  3) 重启  4) 状态  5) 日志  0) 退出"""
-def main():
-    while True:
-        print(menu)
-        c = input("选 > ").strip()
-        if c == '1': start()
-        elif c == '2': stop()
-        elif c == '3': stop(); time.sleep(2); start()
-        elif c == '4':
-            pid = is_run()
-            print("✅ 运行中" if pid else "❌ 未运行")
-        elif c == '5': os.system("tail -n 50 " + LOG)
-        elif c == '0': break
-        else: print("无效")
-        input("\n回车继续 …")
+    if os.name == "nt":
+        os.kill(pid, signal.SIGTERM)
+    else:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    print("stopped")
 
-if __name__ == "__main__": main()
-EOF
 
-# 3. 赋可执行权限
-chmod +x /www/wwwroot/aiagents-stock/stm
+def status() -> None:
+    pid = is_running()
+    if pid:
+        print(f"running (pid={pid})")
+    else:
+        print("not running")
 
-# 4. 确保 PATH 包含当前目录（已加可忽略）
-echo 'export PATH="/www/wwwroot/aiagents-stock:$PATH"' >> ~/.bashrc
-source ~/.bashrc
 
-# 5. 运行
-stm
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in {"start", "stop", "status"}:
+        print("usage: python stm.py [start|stop|status]")
+        return 1
+
+    action = sys.argv[1]
+    if action == "start":
+        start()
+    elif action == "stop":
+        stop()
+    else:
+        status()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
