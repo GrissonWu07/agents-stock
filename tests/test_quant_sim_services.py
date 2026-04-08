@@ -19,6 +19,7 @@ def test_candidate_pool_service_adds_manual_candidate(tmp_path):
     assert len(rows) == 1
     assert rows[0]["stock_code"] == "000001"
     assert rows[0]["source"] == "profit_growth"
+    assert rows[0]["sources"] == ["profit_growth"]
 
 
 def test_signal_center_creates_pending_and_observed_signals(tmp_path):

@@ -35,3 +35,16 @@ class QuantSimEngine:
         for candidate in self.candidate_pool.list_candidates(status="active"):
             signals.append(self.analyze_candidate(candidate))
         return signals
+
+    def analyze_positions(self) -> list[dict]:
+        signals = []
+        for position in self.portfolio.list_positions():
+            candidate = self.candidate_pool.db.get_candidate(position["stock_code"]) or {
+                "stock_code": position["stock_code"],
+                "stock_name": position.get("stock_name"),
+                "source": "manual",
+                "sources": ["manual"],
+            }
+            decision = self.adapter.analyze_position(candidate, position)
+            signals.append(self.signal_center.create_signal(candidate, decision))
+        return signals

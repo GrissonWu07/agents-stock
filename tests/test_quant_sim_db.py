@@ -21,6 +21,35 @@ def test_add_candidate_records_source_and_status(tmp_path):
     assert rows[0]["stock_name"] == "浦发银行"
     assert rows[0]["source"] == "main_force"
     assert rows[0]["status"] == "active"
+    assert rows[0]["sources"] == ["main_force"]
+
+
+def test_add_candidate_preserves_multiple_sources(tmp_path):
+    db = QuantSimDB(tmp_path / "quant_sim.db")
+
+    db.add_candidate(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "source": "main_force",
+            "latest_price": 10.52,
+        }
+    )
+    db.add_candidate(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "source": "value_stock",
+            "latest_price": 10.88,
+        }
+    )
+
+    rows = db.get_candidates()
+
+    assert len(rows) == 1
+    assert rows[0]["source"] == "main_force"
+    assert rows[0]["latest_price"] == 10.88
+    assert rows[0]["sources"] == ["main_force", "value_stock"]
 
 
 def test_confirm_buy_creates_simulated_position(tmp_path):

@@ -89,7 +89,8 @@ def display_quant_sim() -> None:
             st.markdown("---")
             for candidate in candidates:
                 with st.expander(f"{candidate['stock_code']} - {candidate.get('stock_name') or '未命名'}"):
-                    st.write(f"来源策略：{_format_source(candidate.get('source', 'manual'))}")
+                    sources = candidate.get("sources") or [candidate.get("source", "manual")]
+                    st.write(f"来源策略：{' / '.join(_format_source(source) for source in sources)}")
                     st.write(f"参考价格：{candidate.get('latest_price', 0) or 0:.2f}")
                     if st.button("立即分析该标的", key=f"analyze_candidate_{candidate['id']}"):
                         signal = engine.analyze_candidate(candidate)
@@ -152,25 +153,33 @@ def display_quant_sim() -> None:
                     if signal["action"] == "BUY":
                         with col1:
                             if st.button("✅ 标记已买入", key=f"confirm_buy_{signal['id']}"):
-                                portfolio_service.confirm_buy(
-                                    signal["id"],
-                                    price=price,
-                                    quantity=int(quantity),
-                                    note=note or "已手工买入",
-                                )
-                                st.success("✅ 已更新模拟持仓")
-                                st.rerun()
+                                try:
+                                    portfolio_service.confirm_buy(
+                                        signal["id"],
+                                        price=price,
+                                        quantity=int(quantity),
+                                        note=note or "已手工买入",
+                                    )
+                                except ValueError as exc:
+                                    st.error(f"执行失败：{exc}")
+                                else:
+                                    st.success("✅ 已更新模拟持仓")
+                                    st.rerun()
                     else:
                         with col1:
                             if st.button("✅ 标记已卖出", key=f"confirm_sell_{signal['id']}"):
-                                portfolio_service.confirm_sell(
-                                    signal["id"],
-                                    price=price,
-                                    quantity=int(quantity),
-                                    note=note or "已手工卖出",
-                                )
-                                st.success("✅ 已更新模拟持仓")
-                                st.rerun()
+                                try:
+                                    portfolio_service.confirm_sell(
+                                        signal["id"],
+                                        price=price,
+                                        quantity=int(quantity),
+                                        note=note or "已手工卖出",
+                                    )
+                                except ValueError as exc:
+                                    st.error(f"执行失败：{exc}")
+                                else:
+                                    st.success("✅ 已更新模拟持仓")
+                                    st.rerun()
 
                     with col2:
                         if st.button("⏰ 延后处理", key=f"delay_signal_{signal['id']}"):

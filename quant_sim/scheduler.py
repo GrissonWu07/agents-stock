@@ -19,10 +19,11 @@ class QuantSimScheduler:
 
     def run_once(self) -> dict[str, int]:
         candidates = self.engine.candidate_pool.list_candidates(status="active")
-        signals = self.engine.analyze_active_candidates()
         positions = self.portfolio.list_positions()
+        candidate_signals = self.engine.analyze_active_candidates()
+        position_signals = self.engine.analyze_positions()
         return {
             "candidates_scanned": len(candidates),
-            "signals_created": len(signals),
+            "signals_created": len(candidate_signals) + len(position_signals),
             "positions_checked": len(positions),
         }
