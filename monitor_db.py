@@ -1,3 +1,4 @@
+from console_utils import safe_print as print
 import sqlite3
 import json
 from datetime import datetime

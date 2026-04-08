@@ -3,6 +3,7 @@
 整合各智能体分析，生成板块多空/轮动/热度预测
 """
 
+from console_utils import safe_print as print
 from sector_strategy_agents import SectorStrategyAgents
 from sector_strategy_db import SectorStrategyDatabase
 from deepseek_client import DeepSeekClient

@@ -3,6 +3,7 @@
 使用StockAPI获取龙虎榜数据
 """
 
+from console_utils import safe_print as print
 import requests
 import pandas as pd
 from datetime import datetime, timedelta

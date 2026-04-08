@@ -1,3 +1,4 @@
+from console_utils import safe_print as print
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart

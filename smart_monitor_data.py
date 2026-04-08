@@ -4,6 +4,7 @@
 支持降级到tushare作为备用数据源
 """
 
+from console_utils import safe_print as print
 import logging
 import os
 import akshare as ak

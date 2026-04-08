@@ -4,6 +4,7 @@
 提供持仓股票和分析历史的数据库操作接口
 """
 
+from console_utils import safe_print as print
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple

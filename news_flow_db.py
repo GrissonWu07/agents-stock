@@ -3,6 +3,7 @@
 用于存储和管理新闻流量监测数据
 包含：快照、新闻、情绪、预警、AI分析、定时任务日志
 """
+from console_utils import safe_print as print
 import sqlite3
 import json
 import logging

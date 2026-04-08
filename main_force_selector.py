@@ -10,6 +10,7 @@ import pandas as pd
 import pywencai
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
+from console_utils import safe_print as print
 import time
 
 class MainForceStockSelector:

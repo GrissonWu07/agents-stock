@@ -7,6 +7,9 @@
 /__pycache__
 __pycache__/
 .pytest_cache/
+app.log
+app.err.log
+test_stress_output/
 # 环境变量文件
 .env
 /.cursor

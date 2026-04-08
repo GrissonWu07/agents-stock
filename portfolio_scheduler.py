@@ -4,6 +4,7 @@
 提供定时任务调度功能，在设定时间自动执行持仓批量分析
 """
 
+from console_utils import safe_print as print
 import schedule
 import threading
 import time

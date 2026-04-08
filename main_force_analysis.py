@@ -11,6 +11,7 @@ from main_force_selector import main_force_selector
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
 from deepseek_client import DeepSeekClient
+from console_utils import safe_print as print
 import time
 import json
 import config

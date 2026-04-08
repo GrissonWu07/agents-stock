@@ -2,6 +2,7 @@
 智策报告PDF导出模块
 """
 
+from console_utils import safe_print as print
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle

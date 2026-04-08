@@ -3,6 +3,7 @@
 用于读取和保存.env配置文件
 """
 
+from console_utils import safe_print as print
 import os
 from pathlib import Path
 from typing import Dict, Any

@@ -3,6 +3,7 @@
 使用akshare获取个股最近8期季度财务报告
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import sys
 import io

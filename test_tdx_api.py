@@ -5,6 +5,7 @@ pytdx 连通性诊断脚本
 用于验证 TDX 配置和 pytdx 数据获取是否正常
 """
 
+from console_utils import safe_print as print
 import sys
 from pprint import pprint
 

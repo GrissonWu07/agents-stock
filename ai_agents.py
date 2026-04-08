@@ -1,3 +1,4 @@
+from console_utils import safe_print as print
 from deepseek_client import DeepSeekClient
 from typing import Dict, Any
 import time

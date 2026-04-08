@@ -3,6 +3,7 @@
 核心公式：接盘总量 = 流量 × 转化率 × 客单价
 实现流量为王理念的量化分析
 """
+from console_utils import safe_print as print
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple

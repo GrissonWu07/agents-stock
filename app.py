@@ -1,3 +1,8 @@
+from console_utils import configure_standard_streams, install_safe_print
+
+configure_standard_streams()
+install_safe_print()
+
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px

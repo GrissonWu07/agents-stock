@@ -6,6 +6,7 @@ This replaces an old shell snippet that had been accidentally saved as a
 Python file, which broke repository-wide compile checks.
 """
 
+from console_utils import safe_print as print
 import os
 import signal
 import subprocess

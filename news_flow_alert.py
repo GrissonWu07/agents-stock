@@ -2,6 +2,7 @@
 新闻流量预警系统模块
 实现6种预警类型和通知推送
 """
+from console_utils import safe_print as print
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple

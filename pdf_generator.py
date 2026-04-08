@@ -5,6 +5,7 @@ PDF报告生成器
 只生成PDF格式的完整分析报告
 """
 
+from console_utils import safe_print as print
 import streamlit as st
 import base64
 from datetime import datetime

@@ -1,3 +1,4 @@
+from console_utils import safe_print as print
 import yfinance as yf
 import akshare as ak
 import pandas as pd

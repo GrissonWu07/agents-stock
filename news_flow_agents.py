@@ -3,6 +3,7 @@
 使用DeepSeek进行AI驱动的分析
 包含：板块影响分析、股票推荐、风险评估、投资建议
 """
+from console_utils import safe_print as print
 import json
 import logging
 import time

@@ -4,6 +4,7 @@
 提供持仓股票管理和批量分析功能
 """
 
+from console_utils import safe_print as print
 import time
 from typing import List, Dict, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed

@@ -3,6 +3,7 @@
 包含四个专业分析师智能体
 """
 
+from console_utils import safe_print as print
 from deepseek_client import DeepSeekClient
 from typing import Dict, Any
 import time

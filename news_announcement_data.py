@@ -3,6 +3,7 @@
 使用pywencai获取股票的最新新闻和公告信息
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import pywencai
 import sys

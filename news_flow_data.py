@@ -3,6 +3,7 @@
 用于获取各大平台的热点新闻和流量数据
 支持22个平台，包含排名、K值计算等功能
 """
+from console_utils import safe_print as print
 import requests
 import logging
 from datetime import datetime, timedelta

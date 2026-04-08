@@ -3,6 +3,7 @@
 整合数据获取、AI分析、结果生成的核心引擎
 """
 
+from console_utils import safe_print as print
 from longhubang_data import LonghubangDataFetcher
 from longhubang_db import LonghubangDatabase
 from longhubang_agents import LonghubangAgents

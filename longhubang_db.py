@@ -3,6 +3,7 @@
 用于存储龙虎榜历史数据和分析报告
 """
 
+from console_utils import safe_print as print
 import sqlite3
 from datetime import datetime
 import json

@@ -3,6 +3,7 @@
 生成康波周期 × 美林投资时钟 × 中国政策分析的完整PDF报告
 """
 
+from console_utils import safe_print as print
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle

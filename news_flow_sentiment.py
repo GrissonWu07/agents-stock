@@ -2,6 +2,7 @@
 新闻流量情绪分析模块
 实现情绪指数、情绪分类、流量阶段判断、情绪动量计算
 """
+from console_utils import safe_print as print
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple

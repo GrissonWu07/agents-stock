@@ -4,6 +4,7 @@
 用于康波周期和美林投资时钟分析
 """
 
+from console_utils import safe_print as print
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta

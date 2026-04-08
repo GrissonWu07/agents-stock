@@ -6,6 +6,7 @@ MiniQMT量化交易接口
 支持自动下单、仓位管理、策略执行等功能
 """
 
+from console_utils import safe_print as print
 import json
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime

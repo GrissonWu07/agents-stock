@@ -7,6 +7,10 @@ AI股票分析系统启动脚本
 import subprocess
 import sys
 import os
+from console_utils import configure_standard_streams, install_safe_print
+
+configure_standard_streams()
+install_safe_print()
 
 def check_requirements():
     """检查必要的依赖是否安装"""

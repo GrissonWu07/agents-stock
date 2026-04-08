@@ -3,6 +3,7 @@
 协调数据采集与AI分析，生成完整的宏观周期分析报告
 """
 
+from console_utils import safe_print as print
 from macro_cycle_agents import MacroCycleAgents
 from macro_cycle_data import MacroCycleDataFetcher
 from typing import Dict, Any

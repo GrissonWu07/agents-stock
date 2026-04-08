@@ -3,6 +3,7 @@
 对龙虎榜上榜股票进行综合评分排名
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 from typing import Dict, List
 from collections import Counter

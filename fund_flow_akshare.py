@@ -3,6 +3,7 @@
 使用akshare的stock_individual_fund_flow接口获取个股资金流向
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import sys
 import io

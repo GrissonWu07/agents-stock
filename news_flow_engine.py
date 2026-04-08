@@ -3,6 +3,7 @@
 基于"流量为王"理念的短线炒股指导系统
 整合数据获取、流量模型、情绪分析、AI分析、预警系统
 """
+from console_utils import safe_print as print
 import logging
 import time
 from datetime import datetime, timedelta

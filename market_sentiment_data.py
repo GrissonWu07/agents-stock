@@ -3,6 +3,7 @@
 使用akshare获取市场情绪相关指标，包括ARBR、恐慌指数、市场资金情绪等
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import numpy as np
 import akshare as ak

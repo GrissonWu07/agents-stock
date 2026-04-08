@@ -2,6 +2,7 @@
 新闻流量定时任务调度模块
 实现三种定时任务：热点同步（30分钟）、预警生成（1小时）、深度分析（2小时）
 """
+from console_utils import safe_print as print
 import schedule
 import threading
 import time

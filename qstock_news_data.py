@@ -3,6 +3,7 @@
 使用akshare获取股票的最新新闻信息（替代qstock）
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import sys
 import io

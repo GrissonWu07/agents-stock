@@ -1,3 +1,4 @@
+from console_utils import safe_print as print
 import time
 import threading
 import schedule

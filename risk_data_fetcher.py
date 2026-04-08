@@ -6,6 +6,7 @@
 3. 近期重要事件
 """
 
+from console_utils import safe_print as print
 import pywencai
 import pandas as pd
 from typing import Dict, Any

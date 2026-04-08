@@ -3,6 +3,7 @@
 包含四位专业分析师：康波周期分析师、美林时钟分析师、中国政策分析师、首席宏观策略师
 """
 
+from console_utils import safe_print as print
 from deepseek_client import DeepSeekClient
 from typing import Dict, Any
 import time

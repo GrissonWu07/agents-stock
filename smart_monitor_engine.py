@@ -3,6 +3,7 @@
 整合DeepSeek AI决策、数据获取、交易执行、通知等功能
 """
 
+from console_utils import safe_print as print
 import logging
 import time
 from typing import Dict, List, Optional

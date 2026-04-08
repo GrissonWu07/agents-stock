@@ -3,6 +3,7 @@
 记录AI决策、交易记录、监控配置等
 """
 
+from console_utils import safe_print as print
 import sqlite3
 import logging
 from typing import Dict, List, Optional

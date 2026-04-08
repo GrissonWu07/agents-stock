@@ -5,6 +5,7 @@
 使用pywencai获取低估值优质股票
 """
 
+from console_utils import safe_print as print
 import pandas as pd
 import pywencai
 from datetime import datetime

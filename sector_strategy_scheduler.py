@@ -3,6 +3,7 @@
 支持定时运行板块策略分析并发送邮件通知
 """
 
+from console_utils import safe_print as print
 import schedule
 import threading
 import time

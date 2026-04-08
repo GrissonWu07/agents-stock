@@ -3,6 +3,7 @@
 支持AI决策标注、实时更新
 """
 
+from console_utils import safe_print as print
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd

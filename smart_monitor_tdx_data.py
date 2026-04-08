@@ -3,6 +3,7 @@
 使用 pytdx 直连通达信行情服务器获取实时行情和技术指标
 """
 
+from console_utils import safe_print as print
 import logging
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple

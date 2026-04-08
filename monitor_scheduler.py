@@ -5,6 +5,7 @@
 支持交易日交易时间自动启动关闭监测服务
 """
 
+from console_utils import safe_print as print
 import schedule
 import time
 import threading

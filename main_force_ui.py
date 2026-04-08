@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
+from console_utils import safe_print as print
 import pandas as pd
 
 def display_main_force_selector():
