@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -67,7 +66,6 @@ def run_macro_analysis() -> None:
         engine = MacroAnalysisEngine(model=config.DEFAULT_MODEL_NAME)
         result = engine.run_full_analysis(progress_callback=callback)
         st.session_state["macro_analysis_result"] = result
-        time.sleep(0.8)
         st.rerun()
     except Exception as exc:
         st.error(f"运行失败: {exc}")

@@ -28,7 +28,6 @@ class LonghubangAgents:
         - 研判游资对个股的态度
         """
         print("🎯 游资行为分析师正在分析...")
-        time.sleep(1)
         
         # 构建游资统计信息
         youzi_info = ""
@@ -126,7 +125,6 @@ class LonghubangAgents:
         - 识别次日大概率上涨的股票
         """
         print("📈 个股潜力分析师正在分析...")
-        time.sleep(1)
         
         # 构建股票统计信息
         stock_info = ""
@@ -227,7 +225,6 @@ class LonghubangAgents:
         - 预判题材的持续性
         """
         print("🔥 题材追踪分析师正在分析...")
-        time.sleep(1)
         
         # 构建概念统计信息
         concept_info = ""
@@ -327,7 +324,6 @@ class LonghubangAgents:
         - 提供风险管理建议
         """
         print("⚠️ 风险控制专家正在分析...")
-        time.sleep(1)
         
         prompt = f"""
 你是一名资深的风险控制专家和反向思维大师，拥有20年的市场风险管理经验，擅长识别龙虎榜中的风险信号和资金陷阱。
@@ -422,7 +418,6 @@ class LonghubangAgents:
         - 提供具体操作策略
         """
         print("👔 首席策略师正在综合分析...")
-        time.sleep(1)
         
         # 整合所有分析师的分析结果
         analyses_text = ""

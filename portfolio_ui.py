@@ -9,14 +9,15 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict
-import time
 
 from portfolio_manager import portfolio_manager
 from portfolio_scheduler import portfolio_scheduler
+from streamlit_flash import queue_flash_message, render_flash_messages
 
 
 def display_portfolio_manager():
     """显示持仓管理主界面"""
+    render_flash_messages("portfolio_manager")
     
     st.markdown("## 📊 持仓定时分析")
     st.markdown("---")
@@ -123,8 +124,7 @@ def display_stock_card(stock: Dict):
             with col_del:
                 if st.button("🗑️", key=f"del_{code}", help="删除"):
                     portfolio_manager.delete_stock(stock_id)  # 使用stock_id而不是code
-                    st.success(f"已删除 {code}")
-                    time.sleep(0.5)
+                    queue_flash_message(st.session_state, "portfolio_manager", "success", f"已删除 {code}")
                     st.rerun()
         
         # 编辑表单（如果处于编辑状态）
@@ -162,8 +162,7 @@ def display_stock_card(stock: Dict):
                             auto_monitor=new_auto_monitor
                         )
                         del st.session_state[f"editing_{code}"]
-                        st.success("更新成功！")
-                        time.sleep(0.5)
+                        queue_flash_message(st.session_state, "portfolio_manager", "success", "更新成功！")
                         st.rerun()
                 
                 with col_cancel:
@@ -222,8 +221,7 @@ def display_add_stock_form():
                         note=note.strip() if note else None,
                         auto_monitor=auto_monitor
                     )
-                    st.success(f"✅ 已添加 {code} 到持仓列表")
-                    time.sleep(0.5)
+                    queue_flash_message(st.session_state, "portfolio_manager", "success", f"✅ 已添加 {code} 到持仓列表")
                     st.rerun()
                 except Exception as e:
                     st.error(f"添加失败: {str(e)}")
@@ -531,8 +529,7 @@ def display_scheduler_management():
                             if st.button("🗑️", key=f"del_time_{idx}", help="删除"):
                                 if len(schedule_times) > 1:
                                     portfolio_scheduler.remove_schedule_time(time_str)
-                                    st.success(f"已删除 {time_str}")
-                                    time.sleep(0.3)
+                                    queue_flash_message(st.session_state, "portfolio_manager", "success", f"已删除 {time_str}")
                                     st.rerun()
                                 else:
                                     st.error("至少保留一个定时时间")
@@ -554,8 +551,7 @@ def display_scheduler_management():
             if st.button("➕ 添加", type="primary", width='content'):
                 time_str = new_time.strftime("%H:%M")
                 if portfolio_scheduler.add_schedule_time(time_str):
-                    st.success(f"已添加 {time_str}")
-                    time.sleep(0.3)
+                    queue_flash_message(st.session_state, "portfolio_manager", "success", f"已添加 {time_str}")
                     st.rerun()
                 else:
                     st.warning(f"{time_str} 已存在")
@@ -607,8 +603,7 @@ def display_scheduler_management():
                     auto_sync_monitor=auto_sync_monitor,
                     send_notification=send_notification
                 )
-                st.success("配置已更新！")
-                time.sleep(0.5)
+                queue_flash_message(st.session_state, "portfolio_manager", "success", "配置已更新！")
                 st.rerun()
         
         with col_reset:
@@ -620,8 +615,7 @@ def display_scheduler_management():
                     auto_sync_monitor=True,
                     send_notification=True
                 )
-                st.success("已恢复默认配置！")
-                time.sleep(0.5)
+                queue_flash_message(st.session_state, "portfolio_manager", "success", "已恢复默认配置！")
                 st.rerun()
     
     st.markdown("---")
@@ -633,14 +627,12 @@ def display_scheduler_management():
         if is_running:
             if st.button("⏹️ 停止调度器", type="secondary", width='content'):
                 portfolio_scheduler.stop_scheduler()
-                st.success("调度器已停止")
-                time.sleep(0.5)
+                queue_flash_message(st.session_state, "portfolio_manager", "success", "调度器已停止")
                 st.rerun()
         else:
             if st.button("▶️ 启动调度器", type="primary", width='content'):
                 portfolio_scheduler.start_scheduler()
-                st.success("调度器已启动")
-                time.sleep(0.5)
+                queue_flash_message(st.session_state, "portfolio_manager", "success", "调度器已启动")
                 st.rerun()
     
     with col_btn2:

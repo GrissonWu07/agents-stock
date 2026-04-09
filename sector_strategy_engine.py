@@ -215,7 +215,6 @@ class SectorStrategyEngine:
         综合研判 - 整合各智能体的分析
         """
         print("  🤝 智能体团队正在综合讨论...")
-        time.sleep(2)
         
         # 收集各分析师的报告
         macro_analysis = agents_results.get("macro", {}).get("analysis", "")
@@ -284,7 +283,6 @@ class SectorStrategyEngine:
         生成最终预测 - 板块多空/轮动/热度
         """
         print("  📊 生成板块多空/轮动/热度预测...")
-        time.sleep(2)
         
         # 提取板块列表用于预测
         sectors_list = []

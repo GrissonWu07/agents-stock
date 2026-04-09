@@ -1,4 +1,5 @@
 import pandas as pd
+import threading
 
 from batch_deep_analysis import (
     enrich_batch_result_metadata,
@@ -73,12 +74,13 @@ def test_run_batch_deep_analysis_parallel_preserves_candidate_order():
         {"symbol": "600000", "name": "浦发银行"},
         {"symbol": "000001", "name": "平安银行"},
     ]
+    second_started = threading.Event()
 
     def fake_analyzer(symbol, period, enabled_analysts_config=None, selected_model=None):
-        import time
-
         if symbol == "600000":
-            time.sleep(0.05)
+            second_started.wait(timeout=1)
+        else:
+            second_started.set()
         return {
             "symbol": symbol,
             "success": True,

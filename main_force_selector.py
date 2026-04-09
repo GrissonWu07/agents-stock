@@ -108,7 +108,8 @@ class MainForceStockSelector:
                     failure_message = self._format_query_error(e)
                     failures.append(f"方案{i}: {failure_message}")
                     print(f"  ❌ 方案{i}失败: {failure_message}")
-                    time.sleep(1)
+                    if self._is_transient_query_error(e):
+                        time.sleep(1)
                     continue
             
             # 所有方案都失败
@@ -163,6 +164,27 @@ class MainForceStockSelector:
         if "NoneType" in message and "get" in message:
             return "问财未返回有效条件结果"
         return message
+
+    @staticmethod
+    def _is_transient_query_error(error: Exception) -> bool:
+        """Only back off on network-ish failures that may recover on retry."""
+        message = str(error).lower()
+        transient_markers = (
+            "timed out",
+            "timeout",
+            "connection",
+            "temporarily unavailable",
+            "too many requests",
+            "rate limit",
+            "proxy",
+            "remote end closed",
+            "reset by peer",
+            "bad gateway",
+            "service unavailable",
+        )
+        return isinstance(error, (TimeoutError, ConnectionError)) or any(
+            marker in message for marker in transient_markers
+        )
     
     def _convert_to_dataframe(self, result) -> pd.DataFrame:
         """转换问财返回结果为DataFrame"""

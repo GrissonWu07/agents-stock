@@ -13,6 +13,7 @@ import time
 import base64
 import os
 import config
+from streamlit_flash import queue_flash_message, render_flash_messages
 
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
@@ -1161,7 +1162,6 @@ def run_batch_analysis(stock_list, period, batch_mode="顺序分析"):
     st.session_state.batch_analysis_results = results
     st.session_state.batch_analysis_mode = batch_mode
 
-    time.sleep(1)
     progress_bar.empty()
 
     # 自动显示结果
@@ -1394,7 +1394,6 @@ def run_stock_analysis(symbol, period):
             st.warning(f"⚠️ 保存到数据库时出现错误: {str(e)}")
 
         status_text.text("✅ 分析完成！")
-        time.sleep(1)
         status_text.empty()
         progress_bar.empty()
 
@@ -1977,7 +1976,6 @@ def display_add_to_monitor_dialog(record):
                         st.session_state.show_monitor = True
                         st.session_state.monitor_jump_highlight = record['symbol']  # 标记要高亮显示的股票
 
-                        time.sleep(1.5)
                         st.rerun()
 
                     except Exception as e:
@@ -2160,6 +2158,7 @@ def display_record_detail(record_id):
 
 def display_config_manager():
     """显示环境配置管理界面"""
+    render_flash_messages("app_config")
     st.subheader("⚙️ 环境配置管理")
 
     st.markdown("""
@@ -2548,17 +2547,16 @@ def display_config_manager():
             if is_valid:
                 # 保存配置
                 if config_manager.write_env(st.session_state.temp_config):
-                    st.success("✅ 配置已保存到 .env 文件")
-                    st.info("ℹ️ 请重启应用使配置生效")
+                    queue_flash_message(st.session_state, "app_config", "success", "✅ 配置已保存到 .env 文件")
+                    queue_flash_message(st.session_state, "app_config", "info", "ℹ️ 请重启应用使配置生效")
 
                     # 尝试重新加载配置
                     try:
                         config_manager.reload_config()
-                        st.success("✅ 配置已重新加载")
+                        queue_flash_message(st.session_state, "app_config", "success", "✅ 配置已重新加载")
                     except Exception as e:
-                        st.warning(f"⚠️ 配置重新加载失败: {e}")
+                        queue_flash_message(st.session_state, "app_config", "warning", f"⚠️ 配置重新加载失败: {e}")
 
-                    time.sleep(2)
                     st.rerun()
                 else:
                     st.error("❌ 保存配置失败")

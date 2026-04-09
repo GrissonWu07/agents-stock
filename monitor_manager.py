@@ -7,7 +7,6 @@
 """
 
 import streamlit as st
-import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List
@@ -18,9 +17,11 @@ from monitor_service import monitor_service
 from notification_service import notification_service
 from stock_data import StockDataFetcher
 from miniqmt_interface import miniqmt, get_miniqmt_status, QuantStrategyConfig
+from streamlit_flash import queue_flash_message, render_flash_messages
 
 def display_monitor_manager():
     """显示监测管理主页面"""
+    render_flash_messages("monitor_manager")
     
     st.markdown("## 📊 股票监测管理")
     st.markdown("---")
@@ -490,19 +491,16 @@ def display_delete_confirm_dialog(stock_id: int):
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id
                     
-                    st.success("✅ 已成功删除监测")
+                    queue_flash_message(st.session_state, "monitor_manager", "success", "✅ 已成功删除监测")
                     st.balloons()
-                    time.sleep(0.8)  # 短暂延迟，让用户看到成功消息
                     st.rerun()
                 else:
-                    st.error("❌ 删除失败：股票不存在或已被删除")
-                    time.sleep(1)
+                    queue_flash_message(st.session_state, "monitor_manager", "error", "❌ 删除失败：股票不存在或已被删除")
                     if 'deleting_stock_id' in st.session_state:
                         del st.session_state.deleting_stock_id
                     st.rerun()
             except Exception as e:
-                st.error(f"❌ 删除失败：{str(e)}")
-                time.sleep(1)
+                queue_flash_message(st.session_state, "monitor_manager", "error", f"❌ 删除失败：{str(e)}")
                 if 'deleting_stock_id' in st.session_state:
                     del st.session_state.deleting_stock_id
                 st.rerun()
@@ -832,9 +830,8 @@ def display_scheduler_section():
                         post_market_minutes=post_market_minutes
                     )
                     
-                    st.success("✅ 设置已保存")
+                    queue_flash_message(st.session_state, "monitor_manager", "success", "✅ 设置已保存")
                     st.balloons()
-                    time.sleep(1)
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ 保存失败: {e}")
@@ -843,15 +840,13 @@ def display_scheduler_section():
             if status['scheduler_running']:
                 if st.button("⏹️ 停止调度器", width='stretch'):
                     scheduler.stop_scheduler()
-                    st.info("⏸️ 调度器已停止")
-                    time.sleep(0.5)
+                    queue_flash_message(st.session_state, "monitor_manager", "info", "⏸️ 调度器已停止")
                     st.rerun()
             else:
                 if enabled:
                     if st.button("▶️ 启动调度器", type="secondary", width='stretch'):
                         scheduler.start_scheduler()
-                        st.success("✅ 调度器已启动")
-                        time.sleep(0.5)
+                        queue_flash_message(st.session_state, "monitor_manager", "success", "✅ 调度器已启动")
                         st.rerun()
                 else:
                     st.button("▶️ 启动调度器", width='stretch', disabled=True)

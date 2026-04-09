@@ -107,3 +107,67 @@ def test_get_main_force_stocks_retries_when_result_lacks_stock_columns(monkeypat
     assert success is True
     assert len(attempted_queries) == 2
     assert "股票代码" in stocks_df.columns
+
+
+def test_get_main_force_stocks_only_sleeps_for_transient_errors(monkeypatch):
+    attempted_queries = []
+    sleep_calls = []
+
+    def fake_get(query, loop=True, **kwargs):
+        attempted_queries.append(query)
+        if len(attempted_queries) == 1:
+            raise TimeoutError("read timed out")
+        return pd.DataFrame(
+            [
+                {
+                    "股票代码": "600000.SH",
+                    "股票简称": "浦发银行",
+                }
+            ]
+        )
+
+    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    selector = MainForceStockSelector()
+    success, _, _ = selector.get_main_force_stocks(
+        start_date="2026年1月8日",
+        min_market_cap=50,
+        max_market_cap=5000,
+    )
+
+    assert success is True
+    assert len(attempted_queries) == 2
+    assert sleep_calls == [1]
+
+
+def test_get_main_force_stocks_skips_sleep_for_non_transient_errors(monkeypatch):
+    attempted_queries = []
+    sleep_calls = []
+
+    def fake_get(query, loop=True, **kwargs):
+        attempted_queries.append(query)
+        if len(attempted_queries) == 1:
+            raise ValueError("invalid field mapping")
+        return pd.DataFrame(
+            [
+                {
+                    "股票代码": "600000.SH",
+                    "股票简称": "浦发银行",
+                }
+            ]
+        )
+
+    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    selector = MainForceStockSelector()
+    success, _, _ = selector.get_main_force_stocks(
+        start_date="2026年1月8日",
+        min_market_cap=50,
+        max_market_cap=5000,
+    )
+
+    assert success is True
+    assert len(attempted_queries) == 2
+    assert sleep_calls == []

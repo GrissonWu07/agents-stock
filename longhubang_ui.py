@@ -204,7 +204,6 @@ def run_longhubang_analysis(model=None, date=None, days=1):
             progress_bar.progress(100)
             status_text.text("✅ 分析完成！")
             
-            time.sleep(1)
             status_text.empty()
             progress_bar.empty()
             
@@ -1457,7 +1456,6 @@ def run_longhubang_batch_analysis():
             "elapsed_time": elapsed_time
         }
         
-        time.sleep(0.5)
         st.rerun()
 
 

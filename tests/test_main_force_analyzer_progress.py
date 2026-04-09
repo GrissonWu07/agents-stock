@@ -1,6 +1,4 @@
 import threading
-import time
-
 import pandas as pd
 
 import main_force_analysis as mfa
@@ -92,7 +90,7 @@ def test_run_full_analysis_parallelizes_three_ai_reports(monkeypatch):
     analyzer = _build_analyzer(monkeypatch)
     state = {"running": 0, "max_running": 0, "started": 0}
     lock = threading.Lock()
-    started_event = threading.Event()
+    barrier = threading.Barrier(3, timeout=1)
 
     def overlap_and_return(value):
         def _inner(*args, **kwargs):
@@ -100,13 +98,12 @@ def test_run_full_analysis_parallelizes_three_ai_reports(monkeypatch):
                 state["started"] += 1
                 state["running"] += 1
                 state["max_running"] = max(state["max_running"], state["running"])
-                if state["started"] == 3:
-                    started_event.set()
-            started_event.wait(timeout=1)
-            time.sleep(0.05)
-            with lock:
-                state["running"] -= 1
-            return value
+            try:
+                barrier.wait()
+                return value
+            finally:
+                with lock:
+                    state["running"] -= 1
 
         return _inner
 

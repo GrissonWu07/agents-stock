@@ -14,7 +14,6 @@ class StockAnalysisAgents:
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
         print("🔍 技术分析师正在分析中...")
-        time.sleep(1)  # 模拟分析时间
         
         analysis = self.deepseek_client.technical_analysis(stock_info, stock_data, indicators)
         
@@ -39,8 +38,6 @@ class StockAnalysisAgents:
         else:
             print("   ⚠ 未获取到季报数据，将基于基本财务数据分析")
         
-        time.sleep(1)
-        
         analysis = self.deepseek_client.fundamental_analysis(stock_info, financial_data, quarterly_data)
         
         return {
@@ -62,8 +59,6 @@ class StockAnalysisAgents:
         else:
             print("   ⚠ 未获取到资金流向数据，将基于技术指标分析")
         
-        time.sleep(1)
-        
         analysis = self.deepseek_client.fund_flow_analysis(stock_info, indicators, fund_flow_data)
         
         return {
@@ -84,8 +79,6 @@ class StockAnalysisAgents:
             print("   ✓ 已获取问财风险数据（限售解禁、大股东减持、重要事件）")
         else:
             print("   ⚠ 未获取到风险数据，将基于基本信息分析")
-        
-        time.sleep(1)
         
         # 构建风险数据文本
         risk_data_text = ""
@@ -228,8 +221,6 @@ class StockAnalysisAgents:
         else:
             print("   ⚠ 未获取到详细情绪数据，将基于基本信息分析")
         
-        time.sleep(1)
-        
         # 构建带有市场情绪数据的prompt
         sentiment_data_text = ""
         if sentiment_data and sentiment_data.get('data_success'):
@@ -317,8 +308,6 @@ class StockAnalysisAgents:
             print(f"   ✓ 已从 {source} 获取 {news_count} 条新闻")
         else:
             print("   ⚠ 未获取到新闻数据，将基于基本信息分析")
-        
-        time.sleep(1)
         
         # 构建带有新闻数据的prompt
         news_text = ""
@@ -472,7 +461,6 @@ class StockAnalysisAgents:
     def conduct_team_discussion(self, agents_results: Dict[str, Any], stock_info: Dict) -> str:
         """进行团队讨论"""
         print("🤝 分析团队正在进行综合讨论...")
-        time.sleep(2)
         
         # 收集参与分析的分析师名单和报告
         participants = []
@@ -539,7 +527,6 @@ class StockAnalysisAgents:
     def make_final_decision(self, discussion_result: str, stock_info: Dict, indicators: Dict) -> Dict[str, Any]:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
-        time.sleep(1)
         
         decision = self.deepseek_client.final_decision(discussion_result, stock_info, indicators)
         
