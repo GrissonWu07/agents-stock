@@ -7,16 +7,23 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from selector_ui_state import load_simple_selector_state, save_simple_selector_state
+from batch_deep_analysis import display_batch_deep_analysis_section
 from low_price_bull_selector import LowPriceBullSelector
 from low_price_bull_strategy import LowPriceBullStrategy
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
-from quant_sim.integration import add_stock_to_quant_sim
+from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
 
 
 def display_low_price_bull():
     """显示低价擒牛选股界面"""
+    if st.session_state.get("low_price_bull_stocks") is None:
+        restored_df, restored_at = load_simple_selector_state("low_price_bull")
+        if restored_df is not None:
+            st.session_state.low_price_bull_stocks = restored_df
+            st.session_state.low_price_bull_time = restored_at
     
     # 检查是否显示监控面板
     if st.session_state.get('show_low_price_monitor'):
@@ -100,6 +107,13 @@ def display_low_price_bull():
                 # 保存结果
                 st.session_state.low_price_bull_stocks = stocks_df
                 st.session_state.low_price_bull_selector = selector
+                st.session_state.low_price_bull_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.pop("low_price_bull_batch_quant_sync", None)
+                save_simple_selector_state(
+                    strategy_key="low_price_bull",
+                    stocks_df=stocks_df,
+                    selected_at=st.session_state.low_price_bull_time,
+                )
                 
                 st.success(f"✅ {message}")
                 
@@ -114,11 +128,12 @@ def display_low_price_bull():
     if 'low_price_bull_stocks' in st.session_state:
         display_stock_results(
             st.session_state.low_price_bull_stocks,
-            st.session_state.get('low_price_bull_selector')
+            st.session_state.get('low_price_bull_selector'),
+            st.session_state.get("low_price_bull_time"),
         )
 
 
-def display_stock_results(stocks_df: pd.DataFrame, selector):
+def display_stock_results(stocks_df: pd.DataFrame, selector, selected_at: str | None = None):
     """显示选股结果"""
     
     st.markdown("---")
@@ -156,6 +171,22 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
         else:
             st.metric("平均股价", "-")
     
+    st.markdown("---")
+    if selected_at:
+        st.info(f"🕒 最近一次选股时间：{selected_at} | 📊 股票数量：{len(stocks_df)} 只")
+    batch_sync_summary = st.session_state.get("low_price_bull_batch_quant_sync")
+    if st.button("🧪 批量加入候选池", key="low_price_bull_batch_quant_sync_button", use_container_width=True):
+        batch_sync_summary = sync_selector_dataframe_to_quant_sim(
+            stocks_df,
+            source="low_price_bull",
+            note_prefix="低价擒牛",
+        )
+        st.session_state.low_price_bull_batch_quant_sync = batch_sync_summary
+    if batch_sync_summary:
+        if batch_sync_summary["success_count"] > 0:
+            st.success(f"🧪 已加入 {batch_sync_summary['success_count']} 只低价擒牛结果到候选池")
+        if batch_sync_summary["failures"]:
+            st.warning("；".join(batch_sync_summary["failures"]))
     st.markdown("---")
     
     # 显示股票列表
@@ -227,7 +258,14 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
             file_name=f"low_price_bull_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
         )
-    
+
+    display_batch_deep_analysis_section(
+        stocks_df=stocks_df,
+        strategy_key="low_price_bull",
+        strategy_label="低价擒牛",
+        default_count=min(5, len(stocks_df)),
+    )
+
     # 量化交易模拟
     st.markdown("---")
     display_strategy_simulation(stocks_df, selector)
@@ -373,7 +411,7 @@ def display_stock_detail(row: pd.Series):
         with col_monitor:
             add_stock_to_monitor_button(stock_code, stock_name, price_float)
         with col_quant:
-            if st.button(f"🧪 加入量化模拟", key=f"low_price_quant_{stock_code}", use_container_width=True):
+            if st.button(f"🧪 加入候选池", key=f"low_price_quant_{stock_code}", use_container_width=True):
                 success, message, _ = add_stock_to_quant_sim(
                     stock_code=stock_code,
                     stock_name=stock_name,

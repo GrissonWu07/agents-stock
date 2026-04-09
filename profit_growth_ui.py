@@ -8,14 +8,21 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict
+from selector_ui_state import load_simple_selector_state, save_simple_selector_state
+from batch_deep_analysis import display_batch_deep_analysis_section
 from profit_growth_selector import profit_growth_selector
 from notification_service import notification_service
 from profit_growth_monitor import profit_growth_monitor
-from quant_sim.integration import add_stock_to_quant_sim
+from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
 
 
 def display_profit_growth():
     """显示净利增长策略界面"""
+    if st.session_state.get("profit_growth_stocks") is None:
+        restored_df, restored_at = load_simple_selector_state("profit_growth")
+        if restored_df is not None:
+            st.session_state.profit_growth_stocks = restored_df
+            st.session_state.profit_growth_time = restored_at
     
     # 检查是否显示监控面板
     if st.session_state.get('show_profit_growth_monitor'):
@@ -101,6 +108,12 @@ def display_profit_growth():
             # 保存到session_state
             st.session_state.profit_growth_stocks = stocks_df
             st.session_state.profit_growth_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.pop("profit_growth_batch_quant_sync", None)
+            save_simple_selector_state(
+                strategy_key="profit_growth",
+                stocks_df=stocks_df,
+                selected_at=st.session_state.profit_growth_time,
+            )
     
     # 显示选股结果
     if 'profit_growth_stocks' in st.session_state and st.session_state.profit_growth_stocks is not None:
@@ -111,9 +124,29 @@ def display_profit_growth():
         select_time = st.session_state.profit_growth_time
         
         st.info(f"🕒 选股时间：{select_time} | 📊 股票数量：{len(stocks_df)} 只")
+        sync_summary = st.session_state.get('profit_growth_batch_quant_sync')
+        if st.button("🧪 批量加入候选池", key="profit_growth_batch_quant_sync_button", use_container_width=True):
+            sync_summary = sync_selector_dataframe_to_quant_sim(
+                stocks_df,
+                source="profit_growth",
+                note_prefix="净利增长",
+            )
+            st.session_state.profit_growth_batch_quant_sync = sync_summary
+        if sync_summary:
+            if sync_summary["success_count"] > 0:
+                st.success(f"🧪 已加入 {sync_summary['success_count']} 只净利增长结果到候选池")
+            if sync_summary["failures"]:
+                st.warning("；".join(sync_summary["failures"]))
         
         # 显示股票列表
         display_stock_list(stocks_df)
+
+        display_batch_deep_analysis_section(
+            stocks_df=stocks_df,
+            strategy_key="profit_growth",
+            strategy_label="净利增长",
+            default_count=min(5, len(stocks_df)),
+        )
         
         # 发送钉钉通知
         st.markdown("---")
@@ -219,7 +252,7 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
                 st.error(f"❌ {message}")
 
     with col_quant:
-        if st.button(f"🧪 加入量化模拟", key=f"add_quant_sim_{stock_code}", use_container_width=True):
+        if st.button(f"🧪 加入候选池", key=f"add_quant_sim_{stock_code}", use_container_width=True):
             success, message, _ = add_stock_to_quant_sim(
                 stock_code=stock_code,
                 stock_name=stock_name,

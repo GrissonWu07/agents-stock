@@ -5,13 +5,24 @@
 使用pywencai获取主力资金净流入前100名股票，并进行智能筛选
 """
 
-from numpy.ma import minimum_fill_value
+import os
+from contextlib import contextmanager
 import pandas as pd
 import pywencai
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 from console_utils import safe_print as print
 import time
+
+
+PROXY_ENV_KEYS = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+]
 
 class MainForceStockSelector:
     """主力选股类"""
@@ -46,25 +57,12 @@ class MainForceStockSelector:
             print(f"开始日期: {start_date}")
             print(f"目标: 获取主力资金净流入排名前100名股票")
             
-            # 构建查询语句 - 使用多个备选方案，所有方案都要求计算区间涨跌幅
-            queries = [
-                # 方案1: 完整查询（最优）
-                f"{start_date}以来主力资金净流入排名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿之间，非科创非st，"
-                f"所属同花顺行业，总市值，净利润，营收，市盈率，市净率，"
-                f"盈利能力评分，成长能力评分，营运能力评分，偿债能力评分，"
-                f"现金流评分，资产质量评分，流动性评分，资本充足性评分",
-                
-                # 方案2: 简化查询
-                f"{start_date}以来主力资金净流入，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
-                f"所属同花顺行业，总市值，净利润，营收，市盈率，市净率",
-                
-                # 方案3: 基础查询
-                f"{start_date}以来主力资金净流入排名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
-                f"所属行业，总市值",
-                
-                # 方案4: 最简查询
-                f"{start_date}以来主力资金净流入前100名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非st非科创板，所属行业，总市值",
-            ]
+            queries = self._build_queries(
+                start_date=start_date,
+                min_market_cap=min_market_cap,
+                max_market_cap=max_market_cap,
+            )
+            failures = []
             
             # 尝试不同的查询方案
             for i, query in enumerate(queries, 1):
@@ -72,10 +70,12 @@ class MainForceStockSelector:
                 print(f"查询语句: {query[:100]}...")
                 
                 try:
-                    result = pywencai.get(query=query, loop=True)
+                    with self._without_proxy_env():
+                        result = pywencai.get(query=query, loop=True, retry=1, sleep=0)
                     
                     if result is None:
                         print(f"  ⚠️ 方案{i}返回None，尝试下一个方案")
+                        failures.append(f"方案{i}: 返回空结果")
                         continue
                     
                     # 转换为DataFrame
@@ -83,6 +83,12 @@ class MainForceStockSelector:
                     
                     if df_result is None or df_result.empty:
                         print(f"  ⚠️ 方案{i}数据为空，尝试下一个方案")
+                        failures.append(f"方案{i}: 数据为空")
+                        continue
+
+                    if not self._is_valid_stock_dataframe(df_result):
+                        print(f"  ⚠️ 方案{i}返回的不是有效股票表，尝试下一个方案")
+                        failures.append(f"方案{i}: 未返回有效股票列表")
                         continue
                     
                     # 成功获取数据
@@ -99,12 +105,18 @@ class MainForceStockSelector:
                     return True, df_result, f"成功获取{len(df_result)}只股票数据"
                 
                 except Exception as e:
-                    print(f"  ❌ 方案{i}失败: {str(e)}")
-                    time.sleep(2)  # 失败后等待2秒再试
+                    failure_message = self._format_query_error(e)
+                    failures.append(f"方案{i}: {failure_message}")
+                    print(f"  ❌ 方案{i}失败: {failure_message}")
+                    time.sleep(1)
                     continue
             
             # 所有方案都失败
-            error_msg = "所有查询方案都失败了，请检查网络或稍后重试"
+            if failures:
+                latest_failure = failures[-1]
+                error_msg = f"所有查询方案都失败了，最近错误：{latest_failure}"
+            else:
+                error_msg = "所有查询方案都失败了，请检查网络或稍后重试"
             print(f"\n❌ {error_msg}")
             return False, None, error_msg
         
@@ -112,6 +124,45 @@ class MainForceStockSelector:
             error_msg = f"获取主力选股数据失败: {str(e)}"
             print(f"\n❌ {error_msg}")
             return False, None, error_msg
+
+    @staticmethod
+    def _build_queries(start_date: str, min_market_cap: float, max_market_cap: float) -> list[str]:
+        """Build progressively simpler wencai queries."""
+        return [
+            f"{start_date}以来主力资金净流入，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
+                f"所属同花顺行业，总市值，净利润，营收，市盈率，市净率",
+
+            f"{start_date}以来主力资金净流入排名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
+                f"所属行业，总市值",
+
+            f"{start_date}以来主力资金净流入前100名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非st非科创板，所属行业，总市值",
+
+            f"{start_date}以来主力资金净流入前100名，市值{min_market_cap}-{max_market_cap}亿，非st非科创板，所属行业，总市值",
+        ]
+
+    @staticmethod
+    @contextmanager
+    def _without_proxy_env():
+        """Temporarily disable proxy env vars for pywencai direct access."""
+        original_env = {key: os.environ.get(key) for key in PROXY_ENV_KEYS}
+        try:
+            for key in PROXY_ENV_KEYS:
+                os.environ.pop(key, None)
+            yield
+        finally:
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    @staticmethod
+    def _format_query_error(error: Exception) -> str:
+        """Normalize pywencai failures into an actionable short message."""
+        message = str(error).strip() or error.__class__.__name__
+        if "NoneType" in message and "get" in message:
+            return "问财未返回有效条件结果"
+        return message
     
     def _convert_to_dataframe(self, result) -> pd.DataFrame:
         """转换问财返回结果为DataFrame"""
@@ -135,6 +186,15 @@ class MainForceStockSelector:
         except Exception as e:
             print(f"  转换DataFrame失败: {e}")
             return None
+
+    @staticmethod
+    def _is_valid_stock_dataframe(df: pd.DataFrame) -> bool:
+        """Only accept actual stock tables, not summary/title responses."""
+        required_column_markers = ("股票代码", "股票简称")
+        return all(
+            any(marker in str(column) for column in df.columns)
+            for marker in required_column_markers
+        )
     
     def filter_stocks(self, df: pd.DataFrame, 
                      max_range_change: float = None,

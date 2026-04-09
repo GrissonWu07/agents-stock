@@ -7,13 +7,20 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from selector_ui_state import load_simple_selector_state, save_simple_selector_state
+from batch_deep_analysis import display_batch_deep_analysis_section
 from value_stock_selector import ValueStockSelector
 from value_stock_strategy import ValueStockStrategy
-from quant_sim.integration import add_stock_to_quant_sim
+from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
 
 
 def display_value_stock():
     """显示低估值选股界面"""
+    if st.session_state.get("value_stocks") is None:
+        restored_df, restored_at = load_simple_selector_state("value_stock")
+        if restored_df is not None:
+            st.session_state.value_stocks = restored_df
+            st.session_state.value_stock_time = restored_at
 
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1a5276 0%, #2e86c1 50%, #1a5276 100%); 
@@ -87,6 +94,13 @@ def display_value_stock():
             if success and stocks_df is not None:
                 st.session_state.value_stocks = stocks_df
                 st.session_state.value_stock_selector = selector
+                st.session_state.value_stock_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.pop("value_stock_batch_quant_sync", None)
+                save_simple_selector_state(
+                    strategy_key="value_stock",
+                    stocks_df=stocks_df,
+                    selected_at=st.session_state.value_stock_time,
+                )
                 st.success(f"✅ {message}")
                 st.rerun()
             else:
@@ -96,11 +110,12 @@ def display_value_stock():
     if 'value_stocks' in st.session_state:
         display_stock_results(
             st.session_state.value_stocks,
-            st.session_state.get('value_stock_selector')
+            st.session_state.get('value_stock_selector'),
+            st.session_state.get("value_stock_time"),
         )
 
 
-def display_stock_results(stocks_df: pd.DataFrame, selector):
+def display_stock_results(stocks_df: pd.DataFrame, selector, selected_at: str | None = None):
     """显示选股结果"""
 
     st.markdown("---")
@@ -154,6 +169,22 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
         else:
             st.metric("平均股息率", "-")
 
+    st.markdown("---")
+    if selected_at:
+        st.info(f"🕒 最近一次选股时间：{selected_at} | 📊 股票数量：{len(stocks_df)} 只")
+    sync_summary = st.session_state.get('value_stock_batch_quant_sync')
+    if st.button("🧪 批量加入候选池", key="value_stock_batch_quant_sync_button", use_container_width=True):
+        sync_summary = sync_selector_dataframe_to_quant_sim(
+            stocks_df,
+            source="value_stock",
+            note_prefix="低估值策略",
+        )
+        st.session_state.value_stock_batch_quant_sync = sync_summary
+    if sync_summary:
+        if sync_summary["success_count"] > 0:
+            st.success(f"🧪 已加入 {sync_summary['success_count']} 只低估值结果到候选池")
+        if sync_summary["failures"]:
+            st.warning("；".join(sync_summary["failures"]))
     st.markdown("---")
 
     # 显示股票列表
@@ -221,6 +252,13 @@ def display_stock_results(stocks_df: pd.DataFrame, selector):
             mime="text/csv",
             key="value_csv_download"
         )
+
+    display_batch_deep_analysis_section(
+        stocks_df=stocks_df,
+        strategy_key="value_stock",
+        strategy_label="低估值策略",
+        default_count=min(10, len(stocks_df)),
+    )
 
     # 量化交易模拟
     st.markdown("---")
@@ -300,7 +338,7 @@ def display_stock_detail(row: pd.Series, df: pd.DataFrame):
             break
 
     if stock_code and stock_name:
-        if st.button(f"🧪 加入量化模拟", key=f"value_quant_sim_{stock_code}", use_container_width=True):
+        if st.button(f"🧪 加入候选池", key=f"value_quant_sim_{stock_code}", use_container_width=True):
             success, message, _ = add_stock_to_quant_sim(
                 stock_code=stock_code,
                 stock_name=stock_name,

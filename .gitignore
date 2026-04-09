@@ -11,6 +11,9 @@ app.log
 app.err.log
 test_stress_output/
 stockpolicy/
+data/selector_results/
+/.codex-runtime/
+quant_sim.db
 # 环境变量文件
 .env
 /.cursor

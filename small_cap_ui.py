@@ -7,14 +7,22 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from selector_ui_state import load_simple_selector_state, save_simple_selector_state
+from batch_deep_analysis import display_batch_deep_analysis_section
 from small_cap_selector import small_cap_selector
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
+from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
 
 
 def display_small_cap():
     """显示小市值策略界面"""
+    if st.session_state.get("small_cap_stocks") is None:
+        restored_df, restored_at = load_simple_selector_state("small_cap")
+        if restored_df is not None:
+            st.session_state.small_cap_stocks = restored_df
+            st.session_state.small_cap_time = restored_at
     
     # 检查是否显示监控面板
     if st.session_state.get('show_small_cap_monitor'):
@@ -101,6 +109,12 @@ def display_small_cap():
             # 保存到session_state
             st.session_state.small_cap_stocks = stocks_df
             st.session_state.small_cap_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.pop("small_cap_batch_quant_sync", None)
+            save_simple_selector_state(
+                strategy_key="small_cap",
+                stocks_df=stocks_df,
+                selected_at=st.session_state.small_cap_time,
+            )
     
     # 显示选股结果
     if 'small_cap_stocks' in st.session_state and st.session_state.small_cap_stocks is not None:
@@ -111,9 +125,29 @@ def display_small_cap():
         select_time = st.session_state.small_cap_time
         
         st.info(f"🕒 选股时间：{select_time} | 📊 股票数量：{len(stocks_df)} 只")
+        sync_summary = st.session_state.get('small_cap_batch_quant_sync')
+        if st.button("🧪 批量加入候选池", key="small_cap_batch_quant_sync_button", use_container_width=True):
+            sync_summary = sync_selector_dataframe_to_quant_sim(
+                stocks_df,
+                source="small_cap",
+                note_prefix="小市值策略",
+            )
+            st.session_state.small_cap_batch_quant_sync = sync_summary
+        if sync_summary:
+            if sync_summary["success_count"] > 0:
+                st.success(f"🧪 已加入 {sync_summary['success_count']} 只小市值策略结果到候选池")
+            if sync_summary["failures"]:
+                st.warning("；".join(sync_summary["failures"]))
         
         # 显示股票列表
         display_stock_list(stocks_df)
+
+        display_batch_deep_analysis_section(
+            stocks_df=stocks_df,
+            strategy_key="small_cap",
+            strategy_label="小市值策略",
+            default_count=min(5, len(stocks_df)),
+        )
         
         # 发送钉钉通知
         st.markdown("---")
@@ -192,7 +226,22 @@ def display_stock_detail(row: pd.Series):
         price_float = None
     
     if stock_code and stock_name:
-        add_stock_to_monitor_button(stock_code, stock_name, price_float)
+        col_monitor, col_quant = st.columns(2)
+        with col_monitor:
+            add_stock_to_monitor_button(stock_code, stock_name, price_float)
+        with col_quant:
+            if st.button(f"🧪 加入候选池", key=f"small_cap_quant_{stock_code}", use_container_width=True):
+                success, message, _ = add_stock_to_quant_sim(
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    source="small_cap",
+                    latest_price=price_float,
+                    notes="小市值策略",
+                )
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
 
 
 def is_valid_value(value):

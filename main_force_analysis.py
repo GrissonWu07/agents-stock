@@ -6,13 +6,13 @@
 """
 
 from typing import Dict, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from main_force_selector import main_force_selector
 from stock_data import StockDataFetcher
 from ai_agents import StockAnalysisAgents
 from deepseek_client import DeepSeekClient
 from console_utils import safe_print as print
-import time
 import json
 import config
 
@@ -30,7 +30,8 @@ class MainForceAnalyzer:
     
     def run_full_analysis(self, start_date: str = None, days_ago: int = None, 
                          final_n: int = None, max_range_change: float = None,
-                         min_market_cap: float = None, max_market_cap: float = None) -> Dict:
+                         min_market_cap: float = None, max_market_cap: float = None,
+                         progress_callback=None) -> Dict:
         """
         运行完整的主力选股分析流程 - 整体批量分析
         
@@ -65,6 +66,7 @@ class MainForceAnalyzer:
             print(f"\n{'='*80}")
             print(f"🚀 主力选股智能分析系统 - 批量整体分析")
             print(f"{'='*80}\n")
+            self._report_progress(progress_callback, 5, "正在获取主力资金候选股...")
             
             # 步骤1: 获取主力资金净流入前100名股票
             success, raw_data, message = self.selector.get_main_force_stocks(
@@ -79,6 +81,7 @@ class MainForceAnalyzer:
                 return result
             
             result['total_stocks'] = len(raw_data)
+            self._report_progress(progress_callback, 25, f"已获取 {len(raw_data)} 只候选股，正在按规则筛选...")
             
             # 步骤2: 智能筛选（涨幅、市值等）
             filtered_data = self.selector.filter_stocks(
@@ -96,6 +99,7 @@ class MainForceAnalyzer:
             
             # 保存原始数据
             self.raw_stocks = filtered_data
+            self._report_progress(progress_callback, 35, f"筛选完成，保留 {len(filtered_data)} 只股票，正在整理分析摘要...")
             
             # 步骤3: 整体数据分析（不是逐个分析）
             print(f"\n{'='*80}")
@@ -105,10 +109,17 @@ class MainForceAnalyzer:
             # 准备整体数据摘要
             overall_summary = self._prepare_overall_summary(filtered_data)
             
-            # 三大分析师整体分析
-            fund_flow_analysis = self._fund_flow_overall_analysis(filtered_data, overall_summary)
-            industry_analysis = self._industry_overall_analysis(filtered_data, overall_summary)
-            fundamental_analysis = self._fundamental_overall_analysis(filtered_data, overall_summary)
+            self._report_progress(progress_callback, 45, "正在并行生成三份AI分析报告...")
+
+            # 三大分析师整体分析（并行执行）
+            parallel_results = self._run_parallel_analyses(
+                filtered_data,
+                overall_summary,
+                progress_callback=progress_callback,
+            )
+            fund_flow_analysis = parallel_results["fund_flow"]
+            industry_analysis = parallel_results["industry"]
+            fundamental_analysis = parallel_results["fundamental"]
             
             # 保存分析报告到对象属性，供UI展示
             self.fund_flow_analysis = fund_flow_analysis
@@ -119,6 +130,7 @@ class MainForceAnalyzer:
             print(f"\n{'='*80}")
             print(f"👔 资深研究员综合评估并精选标的...")
             print(f"{'='*80}\n")
+            self._report_progress(progress_callback, 90, "正在生成最终推荐...")
             
             final_recommendations = self._select_best_stocks(
                 filtered_data,
@@ -130,6 +142,7 @@ class MainForceAnalyzer:
             
             result['final_recommendations'] = final_recommendations
             result['success'] = True
+            self._report_progress(progress_callback, 100, "主力选股分析完成")
             
             # 显示最终结果
             self._print_final_recommendations(final_recommendations)
@@ -141,6 +154,48 @@ class MainForceAnalyzer:
             import traceback
             traceback.print_exc()
             return result
+
+    @staticmethod
+    def _report_progress(progress_callback, percent: int, message: str):
+        """Report analysis progress to the UI when a callback is provided."""
+        if progress_callback:
+            progress_callback(percent, message)
+
+    def _run_parallel_analyses(self, df: pd.DataFrame, summary: str, progress_callback=None) -> Dict[str, str]:
+        """Run the three independent analyst reports concurrently."""
+        tasks = {
+            "fund_flow": {
+                "fn": self._fund_flow_overall_analysis,
+                "message": "资金流向分析已完成",
+                "percent": 60,
+            },
+            "industry": {
+                "fn": self._industry_overall_analysis,
+                "message": "行业板块分析已完成",
+                "percent": 70,
+            },
+            "fundamental": {
+                "fn": self._fundamental_overall_analysis,
+                "message": "财务基本面分析已完成",
+                "percent": 80,
+            },
+        }
+        results = {}
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_map = {
+                executor.submit(task["fn"], df, summary): (key, task)
+                for key, task in tasks.items()
+            }
+
+            progress_steps = [60, 70, 80]
+            for completed_count, future in enumerate(as_completed(future_map), start=1):
+                key, task = future_map[future]
+                results[key] = future.result()
+                progress_percent = progress_steps[min(completed_count - 1, len(progress_steps) - 1)]
+                self._report_progress(progress_callback, progress_percent, task["message"])
+
+        return results
     
     def _prepare_overall_summary(self, df: pd.DataFrame) -> str:
         """准备整体数据摘要"""
@@ -230,7 +285,6 @@ class MainForceAnalyzer:
         analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
         
         print("  ✅ 资金流向整体分析完成")
-        time.sleep(1)
         
         return analysis
     
@@ -284,7 +338,6 @@ class MainForceAnalyzer:
         analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
         
         print("  ✅ 行业板块整体分析完成")
-        time.sleep(1)
         
         return analysis
     
@@ -338,7 +391,6 @@ class MainForceAnalyzer:
         analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
         
         print("  ✅ 财务基本面整体分析完成")
-        time.sleep(1)
         
         return analysis
     

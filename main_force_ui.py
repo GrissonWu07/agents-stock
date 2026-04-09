@@ -6,20 +6,88 @@
 
 import streamlit as st
 from datetime import datetime, timedelta
+from selector_ui_state import load_main_force_state, save_main_force_state
+from batch_deep_analysis import (
+    display_batch_analysis_results,
+    display_batch_deep_analysis_section,
+    sort_main_force_batch_candidates,
+)
 from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
-from console_utils import safe_print as print
 from quant_sim.integration import add_stock_to_quant_sim
-import pandas as pd
+
+
+def update_main_force_progress_ui(status_widget, progress_bar, detail_placeholder, percent: int, message: str):
+    """Render stage-by-stage progress for the main force selector."""
+    progress_bar.progress(percent)
+    detail_placeholder.caption(f"当前阶段：{message}")
+    status_widget.update(label=message, state="running")
+
+
+def _extract_main_force_latest_price(recommendation: dict) -> float | None:
+    """Extract a numeric latest price from main-force recommendation payloads."""
+    stock_data = recommendation.get("stock_data", {}) or {}
+    for field_name in ("最新价", "股价"):
+        value = stock_data.get(field_name)
+        try:
+            if value is not None:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def sync_main_force_recommendations_to_quant_sim(recommendations: list[dict]) -> dict:
+    """Sync selected recommendations into the shared quant-sim candidate pool."""
+    summary = {
+        "attempted": 0,
+        "success_count": 0,
+        "failures": [],
+    }
+
+    for recommendation in recommendations or []:
+        stock_data = recommendation.get("stock_data", {}) or {}
+        stock_code = (
+            str(stock_data.get("股票代码") or recommendation.get("symbol") or "").split(".")[0].strip()
+        )
+        stock_name = str(stock_data.get("股票简称") or recommendation.get("name") or "").strip()
+        if not stock_code or not stock_name:
+            continue
+
+        summary["attempted"] += 1
+        latest_price = _extract_main_force_latest_price(recommendation)
+        notes = f"主力选股第{recommendation.get('rank', '?')}名；亮点：{recommendation.get('highlights', 'N/A')}"
+        success, message, _ = add_stock_to_quant_sim(
+            stock_code=stock_code,
+            stock_name=stock_name,
+            source="main_force",
+            latest_price=latest_price,
+            notes=notes,
+        )
+        if success:
+            summary["success_count"] += 1
+        else:
+            summary["failures"].append(f"{stock_code}: {message}")
+
+    return summary
+
+
+def restore_main_force_state():
+    """Restore the latest saved main-force result into the current session."""
+    if st.session_state.get("main_force_result") is not None:
+        return
+
+    result, analyzer, selected_at = load_main_force_state()
+    if result:
+        st.session_state.main_force_result = result
+        st.session_state.main_force_analyzer = analyzer
+        st.session_state.main_force_selected_at = selected_at
+
 
 def display_main_force_selector():
     """显示主力选股界面"""
-
-    # 检查是否触发批量分析（不立即删除标志）
-    if st.session_state.get('main_force_batch_trigger'):
-        run_main_force_batch_analysis()
-        return
+    restore_main_force_state()
 
     # 检查是否查看历史记录
     if st.session_state.get('main_force_view_history'):
@@ -133,31 +201,56 @@ def display_main_force_selector():
 
     # 开始分析按钮（使用.env中配置的默认模型）
     if st.button("🚀 开始主力选股", type="primary", width='content'):
+        status_widget = st.status("正在初始化主力选股分析...", expanded=True)
+        progress_bar = st.progress(0)
+        detail_placeholder = st.empty()
 
-        with st.spinner("正在获取数据并分析，这可能需要几分钟..."):
+        update_main_force_progress_ui(
+            status_widget,
+            progress_bar,
+            detail_placeholder,
+            1,
+            "正在准备分析参数...",
+        )
 
-            # 创建分析器（使用默认模型）
-            analyzer = MainForceAnalyzer()
+        # 创建分析器（使用默认模型）
+        analyzer = MainForceAnalyzer()
 
-            # 运行分析
-            result = analyzer.run_full_analysis(
-                start_date=start_date,
-                days_ago=days_ago,
-                final_n=final_n,
-                max_range_change=max_change,
-                min_market_cap=min_cap,
-                max_market_cap=max_cap
-            )
+        # 运行分析
+        result = analyzer.run_full_analysis(
+            start_date=start_date,
+            days_ago=days_ago,
+            final_n=final_n,
+            max_range_change=max_change,
+            min_market_cap=min_cap,
+            max_market_cap=max_cap,
+            progress_callback=lambda percent, message: update_main_force_progress_ui(
+                status_widget,
+                progress_bar,
+                detail_placeholder,
+                percent,
+                message,
+            ),
+        )
 
-            # 保存结果到session_state
-            st.session_state.main_force_result = result
-            st.session_state.main_force_analyzer = analyzer
+        # 保存结果到session_state
+        st.session_state.main_force_result = result
+        st.session_state.main_force_analyzer = analyzer
 
         # 显示结果
         if result['success']:
+            selected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.main_force_selected_at = selected_at
+            st.session_state.pop("main_force_batch_quant_sync", None)
+            save_main_force_state(result=result, analyzer=analyzer, selected_at=selected_at)
+            status_widget.update(label="主力选股分析完成", state="complete")
+            progress_bar.progress(100)
+            detail_placeholder.caption("当前阶段：主力选股分析完成")
             st.success(f"✅ 分析完成！共筛选出 {len(result['final_recommendations'])} 只优质标的")
             st.rerun()
         else:
+            status_widget.update(label="主力选股分析失败", state="error")
+            detail_placeholder.caption(f"当前阶段：分析失败 - {result.get('error', '未知错误')}")
             st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
 
     # 显示分析结果
@@ -165,9 +258,20 @@ def display_main_force_selector():
         result = st.session_state.main_force_result
 
         if result['success']:
-            display_analysis_results(result, st.session_state.get('main_force_analyzer'))
+            display_analysis_results(
+                result,
+                st.session_state.get('main_force_analyzer'),
+                st.session_state.get("main_force_selected_at"),
+            )
+    elif st.session_state.get('main_force_batch_results'):
+        st.markdown("---")
+        st.markdown("## 📊 批量深度分析结果")
+        display_batch_analysis_results(
+            st.session_state.main_force_batch_results,
+            strategy_key="main_force",
+        )
 
-def display_analysis_results(result: dict, analyzer):
+def display_analysis_results(result: dict, analyzer, selected_at: str | None = None):
     """显示分析结果"""
 
     st.markdown("---")
@@ -184,6 +288,23 @@ def display_analysis_results(result: dict, analyzer):
 
     with col3:
         st.metric("最终推荐", len(result['final_recommendations']))
+
+    st.markdown("---")
+
+    if selected_at:
+        st.info(f"🕒 最近一次选股时间：{selected_at} | ⭐ 最终推荐：{len(result['final_recommendations'])} 只")
+
+    batch_sync_summary = st.session_state.get("main_force_batch_quant_sync")
+    if st.button("🧪 批量加入候选池", key="main_force_batch_quant_sync_button", use_container_width=True):
+        batch_sync_summary = sync_main_force_recommendations_to_quant_sim(
+            result.get("final_recommendations", [])
+        )
+        st.session_state.main_force_batch_quant_sync = batch_sync_summary
+    if batch_sync_summary:
+        if batch_sync_summary["success_count"] > 0:
+            st.success(f"🧪 已加入 {batch_sync_summary['success_count']} 只主力选股结果到候选池")
+        if batch_sync_summary["failures"]:
+            st.warning("；".join(batch_sync_summary["failures"]))
 
     st.markdown("---")
 
@@ -289,49 +410,13 @@ def display_analysis_results(result: dict, analyzer):
             mime="text/csv"
         )
 
-        # 批量分析功能区
-        st.markdown("---")
-
-        col_batch1, col_batch2, col_batch3 = st.columns([2, 1, 1])
-        with col_batch1:
-            st.markdown("#### 🚀 批量深度分析")
-            st.caption("对主力资金净流入TOP股票进行完整的AI团队分析，获取投资评级和关键价位")
-
-        with col_batch2:
-            batch_count = st.selectbox(
-                "分析数量",
-                options=[10, 20, 30, 50],
-                index=1,  # 默认20只
-                help="选择分析主力资金净流入前N只股票"
-            )
-
-        with col_batch3:
-            st.write("")  # 占位
-            if st.button("🚀 开始批量分析", type="primary", width='content'):
-                # 准备数据：按主力资金净流入排序
-                df_sorted = analyzer.raw_stocks.copy()
-
-                # 确保主力资金列是数值类型并排序
-                if main_fund_col:
-                    df_sorted[main_fund_col] = pd.to_numeric(df_sorted[main_fund_col], errors='coerce')
-                    df_sorted = df_sorted.sort_values(by=main_fund_col, ascending=False)
-
-                # 提取股票代码并去掉市场后缀（.SH, .SZ等）
-                raw_codes = df_sorted.head(batch_count)['股票代码'].tolist()
-                stock_codes = []
-                for code in raw_codes:
-                    # 去掉后缀（如果有的话）
-                    if isinstance(code, str):
-                        # 去掉 .SH, .SZ, .BJ 等后缀
-                        clean_code = code.split('.')[0] if '.' in code else code
-                        stock_codes.append(clean_code)
-                    else:
-                        stock_codes.append(str(code))
-
-                # 存储到session_state，触发批量分析
-                st.session_state.main_force_batch_codes = stock_codes
-                st.session_state.main_force_batch_trigger = True
-                st.rerun()
+        display_batch_deep_analysis_section(
+            stocks_df=analyzer.raw_stocks,
+            sorted_df=sort_main_force_batch_candidates(analyzer.raw_stocks),
+            strategy_key="main_force",
+            strategy_label="主力选股",
+            default_count=min(20, len(analyzer.raw_stocks)),
+        )
 
     # 显示PDF报告下载区域
     if analyzer and result:
@@ -357,6 +442,23 @@ def display_recommendation_detail(rec: dict):
 
         st.markdown("#### ⚠️ 风险提示")
         st.warning(rec.get('risks', 'N/A'))
+
+        stock_data = rec.get('stock_data', {}) or {}
+        stock_code = str(stock_data.get('股票代码') or rec.get('symbol', '')).split('.')[0].strip()
+        stock_name = str(stock_data.get('股票简称') or rec.get('name', '')).strip()
+        if stock_code and stock_name:
+            if st.button(f"🧪 加入候选池", key=f"main_force_quant_{stock_code}", use_container_width=True):
+                success, message, _ = add_stock_to_quant_sim(
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    source="main_force",
+                    latest_price=_extract_main_force_latest_price(rec),
+                    notes=f"主力选股第{rec.get('rank', '?')}名；亮点：{rec.get('highlights', 'N/A')}",
+                )
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
 
     # 显示股票详细数据
     if 'stock_data' in rec:
@@ -478,528 +580,4 @@ def format_number(value, unit='', suffix=''):
         return f"{formatted}{suffix}"
     except (ValueError, TypeError):
         return str(value)
-
-
-def run_main_force_batch_analysis():
-    """执行主力选股TOP股票批量分析（遵循统一调用规范）"""
-    import time
-    import re
-
-    st.markdown("## 🚀 主力选股TOP股票批量分析")
-    st.markdown("---")
-
-    # 检查是否已有分析结果
-    if st.session_state.get('main_force_batch_results'):
-        display_main_force_batch_results(st.session_state.main_force_batch_results)
-
-        # 返回按钮
-        col_back, col_clear = st.columns(2)
-        with col_back:
-            if st.button("🔙 返回主力选股", width='content'):
-                # 清除所有批量分析相关状态
-                if 'main_force_batch_trigger' in st.session_state:
-                    del st.session_state.main_force_batch_trigger
-                if 'main_force_batch_codes' in st.session_state:
-                    del st.session_state.main_force_batch_codes
-                if 'main_force_batch_results' in st.session_state:
-                    del st.session_state.main_force_batch_results
-                st.rerun()
-
-        with col_clear:
-            if st.button("🔄 重新分析", width='content'):
-                # 清除结果，保留触发标志和代码
-                if 'main_force_batch_results' in st.session_state:
-                    del st.session_state.main_force_batch_results
-                st.rerun()
-
-        return
-
-    # 获取股票代码列表
-    stock_codes = st.session_state.get('main_force_batch_codes', [])
-
-    if not stock_codes:
-        st.error("未找到股票代码列表")
-        # 清除触发标志
-        if 'main_force_batch_trigger' in st.session_state:
-            del st.session_state.main_force_batch_trigger
-        return
-
-    st.info(f"即将分析 {len(stock_codes)} 只股票：{', '.join(stock_codes[:10])}{'...' if len(stock_codes) > 10 else ''}")
-
-    # 返回按钮
-    if st.button("🔙 取消返回", type="secondary"):
-        # 清除所有批量分析相关状态
-        if 'main_force_batch_trigger' in st.session_state:
-            del st.session_state.main_force_batch_trigger
-        if 'main_force_batch_codes' in st.session_state:
-            del st.session_state.main_force_batch_codes
-        st.rerun()
-
-    st.markdown("---")
-
-    # 分析选项
-    col1, col2 = st.columns(2)
-
-    with col1:
-        analysis_mode = st.selectbox(
-            "分析模式",
-            options=["sequential", "parallel"],
-            format_func=lambda x: "顺序分析（稳定）" if x == "sequential" else "并行分析（快速）",
-            help="顺序分析较慢但稳定，并行分析更快但消耗更多资源"
-        )
-
-    with col2:
-        if analysis_mode == "parallel":
-            max_workers = st.number_input(
-                "并行线程数",
-                min_value=2,
-                max_value=5,
-                value=3,
-                help="同时分析的股票数量"
-            )
-        else:
-            max_workers = 1
-
-    st.markdown("---")
-
-    # 开始分析按钮
-    col_confirm, col_cancel = st.columns(2)
-
-    start_analysis = False
-    with col_confirm:
-        if st.button("🚀 确认开始分析", type="primary", width='content'):
-            start_analysis = True
-
-    with col_cancel:
-        if st.button("❌ 取消", type="secondary", width='content'):
-            # 清除所有批量分析相关状态
-            if 'main_force_batch_trigger' in st.session_state:
-                del st.session_state.main_force_batch_trigger
-            if 'main_force_batch_codes' in st.session_state:
-                del st.session_state.main_force_batch_codes
-            st.rerun()
-
-    if start_analysis:
-        # 导入统一分析函数（遵循统一规范）
-        from app import analyze_single_stock_for_batch
-        import concurrent.futures
-        import time
-
-        st.markdown("---")
-        st.info("⏳ 正在执行批量分析，请稍候...")
-
-        # 显示即将分析的股票代码（调试用）
-        with st.expander("🔍 调试信息", expanded=True):
-            st.write(f"**股票代码数量**: {len(stock_codes)} 只")
-            st.write(f"**股票代码列表**: {stock_codes}")
-            st.write(f"**代码格式检查**: {'✅ 无后缀，格式正确' if all('.' not in str(c) for c in stock_codes) else '❌ 包含后缀，可能有问题'}")
-            st.write(f"**分析模式**: {analysis_mode}")
-            st.write(f"**线程数**: {max_workers if analysis_mode == 'parallel' else 1}")
-
-        # 配置分析师参数
-        enabled_analysts_config = {
-            'technical': True,
-            'fundamental': True,
-            'fund_flow': True,
-            'risk': True,
-            'sentiment': False,  # 禁用以提升速度
-            'news': False  # 禁用以提升速度
-        }
-        import config
-        selected_model = config.DEFAULT_MODEL_NAME
-        period = '1y'
-
-        # 创建进度显示
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        # 存储结果
-        results = []
-
-        # 记录开始时间
-        start_time = time.time()
-
-        if analysis_mode == "sequential":
-            # 顺序分析
-            for i, code in enumerate(stock_codes):
-                status_text.text(f"正在分析 {code} ({i+1}/{len(stock_codes)})")
-                progress_bar.progress((i + 1) / len(stock_codes))
-
-                try:
-                    # 调用统一分析函数
-                    result = analyze_single_stock_for_batch(
-                        symbol=code,
-                        period=period,
-                        enabled_analysts_config=enabled_analysts_config,
-                        selected_model=selected_model
-                    )
-
-                    results.append(result)
-
-                except Exception as e:
-                    results.append({
-                        "symbol": code,
-                        "success": False,
-                        "error": str(e)
-                    })
-
-        else:
-            # 并行分析
-            status_text.text(f"并行分析 {len(stock_codes)} 只股票（{max_workers}线程）...")
-            print(f"\n{'='*60}")
-            print(f"🚀 开始并行分析 {len(stock_codes)} 只股票")
-            print(f"{'='*60}")
-
-            def analyze_one(code):
-                try:
-                    print(f"  开始分析: {code}")
-                    result = analyze_single_stock_for_batch(
-                        symbol=code,
-                        period=period,
-                        enabled_analysts_config=enabled_analysts_config,
-                        selected_model=selected_model
-                    )
-                    print(f"  完成分析: {code}")
-                    return result
-                except Exception as e:
-                    print(f"  分析失败: {code} - {str(e)}")
-                    return {"symbol": code, "success": False, "error": str(e)}
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(analyze_one, code): code for code in stock_codes}
-
-                completed = 0
-                for future in concurrent.futures.as_completed(futures):
-                    code = futures[future]  # 获取对应的股票代码
-                    completed += 1
-                    progress = completed / len(stock_codes)
-                    progress_bar.progress(progress)
-                    status_text.text(f"已完成 {completed}/{len(stock_codes)} ({code})")
-
-                    print(f"  进度更新: {completed}/{len(stock_codes)} ({progress*100:.1f}%) - {code}")
-
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as e:
-                        print(f"  获取结果失败: {code} - {str(e)}")
-                        results.append({"symbol": code, "success": False, "error": str(e)})
-
-            print(f"\n✅ 所有并行任务已完成")
-            print(f"   完成数: {completed}")
-            print(f"   结果数: {len(results)}")
-            print(f"{'='*60}\n")
-
-        # 清除进度
-        progress_bar.empty()
-        status_text.empty()
-
-        # 计算统计
-        elapsed_time = time.time() - start_time
-        success_count = sum(1 for r in results if r.get("success", False))
-        failed_count = len(results) - success_count
-
-        # 显示完成信息
-        if success_count > 0:
-            st.success(f"✅ 批量分析完成！成功 {success_count} 只，失败 {failed_count} 只，耗时 {elapsed_time/60:.1f} 分钟")
-        else:
-            st.error(f"❌ 批量分析完成，但所有 {failed_count} 只股票都分析失败！")
-
-            # 显示失败原因（调试用）
-            with st.expander("❌ 查看失败原因", expanded=True):
-                for r in results:
-                    if not r.get("success", False):
-                        st.error(f"**{r.get('symbol', 'N/A')}**: {r.get('error', '未知错误')}")
-
-        # 先保存到数据库历史记录（在 rerun 之前完成）
-        save_success = False
-        save_error = None
-        try:
-            from main_force_batch_db import batch_db
-
-            # 调试信息
-            print(f"\n{'='*60}")
-            print(f"📝 准备保存批量分析结果到历史记录")
-            print(f"{'='*60}")
-            print(f"股票代码数: {len(stock_codes)}")
-            print(f"分析模式: {analysis_mode}")
-            print(f"成功数: {success_count}")
-            print(f"失败数: {failed_count}")
-            print(f"总耗时: {elapsed_time:.2f}秒")
-            print(f"结果数: {len(results)}")
-
-            # 检查结果数据类型
-            print(f"\n检查结果数据类型:")
-            for i, result in enumerate(results[:3]):  # 只检查前3个
-                print(f"  结果 {i+1}:")
-                for key, value in list(result.items())[:5]:  # 只检查前5个字段
-                    print(f"    - {key}: {type(value).__name__}")
-
-            print(f"\n开始保存到数据库...")
-            save_start = time.time()
-
-            # 保存到数据库
-            record_id = batch_db.save_batch_analysis(
-                batch_count=len(stock_codes),
-                analysis_mode=analysis_mode,
-                success_count=success_count,
-                failed_count=failed_count,
-                total_time=elapsed_time,
-                results=results
-            )
-
-            save_elapsed = time.time() - save_start
-            print(f"✅ 批量分析结果已保存到历史记录")
-            print(f"   记录ID: {record_id}")
-            print(f"   保存耗时: {save_elapsed:.2f}秒")
-            print(f"{'='*60}\n")
-            save_success = True
-
-        except Exception as e:
-            import traceback
-            save_error = str(e)
-            print(f"\n{'='*60}")
-            print(f"⚠️ 保存历史记录失败")
-            print(f"{'='*60}")
-            print(f"错误信息: {str(e)}")
-            print(f"详细错误:")
-            print(traceback.format_exc())
-            print(f"{'='*60}\n")
-
-        # 保存结果到session_state
-        st.session_state.main_force_batch_results = {
-            "results": results,
-            "total": len(results),
-            "success": success_count,
-            "failed": failed_count,
-            "elapsed_time": elapsed_time,
-            "analysis_mode": analysis_mode,
-            "saved_to_history": save_success,
-            "save_error": save_error
-        }
-
-        time.sleep(0.5)
-
-        # 重新渲染以显示结果
-        st.rerun()
-
-
-def display_main_force_batch_results(batch_results):
-    """显示主力选股批量分析结果"""
-    import re
-
-    results = batch_results['results']
-    total = batch_results['total']
-    success = batch_results['success']
-    failed = batch_results['failed']
-    elapsed_time = batch_results['elapsed_time']
-    saved_to_history = batch_results.get('saved_to_history', False)
-    save_error = batch_results.get('save_error')
-
-    st.markdown("## 📊 批量分析结果")
-
-    # 显示保存状态
-    if saved_to_history:
-        st.success("✅ 分析结果已自动保存到历史记录，可点击右上角'📚 批量分析历史'查看")
-    elif save_error:
-        st.warning(f"⚠️ 历史记录保存失败: {save_error}，但结果仍可查看")
-
-    st.markdown("---")
-
-    # 统计信息
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("总计分析", f"{total} 只")
-
-    with col2:
-        st.metric("成功分析", f"{success} 只", delta=f"{success/total*100:.1f}%")
-
-    with col3:
-        st.metric("失败分析", f"{failed} 只")
-
-    with col4:
-        st.metric("总耗时", f"{elapsed_time/60:.1f} 分钟")
-
-    st.markdown("---")
-
-    # 成功分析的股票
-    successful_results = [r for r in results if r['success']]
-
-    if successful_results:
-        st.markdown(f"### ✅ 成功分析的股票 ({len(successful_results)}只)")
-
-        # 创建DataFrame展示
-        display_data = []
-        for result in successful_results:
-            stock_info = result.get('stock_info', {})
-            final_decision = result.get('final_decision', {})
-
-            # 提取评级emoji
-            rating = final_decision.get('rating', '未知')
-            rating_emoji = {
-                '强烈买入': '🔥',
-                '买入': '✅',
-                '持有': '⏸️',
-                '卖出': '⚠️',
-                '强烈卖出': '🚫'
-            }.get(rating, '❓')
-
-            display_data.append({
-                '股票代码': stock_info.get('symbol', ''),
-                '股票名称': stock_info.get('name', ''),
-                '评级': f"{rating_emoji} {rating}",
-                '信心度': final_decision.get('confidence_level', 'N/A'),
-                '进场区间': final_decision.get('entry_range', 'N/A'),
-                '止盈位': final_decision.get('take_profit', 'N/A'),
-                '止损位': final_decision.get('stop_loss', 'N/A'),
-                '目标价': final_decision.get('target_price', 'N/A')
-            })
-
-        df_display = pd.DataFrame(display_data)
-
-        # 类型统一，避免Arrow序列化错误
-        numeric_cols = ['信心度', '止盈位', '止损位', '目标价']
-        for col in numeric_cols:
-            if col in df_display.columns:
-                df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-
-        text_cols = ['股票代码', '股票名称', '评级', '进场区间']
-        for col in text_cols:
-            if col in df_display.columns:
-                df_display[col] = df_display[col].astype(str)
-
-        st.dataframe(df_display, width='content', height=400)
-
-        # 详细分析结果（可展开）
-        st.markdown("---")
-        st.markdown("### 📋 详细分析报告")
-
-        for result in successful_results:
-            stock_info = result.get('stock_info', {})
-            final_decision = result.get('final_decision', {})
-
-            symbol = stock_info.get('symbol', '')
-            name = stock_info.get('name', '')
-            rating = final_decision.get('rating', '未知')
-            rating_emoji = {
-                '强烈买入': '🔥',
-                '买入': '✅',
-                '持有': '⏸️',
-                '卖出': '⚠️',
-                '强烈卖出': '🚫'
-            }.get(rating, '❓')
-
-            with st.expander(f"{rating_emoji} {symbol} - {name} | {rating}"):
-                # 关键信息
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.metric("信心度", final_decision.get('confidence_level', 'N/A'))
-
-                with col2:
-                    st.metric("进场区间", final_decision.get('entry_range', 'N/A'))
-
-                with col3:
-                    st.metric("目标价", final_decision.get('target_price', 'N/A'))
-
-                # 止盈止损
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.metric("止盈位", final_decision.get('take_profit', 'N/A'))
-
-                with col2:
-                    st.metric("止损位", final_decision.get('stop_loss', 'N/A'))
-
-                # 投资建议
-                st.markdown("#### 💡 投资建议")
-                advice = final_decision.get('operation_advice', final_decision.get('advice', '暂无建议'))
-                st.info(advice)
-
-                col_action_monitor, col_action_quant = st.columns(2)
-
-                with col_action_monitor:
-                    if st.button(f"➕ 加入监测列表", key=f"monitor_{symbol}"):
-                        # 解析进场区间
-                        entry_range = final_decision.get('entry_range', '')
-                        entry_min, entry_max = None, None
-                        if entry_range and isinstance(entry_range, str) and "-" in entry_range:
-                            try:
-                                parts = entry_range.split("-")
-                                entry_min = float(parts[0].strip())
-                                entry_max = float(parts[1].strip())
-                            except:
-                                pass
-
-                        # 解析止盈止损
-                        take_profit_str = final_decision.get('take_profit', '')
-                        take_profit = None
-                        if take_profit_str:
-                            try:
-                                numbers = re.findall(r'\d+\.?\d*', str(take_profit_str))
-                                if numbers:
-                                    take_profit = float(numbers[0])
-                            except:
-                                pass
-
-                        stop_loss_str = final_decision.get('stop_loss', '')
-                        stop_loss = None
-                        if stop_loss_str:
-                            try:
-                                numbers = re.findall(r'\d+\.?\d*', str(stop_loss_str))
-                                if numbers:
-                                    stop_loss = float(numbers[0])
-                            except:
-                                pass
-
-                        # 调用监测管理器添加
-                        from monitor_db import monitor_db
-
-                        try:
-                            entry_range_dict = {}
-                            if entry_min and entry_max:
-                                entry_range_dict = {"min": entry_min, "max": entry_max}
-
-                            monitor_db.add_monitored_stock(
-                                symbol=symbol,
-                                name=name,
-                                rating=rating,
-                                entry_range=entry_range_dict if entry_range_dict else None,
-                                take_profit=take_profit,
-                                stop_loss=stop_loss
-                            )
-                            st.success(f"✅ {symbol} - {name} 已加入监测列表")
-                        except Exception as e:
-                            st.error(f"❌ 添加失败: {str(e)}")
-
-                with col_action_quant:
-                    if st.button(f"🧪 加入量化模拟", key=f"quant_sim_{symbol}"):
-                        success, message, _ = add_stock_to_quant_sim(
-                            stock_code=symbol,
-                            stock_name=name,
-                            source="main_force",
-                            notes=f"主力选股评级：{rating}",
-                        )
-                        if success:
-                            st.success(message)
-                        else:
-                            st.error(message)
-
-    # 失败的股票
-    failed_results = [r for r in results if not r['success']]
-
-    if failed_results:
-        st.markdown("---")
-        st.markdown(f"### ❌ 分析失败的股票 ({len(failed_results)}只)")
-
-        failed_data = []
-        for result in failed_results:
-            failed_data.append({
-                '股票代码': result.get('symbol', ''),
-                '失败原因': result.get('error', '未知错误')
-            })
-
-        df_failed = pd.DataFrame(failed_data)
-        st.dataframe(df_failed, width='content')
 
