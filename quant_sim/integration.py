@@ -28,6 +28,7 @@ def add_stock_to_quant_sim(
     source: str,
     latest_price: Optional[float] = None,
     notes: Optional[str] = None,
+    metadata: Optional[dict[str, object]] = None,
     db_file: str | Path = DEFAULT_DB_FILE,
 ) -> tuple[bool, str, int]:
     """Add one selected stock into the shared quant simulation candidate pool."""
@@ -43,6 +44,7 @@ def add_stock_to_quant_sim(
         source=source,
         latest_price=latest_price,
         notes=notes,
+        metadata=metadata,
     )
     return True, f"✅ {normalized_code} - {stock_name} 已加入量化模拟", candidate_id
 
@@ -57,6 +59,50 @@ def extract_latest_price_from_row(row: dict | pd.Series) -> Optional[float]:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _extract_float_from_row(row: dict | pd.Series, *field_names: str) -> Optional[float]:
+    for field_name in field_names:
+        value = row.get(field_name)
+        try:
+            if value is not None and not pd.isna(value):
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_text_from_row(row: dict | pd.Series, *field_names: str) -> Optional[str]:
+    for field_name in field_names:
+        value = row.get(field_name)
+        if value is None or pd.isna(value):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def extract_metadata_from_row(row: dict | pd.Series) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+
+    numeric_fields = {
+        "profit_growth_pct": ("净利润增长率", "净利增长率", "净利润同比增长率", "利润增长率"),
+        "roe_pct": ("净资产收益率", "ROE"),
+        "pe_ratio": ("市盈率", "PE", "滚动市盈率"),
+        "pb_ratio": ("市净率", "PB"),
+        "market_cap": ("总市值", "市值"),
+    }
+    for target_key, aliases in numeric_fields.items():
+        value = _extract_float_from_row(row, *aliases)
+        if value is not None:
+            metadata[target_key] = value
+
+    industry = _extract_text_from_row(row, "所属行业", "行业")
+    if industry:
+        metadata["industry"] = industry
+
+    return metadata
 
 
 def sync_selector_dataframe_to_quant_sim(
@@ -89,6 +135,7 @@ def sync_selector_dataframe_to_quant_sim(
             source=source,
             latest_price=extract_latest_price_from_row(row),
             notes=note_prefix,
+            metadata=extract_metadata_from_row(row),
             db_file=db_file,
         )
         if success:

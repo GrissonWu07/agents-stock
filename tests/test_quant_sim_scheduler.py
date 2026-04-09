@@ -86,11 +86,13 @@ def test_scheduler_supports_background_start_stop_and_persists_run_metadata(tmp_
     assert status_before["running"] is False
     assert status_before["enabled"] is False
     assert status_before["interval_minutes"] == 15
+    assert status_before["analysis_timeframe"] == "30m"
 
-    scheduler.update_config(enabled=True, interval_minutes=20)
+    scheduler.update_config(enabled=True, interval_minutes=20, analysis_timeframe="1d+30m")
     status_after_config = scheduler.get_status()
     assert status_after_config["enabled"] is True
     assert status_after_config["interval_minutes"] == 20
+    assert status_after_config["analysis_timeframe"] == "1d+30m"
 
     started = scheduler.start()
     status_running = scheduler.get_status()
@@ -125,3 +127,27 @@ def test_scheduler_run_once_records_account_snapshot(tmp_path, monkeypatch):
     assert summary["signals_created"] == 1
     assert len(snapshots) == 1
     assert snapshots[0]["run_reason"] == "scheduled_scan"
+
+
+def test_scheduler_run_once_uses_configured_analysis_timeframe(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "main_force")
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler.update_config(enabled=True, analysis_timeframe="1d+30m")
+    captured = {}
+
+    def fake_analyze(candidate, market_snapshot=None, analysis_timeframe="1d"):
+        captured["analysis_timeframe"] = analysis_timeframe
+        return {
+            "action": "BUY",
+            "confidence": 82,
+            "reasoning": "趋势修复",
+            "position_size_pct": 20,
+        }
+
+    monkeypatch.setattr(scheduler.engine.adapter, "analyze_candidate", fake_analyze)
+
+    scheduler.run_once()
+
+    assert captured["analysis_timeframe"] == "1d+30m"

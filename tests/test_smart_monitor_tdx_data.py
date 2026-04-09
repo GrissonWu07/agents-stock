@@ -83,3 +83,83 @@ def test_get_kline_data_sorts_and_limits_pytdx_bars(monkeypatch):
     assert df["日期"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02", "2024-01-03"]
     assert df["收盘"].tolist() == [10.2, 10.5]
     assert df["成交量"].tolist() == [2000, 3000]
+
+
+def test_get_kline_data_range_aggregates_pages_and_filters_dates(monkeypatch):
+    fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
+
+    def fake_fetch(market, code, category, start, count):
+        if start == 0:
+            return [
+                {
+                    "datetime": "2024-01-03 15:00",
+                    "open": 10.3,
+                    "close": 10.5,
+                    "high": 10.8,
+                    "low": 10.1,
+                    "vol": 3000,
+                    "amount": 33000.0,
+                },
+                {
+                    "datetime": "2024-01-02 15:00",
+                    "open": 10.0,
+                    "close": 10.2,
+                    "high": 10.4,
+                    "low": 9.9,
+                    "vol": 2000,
+                    "amount": 22000.0,
+                },
+            ]
+        if start == 800:
+            return [
+                {
+                    "datetime": "2024-01-01 15:00",
+                    "open": 9.8,
+                    "close": 10.0,
+                    "high": 10.1,
+                    "low": 9.7,
+                    "vol": 1000,
+                    "amount": 10000.0,
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(fetcher, "_fetch_kline_data", fake_fetch)
+
+    df = fetcher.get_kline_data_range(
+        "000001",
+        kline_type="day",
+        start_datetime="2024-01-02 00:00:00",
+        end_datetime="2024-01-03 23:59:59",
+        max_bars=1600,
+    )
+
+    assert df["日期"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02", "2024-01-03"]
+    assert df["收盘"].tolist() == [10.2, 10.5]
+
+
+def test_build_snapshot_from_history_computes_historical_replay_snapshot(monkeypatch):
+    fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
+    monkeypatch.setattr(fetcher, "_get_stock_name", lambda stock_code: "平安银行")
+
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    history_df = pd.DataFrame(
+        {
+            "日期": dates,
+            "开盘": [10 + index * 0.1 for index in range(80)],
+            "收盘": [10.1 + index * 0.1 for index in range(80)],
+            "最高": [10.2 + index * 0.1 for index in range(80)],
+            "最低": [9.9 + index * 0.1 for index in range(80)],
+            "成交量": [1000 + index * 10 for index in range(80)],
+            "成交额": [10000 + index * 100 for index in range(80)],
+        }
+    )
+
+    snapshot = fetcher.build_snapshot_from_history("000001", history_df)
+
+    assert snapshot["code"] == "000001"
+    assert snapshot["name"] == "平安银行"
+    assert snapshot["data_source"] == "historical_replay"
+    assert snapshot["current_price"] == history_df.iloc[-1]["收盘"]
+    assert "ma5" in snapshot
+    assert "macd" in snapshot

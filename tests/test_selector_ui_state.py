@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 
 import selector_ui_state as state
@@ -74,3 +75,51 @@ def test_save_and_load_main_force_state_restores_analyzer_without_auto_sync_payl
     assert restored_analyzer.fund_flow_analysis == "资金分析"
     assert restored_analyzer.industry_analysis == "行业分析"
     assert restored_analyzer.fundamental_analysis == "基本面分析"
+
+
+def test_save_and_load_main_force_state_handles_numpy_and_timestamp_payloads(tmp_path):
+    raw_stocks = pd.DataFrame(
+        [
+            {
+                "股票代码": "600000.SH",
+                "股票简称": "浦发银行",
+                "区间主力资金流向": np.int64(123456789),
+                "统计时间": pd.Timestamp("2026-04-09 10:00:00"),
+            }
+        ]
+    )
+    analyzer = SimpleNamespace(
+        raw_stocks=raw_stocks,
+        fund_flow_analysis="资金分析",
+        industry_analysis="行业分析",
+        fundamental_analysis="基本面分析",
+    )
+    result = {
+        "success": True,
+        "total_stocks": np.int64(10),
+        "filtered_stocks": np.int64(3),
+        "final_recommendations": [
+            {
+                "rank": np.int64(1),
+                "symbol": "600000.SH",
+                "name": "浦发银行",
+                "highlights": "资金面突出",
+                "stock_data": raw_stocks.iloc[0].to_dict(),
+            }
+        ],
+    }
+
+    state.save_main_force_state(
+        result=result,
+        analyzer=analyzer,
+        selected_at="2026-04-09 10:00:00",
+        base_dir=tmp_path,
+    )
+
+    restored_result, restored_analyzer, restored_at = state.load_main_force_state(base_dir=tmp_path)
+
+    assert restored_at == "2026-04-09 10:00:00"
+    assert restored_result["total_stocks"] == 10
+    assert restored_result["final_recommendations"][0]["rank"] == 1
+    assert restored_result["final_recommendations"][0]["stock_data"]["统计时间"] == "2026-04-09 10:00:00"
+    assert restored_analyzer.raw_stocks.iloc[0]["股票代码"] == "600000.SH"

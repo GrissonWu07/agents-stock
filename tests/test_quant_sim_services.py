@@ -135,3 +135,107 @@ def test_signal_center_upserts_repeated_pending_signal_for_same_stock_and_action
     assert len(history) == 1
     assert pending[0]["confidence"] == 84
     assert pending[0]["reasoning"] == "第二次刷新后的建仓建议"
+
+
+def test_signal_center_does_not_emit_sell_signal_without_open_position(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate(
+        stock_code="301291",
+        stock_name="明阳电气",
+        source="main_force",
+    )
+    candidate = candidate_service.list_candidates()[0]
+
+    signal = signal_service.create_signal(
+        candidate,
+        {
+            "action": "SELL",
+            "confidence": 72,
+            "reasoning": "趋势走弱，建议卖出",
+            "position_size_pct": 0,
+        },
+    )
+
+    pending = signal_service.list_pending_signals()
+
+    assert signal["action"] == "HOLD"
+    assert signal["status"] == "observed"
+    assert pending == []
+    assert "无持仓" in signal["reasoning"]
+
+
+def test_signal_center_sanitizes_legacy_pending_sell_without_open_position(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate(
+        stock_code="301291",
+        stock_name="明阳电气",
+        source="main_force",
+    )
+    candidate = candidate_service.list_candidates()[0]
+    signal_id = signal_service.db.add_signal(
+        {
+            "candidate_id": candidate["id"],
+            "stock_code": candidate["stock_code"],
+            "stock_name": candidate["stock_name"],
+            "action": "SELL",
+            "confidence": 72,
+            "reasoning": "历史遗留卖出信号",
+            "position_size_pct": 0,
+            "stop_loss_pct": 5,
+            "take_profit_pct": 12,
+            "decision_type": "legacy",
+            "tech_score": -0.15,
+            "context_score": 0.28,
+            "status": "pending",
+        }
+    )
+
+    pending = signal_service.list_pending_signals()
+    history = signal_service.list_signals(stock_code="301291")
+
+    assert pending == []
+    assert history[0]["id"] == signal_id
+    assert history[0]["action"] == "HOLD"
+    assert history[0]["status"] == "observed"
+    assert "无持仓" in history[0]["reasoning"]
+
+
+def test_signal_center_persists_strategy_profile(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate(
+        stock_code="300390",
+        stock_name="天华新能",
+        source="main_force",
+        metadata={"profit_growth_pct": 35.0, "roe_pct": 19.0},
+    )
+    candidate = candidate_service.list_candidates()[0]
+
+    signal_service.create_signal(
+        candidate,
+        {
+            "action": "BUY",
+            "confidence": 87,
+            "reasoning": "策略共振买入",
+            "position_size_pct": 60,
+            "strategy_profile": {
+                "market_regime": {"label": "牛市", "score": 0.66},
+                "fundamental_quality": {"label": "强基本面", "score": 0.58},
+                "risk_style": {"label": "激进", "max_position_ratio": 0.8},
+                "analysis_timeframe": {"key": "30m"},
+                "effective_thresholds": {"buy_threshold": 0.64, "sell_threshold": -0.25},
+            },
+        },
+    )
+
+    signal = signal_service.list_signals(stock_code="300390", limit=1)[0]
+
+    assert signal["strategy_profile"]["market_regime"]["label"] == "牛市"
+    assert signal["strategy_profile"]["fundamental_quality"]["label"] == "强基本面"
+    assert signal["strategy_profile"]["risk_style"]["label"] == "激进"
+    assert signal["strategy_profile"]["analysis_timeframe"]["key"] == "30m"

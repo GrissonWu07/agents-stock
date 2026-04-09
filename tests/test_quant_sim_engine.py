@@ -1,6 +1,6 @@
 from quant_sim.candidate_pool_service import CandidatePoolService
 from quant_sim.engine import QuantSimEngine
-from quant_sim.stockpolicy_core import Decision
+from quant_kernel.models import Decision
 
 
 def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch):
@@ -13,16 +13,18 @@ def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch
     candidate = candidate_service.list_candidates()[0]
 
     engine = QuantSimEngine(db_file=tmp_path / "quant_sim.db")
-    monkeypatch.setattr(
-        engine.adapter,
-        "analyze_candidate",
-        lambda payload, market_snapshot=None: {
+    captured = {}
+
+    def fake_analyze_candidate(payload, market_snapshot=None, analysis_timeframe="1d"):
+        captured["analysis_timeframe"] = analysis_timeframe
+        return {
             "action": "BUY",
             "confidence": 82,
             "reasoning": "趋势确认",
             "position_size_pct": 20,
-        },
-    )
+        }
+
+    monkeypatch.setattr(engine.adapter, "analyze_candidate", fake_analyze_candidate)
 
     signal = engine.analyze_candidate(candidate)
     signals = engine.signal_center.list_signals(stock_code="600000")
@@ -30,6 +32,7 @@ def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch
     assert signal["action"] == "BUY"
     assert signal["status"] == "pending"
     assert signals[0]["confidence"] == 82
+    assert captured["analysis_timeframe"] == "1d"
 
 
 def test_engine_records_hold_as_observed_signal(tmp_path, monkeypatch):
@@ -45,7 +48,7 @@ def test_engine_records_hold_as_observed_signal(tmp_path, monkeypatch):
     monkeypatch.setattr(
         engine.adapter,
         "analyze_candidate",
-        lambda payload, market_snapshot=None: {
+        lambda payload, market_snapshot=None, analysis_timeframe="1d": {
             "action": "HOLD",
             "confidence": 61,
             "reasoning": "等待确认",
@@ -72,7 +75,7 @@ def test_engine_uses_embedded_stockpolicy_dual_track_decision(tmp_path, monkeypa
     monkeypatch.setattr(
         engine.adapter,
         "analyze_candidate",
-        lambda payload, market_snapshot=None: Decision(
+        lambda payload, market_snapshot=None, analysis_timeframe="1d": Decision(
             code=payload["stock_code"],
             action="BUY",
             confidence=0.86,
@@ -83,6 +86,7 @@ def test_engine_uses_embedded_stockpolicy_dual_track_decision(tmp_path, monkeypa
             context_score=0.31,
             position_ratio=0.6,
             decision_type="dual_track_resonance",
+            strategy_profile={"analysis_timeframe": {"key": analysis_timeframe}},
         ),
     )
 
@@ -92,3 +96,4 @@ def test_engine_uses_embedded_stockpolicy_dual_track_decision(tmp_path, monkeypa
     assert signal["tech_score"] == 0.62
     assert signal["context_score"] == 0.31
     assert signal["position_size_pct"] == 60.0
+    assert signal["strategy_profile"]["analysis_timeframe"]["key"] == "1d"

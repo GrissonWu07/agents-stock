@@ -26,20 +26,20 @@ class QuantSimEngine:
         self.portfolio = PortfolioService(db_file=db_file)
         self.adapter = adapter or StockPolicyAdapter()
 
-    def analyze_candidate(self, candidate: dict) -> dict:
-        decision = self.adapter.analyze_candidate(candidate)
+    def analyze_candidate(self, candidate: dict, analysis_timeframe: str = "1d") -> dict:
+        decision = self._evaluate_candidate_decision(candidate, analysis_timeframe=analysis_timeframe)
         decision_price = self._extract_decision_price(decision)
         if decision_price > 0:
             self.candidate_pool.db.update_candidate_latest_price(candidate["stock_code"], decision_price)
         return self.signal_center.create_signal(candidate, decision)
 
-    def analyze_active_candidates(self) -> list[dict]:
+    def analyze_active_candidates(self, analysis_timeframe: str = "1d") -> list[dict]:
         signals = []
         for candidate in self.candidate_pool.list_candidates(status="active"):
-            signals.append(self.analyze_candidate(candidate))
+            signals.append(self.analyze_candidate(candidate, analysis_timeframe=analysis_timeframe))
         return signals
 
-    def analyze_positions(self) -> list[dict]:
+    def analyze_positions(self, analysis_timeframe: str = "1d") -> list[dict]:
         signals = []
         for position in self.portfolio.list_positions():
             candidate = self.candidate_pool.db.get_candidate(position["stock_code"]) or {
@@ -48,12 +48,51 @@ class QuantSimEngine:
                 "source": "manual",
                 "sources": ["manual"],
             }
-            decision = self.adapter.analyze_position(candidate, position)
+            decision = self._evaluate_position_decision(candidate, position, analysis_timeframe=analysis_timeframe)
             decision_price = self._extract_decision_price(decision)
             if decision_price > 0:
                 self.portfolio.db.update_position_market_price(position["stock_code"], decision_price)
+                self.candidate_pool.db.update_candidate_latest_price(position["stock_code"], decision_price)
             signals.append(self.signal_center.create_signal(candidate, decision))
         return signals
+
+    def _evaluate_candidate_decision(
+        self,
+        candidate: dict,
+        *,
+        market_snapshot: dict | None = None,
+        analysis_timeframe: str = "1d",
+    ):
+        try:
+            return self.adapter.analyze_candidate(
+                candidate,
+                market_snapshot=market_snapshot,
+                analysis_timeframe=analysis_timeframe,
+            )
+        except TypeError as exc:
+            if "analysis_timeframe" not in str(exc):
+                raise
+            return self.adapter.analyze_candidate(candidate, market_snapshot=market_snapshot)
+
+    def _evaluate_position_decision(
+        self,
+        candidate: dict,
+        position: dict,
+        *,
+        market_snapshot: dict | None = None,
+        analysis_timeframe: str = "1d",
+    ):
+        try:
+            return self.adapter.analyze_position(
+                candidate,
+                position,
+                market_snapshot=market_snapshot,
+                analysis_timeframe=analysis_timeframe,
+            )
+        except TypeError as exc:
+            if "analysis_timeframe" not in str(exc):
+                raise
+            return self.adapter.analyze_position(candidate, position, market_snapshot=market_snapshot)
 
     @staticmethod
     def _extract_decision_price(decision: dict | object) -> float:

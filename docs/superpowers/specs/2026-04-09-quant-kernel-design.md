@@ -192,6 +192,12 @@ The first release formally supports:
 - `1d`
 - `1d+30m 共振`
 
+Product defaults:
+
+- `30m` is the default timeframe mode shown in the UI
+- realtime scheduled analysis must persist and reuse the selected timeframe mode
+- replay handoff into live simulation must preserve the replay timeframe mode instead of reverting to a hard-coded daily default
+
 Definitions:
 
 - `1d`
@@ -368,6 +374,14 @@ The replay UI must support:
 - timeframe mode selector
 - market selector
 - explicit option meaning “end not provided, replay through now”
+
+The timeframe selector must expose all first-release modes:
+
+- `30m`
+- `1d`
+- `1d+30m 共振`
+
+The default UI selection is `30m`.
 
 The UI must no longer force replay to `00:00 -> 15:00`.
 

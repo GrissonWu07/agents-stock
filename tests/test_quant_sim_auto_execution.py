@@ -1,0 +1,89 @@
+from quant_sim.candidate_pool_service import CandidatePoolService
+from quant_sim.portfolio_service import PortfolioService
+from quant_sim.scheduler import QuantSimScheduler
+from quant_sim.signal_center_service import SignalCenterService
+
+
+def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service.add_manual_candidate("300390", "天华新能", "main_force", latest_price=62.0)
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler.update_config(enabled=True, auto_execute=True)
+
+    monkeypatch.setattr(
+        scheduler.engine.adapter,
+        "analyze_candidate",
+        lambda candidate, market_snapshot=None: {
+            "action": "BUY",
+            "confidence": 84,
+            "reasoning": "双轨共振",
+            "position_size_pct": 20,
+            "price": 62.0,
+        },
+    )
+
+    summary = scheduler.run_once(run_reason="manual_scan")
+    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+
+    positions = portfolio_service.list_positions()
+    pending = signal_service.list_pending_signals()
+    history = signal_service.list_signals(stock_code="300390")
+    trades = portfolio_service.get_trade_history()
+
+    assert summary["auto_executed"] == 1
+    assert len(positions) == 1
+    assert positions[0]["stock_code"] == "300390"
+    assert pending == []
+    assert history[0]["status"] == "executed"
+    assert trades[0]["action"] == "buy"
+
+
+def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate("301291", "明阳电气", "main_force", latest_price=53.0)
+    candidate = candidate_service.list_candidates()[0]
+    buy_signal = signal_service.create_signal(
+        candidate,
+        {"action": "BUY", "confidence": 82, "reasoning": "先建仓", "position_size_pct": 20},
+    )
+    portfolio_service.confirm_buy(
+        buy_signal["id"],
+        price=53.0,
+        quantity=100,
+        note="预先持仓",
+        executed_at="2026-04-08 10:00:00",
+    )
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler.update_config(enabled=True, auto_execute=True)
+
+    monkeypatch.setattr(
+        scheduler.engine.adapter,
+        "analyze_position",
+        lambda candidate, position, market_snapshot=None: {
+            "action": "SELL",
+            "confidence": 78,
+            "reasoning": "走弱退出",
+            "position_size_pct": 0,
+            "price": 52.5,
+        },
+    )
+
+    summary = scheduler.run_once(run_reason="manual_scan")
+
+    positions = portfolio_service.list_positions()
+    pending = signal_service.list_pending_signals()
+    history = signal_service.list_signals(stock_code="301291")
+    trades = portfolio_service.get_trade_history()
+
+    assert summary["auto_executed"] == 1
+    assert positions == []
+    assert pending == []
+    assert history[0]["action"] == "SELL"
+    assert history[0]["status"] == "executed"
+    assert trades[0]["action"] == "sell"

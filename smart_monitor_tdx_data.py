@@ -182,6 +182,73 @@ class SmartMonitorTDXDataFetcher:
             self.logger.error(f"TDX获取K线失败 {clean_code}: {type(exc).__name__}: {exc}")
             return None
 
+    def get_kline_data_range(
+        self,
+        stock_code: str,
+        kline_type: str = "day",
+        *,
+        start_datetime: Optional[datetime | str] = None,
+        end_datetime: Optional[datetime | str] = None,
+        max_bars: int = 3200,
+    ) -> Optional[pd.DataFrame]:
+        """Fetch a larger historical K-line window and filter it by datetime range."""
+
+        clean_code = self._normalize_stock_code(stock_code)
+        market = self._get_market(clean_code)
+        category = KLINE_TYPE_MAP.get(kline_type, KLINE_TYPE_MAP["day"])
+        normalized_start = pd.to_datetime(start_datetime) if start_datetime is not None else None
+        normalized_end = pd.to_datetime(end_datetime) if end_datetime is not None else None
+
+        try:
+            chunk_size = 800
+            rows: list[dict] = []
+            start_offset = 0
+
+            while start_offset < max_bars:
+                batch = self._fetch_kline_data(market, clean_code, category, start_offset, min(chunk_size, max_bars - start_offset))
+                if not batch:
+                    break
+                rows.extend(batch)
+                if len(batch) < chunk_size:
+                    break
+                start_offset += chunk_size
+
+            if not rows:
+                return None
+
+            df = pd.DataFrame(rows)
+            if df.empty:
+                return None
+
+            df = df.rename(
+                columns={
+                    "datetime": "日期",
+                    "open": "开盘",
+                    "close": "收盘",
+                    "high": "最高",
+                    "low": "最低",
+                    "vol": "成交量",
+                    "amount": "成交额",
+                }
+            )
+            df["日期"] = pd.to_datetime(df["日期"])
+            df = (
+                df[["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]]
+                .sort_values("日期")
+                .drop_duplicates(subset=["日期"], keep="last")
+                .reset_index(drop=True)
+            )
+
+            if normalized_start is not None:
+                df = df[df["日期"] >= normalized_start]
+            if normalized_end is not None:
+                df = df[df["日期"] <= normalized_end]
+
+            return df.reset_index(drop=True)
+        except Exception as exc:
+            self.logger.error(f"TDX获取历史区间K线失败 {clean_code}: {type(exc).__name__}: {exc}")
+            return None
+
     def get_technical_indicators(self, stock_code: str, period: str = "daily") -> Optional[Dict]:
         """
         计算技术指标
@@ -305,6 +372,47 @@ class SmartMonitorTDXDataFetcher:
             result.update(indicators)
 
         return result
+
+    def build_snapshot_from_history(self, stock_code: str, history_df: Optional[pd.DataFrame]) -> Dict:
+        """Build a comprehensive snapshot from historical bars only."""
+
+        if history_df is None or history_df.empty:
+            return {}
+
+        df = history_df.copy()
+        if "日期" not in df.columns:
+            raise ValueError("history_df must contain 日期 column")
+
+        df["日期"] = pd.to_datetime(df["日期"])
+        df = df.sort_values("日期").reset_index(drop=True)
+
+        latest = df.iloc[-1]
+        snapshot = {
+            "code": self._normalize_stock_code(stock_code),
+            "name": self._get_stock_name(stock_code),
+            "current_price": float(latest["收盘"]),
+            "change_pct": 0.0,
+            "change_amount": 0.0,
+            "volume": float(latest.get("成交量", 0) or 0),
+            "amount": float(latest.get("成交额", 0) or 0),
+            "high": float(latest.get("最高", 0) or 0),
+            "low": float(latest.get("最低", 0) or 0),
+            "open": float(latest.get("开盘", 0) or 0),
+            "pre_close": float(df.iloc[-2]["收盘"]) if len(df) >= 2 else 0.0,
+            "turnover_rate": 0.0,
+            "volume_ratio": 1.0,
+            "update_time": latest["日期"].strftime("%Y-%m-%d %H:%M:%S"),
+            "data_source": "historical_replay",
+        }
+        if snapshot["pre_close"] > 0:
+            snapshot["change_amount"] = round(snapshot["current_price"] - snapshot["pre_close"], 4)
+            snapshot["change_pct"] = round(snapshot["change_amount"] / snapshot["pre_close"] * 100, 4)
+
+        indicators = self._calculate_all_indicators(df, stock_code)
+        if indicators:
+            snapshot.update(indicators)
+
+        return snapshot
 
     def _fetch_quote_data(self, market: int, code: str) -> Optional[Dict]:
         def operation(api: TdxHq_API):

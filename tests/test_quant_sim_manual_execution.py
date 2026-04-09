@@ -216,3 +216,30 @@ def test_confirm_buy_rejects_insufficient_available_cash(tmp_path):
             note="超出资金池",
             executed_at="2026-04-09 10:00:00",
         )
+
+
+def test_confirm_buy_unlocks_on_next_trading_day_not_calendar_day(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
+    candidate = candidate_service.list_candidates()[0]
+    buy_signal = signal_service.create_signal(
+        candidate,
+        {"action": "BUY", "confidence": 83, "reasoning": "建仓", "position_size_pct": 20},
+    )
+    portfolio_service.confirm_buy(
+        buy_signal["id"],
+        price=35.2,
+        quantity=100,
+        note="周五买入",
+        executed_at="2026-04-10 10:00:00",
+    )
+
+    saturday_lots = portfolio_service.db.get_position_lots("600036", as_of="2026-04-11 10:00:00")
+    monday_lots = portfolio_service.db.get_position_lots("600036", as_of="2026-04-13 10:00:00")
+
+    assert saturday_lots[0]["unlock_date"] == "2026-04-13"
+    assert saturday_lots[0]["is_sellable"] is False
+    assert monday_lots[0]["is_sellable"] is True

@@ -38,10 +38,13 @@ class QuantSimScheduler:
         self.job_tag = f"quant_sim::{self.db_file}"
 
     def run_once(self, run_reason: str = "scheduled_scan") -> dict[str, int | float]:
+        config = self.db.get_scheduler_config()
+        analysis_timeframe = str(config["analysis_timeframe"])
         candidates = self.engine.candidate_pool.list_candidates(status="active")
         positions = self.portfolio.list_positions()
-        candidate_signals = self.engine.analyze_active_candidates()
-        position_signals = self.engine.analyze_positions()
+        candidate_signals = self.engine.analyze_active_candidates(analysis_timeframe=analysis_timeframe)
+        position_signals = self.engine.analyze_positions(analysis_timeframe=analysis_timeframe)
+        auto_executed = self._auto_execute_pending_signals()
         snapshot_id = self.db.add_account_snapshot(run_reason)
         self.db.update_scheduler_config(last_run_at=self._now())
         account_summary = self.portfolio.get_account_summary()
@@ -49,6 +52,7 @@ class QuantSimScheduler:
             "candidates_scanned": len(candidates),
             "signals_created": len(candidate_signals) + len(position_signals),
             "positions_checked": len(positions),
+            "auto_executed": auto_executed,
             "snapshot_id": snapshot_id,
             "total_equity": account_summary["total_equity"],
         }
@@ -57,14 +61,18 @@ class QuantSimScheduler:
         self,
         *,
         enabled: bool | None = None,
+        auto_execute: bool | None = None,
         interval_minutes: int | None = None,
         trading_hours_only: bool | None = None,
+        analysis_timeframe: str | None = None,
         market: str | None = None,
     ) -> None:
         self.db.update_scheduler_config(
             enabled=enabled,
+            auto_execute=auto_execute,
             interval_minutes=interval_minutes,
             trading_hours_only=trading_hours_only,
+            analysis_timeframe=analysis_timeframe,
             market=market,
         )
         if self.running:
@@ -81,8 +89,10 @@ class QuantSimScheduler:
         return {
             "running": self.running,
             "enabled": config["enabled"],
+            "auto_execute": config["auto_execute"],
             "interval_minutes": config["interval_minutes"],
             "trading_hours_only": config["trading_hours_only"],
+            "analysis_timeframe": config["analysis_timeframe"],
             "market": config["market"],
             "last_run_at": config["last_run_at"],
             "next_run": next_run,
@@ -128,6 +138,17 @@ class QuantSimScheduler:
         if config["trading_hours_only"] and not self._is_trading_time(config["market"]):
             return
         self.run_once(run_reason="scheduled_scan")
+
+    def _auto_execute_pending_signals(self) -> int:
+        config = self.db.get_scheduler_config()
+        if not config["auto_execute"]:
+            return 0
+
+        executed = 0
+        for signal in self.engine.signal_center.list_pending_signals():
+            if self.portfolio.auto_execute_signal(signal):
+                executed += 1
+        return executed
 
     def _register_jobs(self, interval_minutes: int) -> None:
         self._clear_jobs()

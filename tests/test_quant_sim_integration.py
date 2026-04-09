@@ -55,3 +55,41 @@ def test_sync_selector_dataframe_to_quant_sim_collects_failures(monkeypatch):
         "success_count": 0,
         "failures": ["600000: db error"],
     }
+
+
+def test_sync_selector_dataframe_to_quant_sim_forwards_normalized_metadata(monkeypatch):
+    captured = []
+
+    def fake_add_stock_to_quant_sim(**kwargs):
+        captured.append(kwargs)
+        return True, "ok", 1
+
+    monkeypatch.setattr(integration, "add_stock_to_quant_sim", fake_add_stock_to_quant_sim)
+
+    integration.sync_selector_dataframe_to_quant_sim(
+        pd.DataFrame(
+            [
+                {
+                    "股票代码": "300390.SZ",
+                    "股票简称": "天华新能",
+                    "最新价": 61.99,
+                    "净利润增长率": 35.0,
+                    "净资产收益率": 19.0,
+                    "市盈率": 18.0,
+                    "市净率": 2.1,
+                    "所属行业": "锂电池",
+                    "总市值": 123456789.0,
+                }
+            ]
+        ),
+        source="profit_growth",
+    )
+
+    assert captured[0]["metadata"] == {
+        "profit_growth_pct": 35.0,
+        "roe_pct": 19.0,
+        "pe_ratio": 18.0,
+        "pb_ratio": 2.1,
+        "industry": "锂电池",
+        "market_cap": 123456789.0,
+    }

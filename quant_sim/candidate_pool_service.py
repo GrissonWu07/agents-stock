@@ -35,5 +35,28 @@ class CandidatePoolService:
             }
         )
 
+    def add_candidate(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str,
+        source: str,
+        latest_price: Optional[float] = None,
+        notes: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        status: str = "active",
+    ) -> int:
+        return self.db.add_candidate(
+            {
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "source": source,
+                "latest_price": latest_price or 0,
+                "notes": notes,
+                "metadata": metadata or {},
+                "status": status,
+            }
+        )
+
     def list_candidates(self, status: Optional[str] = None) -> list[dict[str, Any]]:
         return self.db.get_candidates(status=status)
