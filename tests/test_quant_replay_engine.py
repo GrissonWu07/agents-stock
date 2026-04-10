@@ -1,9 +1,14 @@
 from datetime import datetime
 
+import pandas as pd
+
 from quant_kernel.models import Decision
 from quant_sim.candidate_pool_service import CandidatePoolService
 from quant_sim.db import QuantSimDB
-from quant_sim.replay_service import QuantSimReplayService
+from quant_sim.engine import QuantSimEngine
+from quant_sim.portfolio_service import PortfolioService
+from quant_sim.replay_service import MainProjectHistoricalSnapshotProvider, QuantSimReplayService
+from quant_sim.signal_center_service import SignalCenterService
 
 
 class FakeSnapshotProvider:
@@ -13,7 +18,8 @@ class FakeSnapshotProvider:
     def prepare(self, stock_codes, start_datetime, end_datetime, timeframe):
         self.prepared.append((tuple(stock_codes), start_datetime, end_datetime, timeframe))
 
-    def get_snapshot(self, stock_code, checkpoint, timeframe):
+    def get_snapshot(self, stock_code, checkpoint, timeframe, stock_name=None):
+        del stock_name
         if checkpoint.date() == datetime(2026, 1, 5).date():
             price = 10.0
         else:
@@ -93,6 +99,71 @@ class FakeAdapter:
             decision_type="dual_track_divergence",
             strategy_profile={"analysis_timeframe": {"key": analysis_timeframe}},
         )
+
+
+class FakeTdxFetcher:
+    def get_kline_data_range(self, stock_code, *, kline_type, start_datetime, end_datetime, max_bars):
+        del stock_code, kline_type, start_datetime, end_datetime, max_bars
+        return pd.DataFrame(
+            [
+                {
+                    "日期": pd.Timestamp("2026-01-05 10:00:00"),
+                    "开盘": 10.0,
+                    "收盘": 10.2,
+                    "最高": 10.3,
+                    "最低": 9.9,
+                    "成交量": 1200,
+                    "成交额": 12000,
+                }
+            ]
+        )
+
+
+class NoLookupReplayFetcher:
+    def build_snapshot_from_history(self, stock_code, snapshot_window, stock_name=None):
+        assert stock_name == stock_code
+        assert not snapshot_window.empty
+        return {
+            "code": stock_code,
+            "name": stock_name,
+            "current_price": float(snapshot_window.iloc[-1]["收盘"]),
+        }
+
+
+def test_snapshot_provider_accepts_intraday_dataframe_without_truthiness_error():
+    provider = MainProjectHistoricalSnapshotProvider(tdx_fetcher=FakeTdxFetcher())
+
+    history = provider._load_history(  # noqa: SLF001 - targeted regression coverage
+        "300390",
+        start_datetime=datetime(2026, 1, 5, 0, 0),
+        end_datetime=datetime(2026, 1, 5, 23, 59),
+        timeframe="30m",
+    )
+
+    assert isinstance(history, pd.DataFrame)
+    assert list(history.columns) == ["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]
+    assert len(history) == 1
+
+
+def test_snapshot_provider_falls_back_to_stock_code_when_name_missing():
+    provider = MainProjectHistoricalSnapshotProvider(tdx_fetcher=NoLookupReplayFetcher())
+    provider.cache[("300390", "30m")] = pd.DataFrame(
+        [
+            {
+                "日期": pd.Timestamp("2026-01-05 10:00:00"),
+                "开盘": 10.0,
+                "收盘": 10.2,
+                "最高": 10.3,
+                "最低": 9.9,
+                "成交量": 1200,
+                "成交额": 12000,
+            }
+        ]
+    )
+
+    snapshot = provider.get_snapshot("300390", datetime(2026, 1, 5, 10, 0), "30m", stock_name=None)
+
+    assert snapshot["name"] == "300390"
 
 
 def test_historical_replay_persists_run_artifacts_without_touching_live_account(tmp_path):
@@ -231,3 +302,133 @@ def test_historical_replay_supports_resonance_timeframe(tmp_path):
 
     assert summary["status"] == "completed"
     assert adapter.candidate_calls[0]["analysis_timeframe"] == "1d+30m"
+
+
+def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monkeypatch):
+    db_file = tmp_path / "quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_candidate(
+        stock_code="300390",
+        stock_name="天华新能",
+        source="main_force",
+        latest_price=10.0,
+        notes="回放测试",
+    )
+
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=FakeSnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+
+    runner_calls = []
+
+    class FakeReplayRunner:
+        def start_run(self, run_id, target):
+            runner_calls.append({"run_id": run_id, "target": target})
+            return True
+
+    monkeypatch.setattr("quant_sim.replay_service.get_quant_sim_replay_runner", lambda db_file=None: FakeReplayRunner())
+
+    run_id = replay_service.enqueue_historical_range(
+        start_datetime=datetime(2026, 1, 5, 0, 0),
+        end_datetime=datetime(2026, 1, 6, 23, 59),
+        timeframe="30m",
+        market="CN",
+    )
+
+    db = QuantSimDB(db_file)
+    run = db.get_sim_runs(limit=1)[0]
+    expected_checkpoints = len(
+        replay_service.timepoint_generator.generate(
+            datetime(2026, 1, 5, 0, 0),
+            datetime(2026, 1, 6, 23, 59),
+            "30m",
+        )
+    )
+
+    assert run_id == run["id"]
+    assert run["status"] == "queued"
+    assert run["progress_total"] == expected_checkpoints
+    assert run["status_message"] == "等待后台任务启动"
+    assert runner_calls[0]["run_id"] == run_id
+
+
+def test_run_checkpoint_honors_cancel_request_inside_candidate_loop(tmp_path, monkeypatch):
+    db_file = tmp_path / "quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_candidate(stock_code="300390", stock_name="天华新能", source="main_force", latest_price=10.0, notes="回放测试")
+    candidate_service.add_candidate(stock_code="600531", stock_name="豫光金铅", source="main_force", latest_price=8.0, notes="回放测试")
+
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=FakeSnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+    engine = QuantSimEngine(db_file=db_file, adapter=replay_service.adapter)
+    portfolio = PortfolioService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+
+    state = {"count": 0}
+
+    def fake_cancel_requested(run_id):
+        state["count"] += 1
+        return state["count"] >= 2
+
+    monkeypatch.setattr(replay_service.db, "is_sim_run_cancel_requested", fake_cancel_requested)
+
+    summary = replay_service._run_checkpoint(  # noqa: SLF001 - targeted cancellation regression
+        run_id=99,
+        checkpoint=datetime(2026, 1, 5, 10, 0),
+        timeframe="30m",
+        engine=engine,
+        portfolio=portfolio,
+        signal_service=signal_service,
+    )
+
+    assert summary["cancelled"] is True
+    assert summary["candidates_scanned"] == 1
+
+
+def test_run_checkpoint_logs_signal_execution_error_and_continues(tmp_path, monkeypatch):
+    db_file = tmp_path / "quant_sim.db"
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=FakeSnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+    engine = QuantSimEngine(db_file=db_file, adapter=replay_service.adapter)
+    portfolio = PortfolioService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+    run_id = replay_service.db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2026-01-05 09:30:00",
+        end_datetime="2026-01-05 15:00:00",
+        initial_cash=100000.0,
+        status="running",
+        progress_total=1,
+    )
+
+    monkeypatch.setattr(signal_service, "list_pending_signals", lambda: [{"id": 99, "stock_code": "301291", "action": "SELL"}])
+
+    def fake_auto_execute_signal(signal, note=None, executed_at=None):
+        raise ValueError("sell quantity exceeds sellable quantity")
+
+    monkeypatch.setattr(portfolio, "auto_execute_signal", fake_auto_execute_signal)
+
+    summary = replay_service._run_checkpoint(  # noqa: SLF001 - targeted replay resilience coverage
+        run_id=run_id,
+        checkpoint=datetime(2026, 1, 5, 10, 0),
+        timeframe="30m",
+        engine=engine,
+        portfolio=portfolio,
+        signal_service=signal_service,
+    )
+
+    events = replay_service.db.get_sim_run_events(run_id, limit=10)
+
+    assert summary["cancelled"] is False
+    assert summary["auto_executed"] == 0
+    assert any("sell quantity exceeds sellable quantity" in event["message"] for event in events)

@@ -46,8 +46,6 @@ class SmartMonitorDataFetcher:
             tdx_host = TDX_CONFIG.get('host')
         if tdx_port is None:
             tdx_port = TDX_CONFIG.get('port', 7709)
-        if tdx_fallback_hosts is None:
-            tdx_fallback_hosts = TDX_CONFIG.get('fallback_hosts', [])
         if tdx_timeout is None:
             tdx_timeout = TDX_CONFIG.get('timeout', 5)
         
@@ -61,6 +59,7 @@ class SmartMonitorDataFetcher:
                     host=tdx_host,
                     port=tdx_port,
                     fallback_hosts=tdx_fallback_hosts,
+                    hosts_file=TDX_CONFIG.get('hosts_file'),
                     timeout=tdx_timeout,
                 )
                 self.logger.info("TDX数据源已启用: pytdx 直连模式")

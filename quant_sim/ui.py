@@ -8,9 +8,11 @@ import pandas as pd
 import streamlit as st
 
 from quant_sim.candidate_pool_service import CandidatePoolService
+from quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from quant_sim.engine import QuantSimEngine
 from quant_sim.integration import add_stock_to_quant_sim
 from quant_sim.portfolio_service import PortfolioService
+from quant_sim.replay_runner import get_quant_sim_replay_runner
 from quant_sim.replay_service import QuantSimReplayService
 from quant_sim.scheduler import get_quant_sim_scheduler
 from quant_sim.signal_center_service import SignalCenterService
@@ -56,48 +58,13 @@ def display_quant_sim() -> None:
     st.markdown("### ⏱️ 定时分析")
     status_level, status_message = build_scheduler_status_message(scheduler_status)
     getattr(st, status_level)(status_message)
-    status_col1, status_col2, status_col3, status_col4, status_col5 = st.columns(5)
+    status_col1, status_col2, status_col3, status_col4, status_col5, status_col6 = st.columns(6)
     status_col1.metric("定时状态", "运行中" if scheduler_status["running"] else "已停止")
     status_col2.metric("上次运行", scheduler_status["last_run_at"] or "暂无")
     status_col3.metric("下次运行", scheduler_status["next_run"] or "未启动")
     status_col4.metric("自动执行", "已开启" if scheduler_status["auto_execute"] else "关闭")
     status_col5.metric("分析粒度", _format_analysis_timeframe(str(scheduler_status["analysis_timeframe"])))
-
-    quick_action_col1, quick_action_col2, quick_action_col3, quick_action_col4 = st.columns(4)
-    with quick_action_col1:
-        if st.button(
-            "⚡ 立即分析候选池",
-            type="primary",
-            use_container_width=True,
-            key="quant_sim_scan_now",
-        ):
-            with st.status("正在分析候选池...", expanded=True) as status:
-                status.write("正在扫描候选股与模拟持仓...")
-                summary = handle_manual_scan(scheduler)
-                status.write(
-                    f"已扫描 {summary['candidates_scanned']} 只候选股，检查 {summary['positions_checked']} 个持仓。"
-                )
-                status.update(label="候选池分析完成", state="complete")
-            st.rerun()
-    with quick_action_col2:
-        if st.button("▶️ 启动定时分析", use_container_width=True, key="quant_sim_start_scheduler_top"):
-            handle_scheduler_start(
-                scheduler,
-                enabled=True,
-                auto_execute=bool(scheduler_status["auto_execute"]),
-                interval_minutes=int(scheduler_status["interval_minutes"]),
-                trading_hours_only=bool(scheduler_status["trading_hours_only"]),
-                analysis_timeframe=str(scheduler_status["analysis_timeframe"]),
-                market=str(scheduler_status["market"]),
-            )
-            st.rerun()
-    with quick_action_col3:
-        if st.button("⏹️ 停止定时分析", use_container_width=True, key="quant_sim_stop_scheduler_top"):
-            handle_scheduler_stop(scheduler)
-            st.rerun()
-    with quick_action_col4:
-        if st.button("🔄 刷新页面", use_container_width=True, key="quant_sim_refresh"):
-            st.rerun()
+    status_col6.metric("开始日期", str(scheduler_status["start_date"]))
 
     with st.expander("📖 使用流程", expanded=False):
         st.markdown(
@@ -110,10 +77,16 @@ def display_quant_sim() -> None:
         )
 
     with st.expander("⚙️ 定时分析设置与资金池", expanded=False):
-        config_col1, config_col2, config_col3, config_col4, config_col5, config_col6 = st.columns(6)
+        config_col1, config_col2, config_col3, config_col4 = st.columns(4)
         with config_col1:
             enabled = st.checkbox("启用定时模拟", value=bool(scheduler_status["enabled"]))
         with config_col2:
+            start_date = st.date_input(
+                "开始日期",
+                value=datetime.fromisoformat(f"{scheduler_status['start_date']} 00:00:00").date(),
+                key="quant_sim_scheduler_start_date",
+            )
+        with config_col3:
             interval_minutes = st.number_input(
                 "间隔(分钟)",
                 min_value=5,
@@ -121,25 +94,27 @@ def display_quant_sim() -> None:
                 value=int(scheduler_status["interval_minutes"]),
                 step=5,
             )
-        with config_col3:
+        with config_col4:
             trading_hours_only = st.checkbox(
                 "仅交易时段运行",
                 value=bool(scheduler_status["trading_hours_only"]),
             )
-        with config_col4:
+
+        config_col5, config_col6, config_col7 = st.columns(3)
+        with config_col5:
             analysis_timeframe = st.selectbox(
                 "分析粒度",
                 options=ANALYSIS_TIMEFRAME_OPTIONS,
                 index=ANALYSIS_TIMEFRAME_OPTIONS.index(str(scheduler_status["analysis_timeframe"])),
                 format_func=_format_analysis_timeframe,
             )
-        with config_col5:
+        with config_col6:
             market = st.selectbox(
                 "市场",
                 options=["CN", "HK", "US"],
                 index=["CN", "HK", "US"].index(str(scheduler_status["market"])),
             )
-        with config_col6:
+        with config_col7:
             auto_execute = st.checkbox(
                 "自动执行模拟交易",
                 value=bool(scheduler_status["auto_execute"]),
@@ -157,8 +132,32 @@ def display_quant_sim() -> None:
         with fund_col2:
             st.caption("初始资金只能在未开始交易前调整。")
 
-        action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+        action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
         with action_col1:
+            if st.button(
+                "⚡ 立即分析候选池",
+                type="primary",
+                use_container_width=True,
+                key="quant_sim_manual_scan_config",
+            ):
+                scheduler.update_config(
+                    enabled=enabled,
+                    auto_execute=auto_execute,
+                    interval_minutes=int(interval_minutes),
+                    trading_hours_only=trading_hours_only,
+                    analysis_timeframe=analysis_timeframe,
+                    start_date=start_date.isoformat(),
+                    market=market,
+                )
+                with st.status("正在分析候选池...", expanded=True) as status:
+                    status.write("正在扫描候选股与模拟持仓...")
+                    summary = handle_manual_scan(scheduler)
+                    status.write(
+                        f"已扫描 {summary['candidates_scanned']} 只候选股，检查 {summary['positions_checked']} 个持仓。"
+                    )
+                    status.update(label="候选池分析完成", state="complete")
+                st.rerun()
+        with action_col2:
             if st.button("💾 保存配置", use_container_width=True, key="quant_sim_save_scheduler_config"):
                 handle_scheduler_save(
                     scheduler,
@@ -167,10 +166,11 @@ def display_quant_sim() -> None:
                     interval_minutes=int(interval_minutes),
                     trading_hours_only=trading_hours_only,
                     analysis_timeframe=analysis_timeframe,
+                    start_date=start_date.isoformat(),
                     market=market,
                 )
                 st.rerun()
-        with action_col2:
+        with action_col3:
             if st.button(
                 "▶️ 保存并启动定时分析",
                 use_container_width=True,
@@ -183,10 +183,11 @@ def display_quant_sim() -> None:
                     interval_minutes=int(interval_minutes),
                     trading_hours_only=trading_hours_only,
                     analysis_timeframe=analysis_timeframe,
+                    start_date=start_date.isoformat(),
                     market=market,
                 )
                 st.rerun()
-        with action_col3:
+        with action_col4:
             if st.button(
                 "⏹️ 停止定时分析",
                 use_container_width=True,
@@ -194,12 +195,15 @@ def display_quant_sim() -> None:
             ):
                 handle_scheduler_stop(scheduler)
                 st.rerun()
-        with action_col4:
+        with action_col5:
             if st.button("💰 更新资金池", use_container_width=True, key="quant_sim_update_account"):
                 handle_account_update(portfolio_service, initial_cash)
                 st.rerun()
 
     with st.expander("🕰️ 历史区间回放", expanded=False):
+        render_replay_status_panel(candidate_service.db.db_file)
+        st.caption("历史回放会连续处理全部检查点，不会按真实世界的 30 分钟节奏等待。")
+
         replay_mode = st.selectbox(
             "回放模式",
             options=["historical_range", "continuous_to_live"],
@@ -281,30 +285,24 @@ def display_quant_sim() -> None:
             end_datetime = None
             if not replay_until_now and replay_end_date is not None and replay_end_time is not None:
                 end_datetime = build_replay_datetime(replay_end_date, replay_end_time)
-            with st.status("正在执行历史区间回放...", expanded=True) as status:
-                status.write("正在加载候选池与历史行情数据...")
-                if replay_mode == "historical_range":
-                    summary = handle_historical_replay(
-                        replay_service,
-                        start_datetime=start_datetime,
-                        end_datetime=end_datetime,
-                        timeframe=replay_timeframe,
-                        market=str(scheduler_status["market"]),
-                    )
-                else:
-                    summary = handle_continuous_replay(
-                        replay_service,
-                        start_datetime=start_datetime,
-                        end_datetime=end_datetime,
-                        timeframe=replay_timeframe,
-                        market=str(scheduler_status["market"]),
-                        overwrite_live=overwrite_live,
-                        auto_start_scheduler=auto_start_scheduler,
-                    )
-                status.write(
-                    f"已完成 {summary['checkpoint_count']} 个检查点，生成 {summary['trade_count']} 笔模拟交易。"
+            if replay_mode == "historical_range":
+                queue_historical_replay(
+                    replay_service,
+                    start_datetime=start_datetime,
+                    end_datetime=end_datetime,
+                    timeframe=replay_timeframe,
+                    market=str(scheduler_status["market"]),
                 )
-                status.update(label="历史区间模拟完成", state="complete")
+            else:
+                queue_continuous_replay(
+                    replay_service,
+                    start_datetime=start_datetime,
+                    end_datetime=end_datetime,
+                    timeframe=replay_timeframe,
+                    market=str(scheduler_status["market"]),
+                    overwrite_live=overwrite_live,
+                    auto_start_scheduler=auto_start_scheduler,
+                )
             st.rerun()
 
     with st.form("quant_sim_add_manual_candidate"):
@@ -503,6 +501,14 @@ def display_quant_sim() -> None:
             st.dataframe(run_df, use_container_width=True, hide_index=True)
 
             latest_run = replay_runs[0]
+            st.markdown("#### 最近一次回放状态")
+            replay_status_col1, replay_status_col2, replay_status_col3 = st.columns(3)
+            replay_status_col1.metric("状态", _format_replay_status(latest_run))
+            replay_status_col2.metric("检查点进度", f"{int(latest_run.get('progress_current') or 0)}/{int(latest_run.get('progress_total') or 0)}")
+            replay_status_col3.metric("最近检查点", str(latest_run.get("latest_checkpoint_at") or "暂无"))
+            if latest_run.get("status_message"):
+                st.caption(str(latest_run.get("status_message")))
+
             replay_metric1, replay_metric2, replay_metric3, replay_metric4 = st.columns(4)
             replay_metric1.metric("最近收益率", f"{float(latest_run.get('total_return_pct') or 0):.2f}%")
             replay_metric2.metric("最大回撤", f"{float(latest_run.get('max_drawdown_pct') or 0):.2f}%")
@@ -521,6 +527,12 @@ def display_quant_sim() -> None:
             if replay_trades:
                 st.markdown("#### 最近一次区间模拟成交")
                 st.dataframe(replay_trades, use_container_width=True, hide_index=True)
+
+            replay_events = candidate_service.db.get_sim_run_events(int(latest_run["id"]), limit=10)
+            if replay_events:
+                st.markdown("#### 最近一次回放事件")
+                for event in reversed(replay_events):
+                    st.caption(f"{event.get('created_at')} | {event.get('level')} | {event.get('message')}")
 
 
 def _format_source(source: str) -> str:
@@ -644,24 +656,83 @@ def build_replay_datetime(selected_date, selected_time) -> datetime:
     return datetime.combine(selected_date, selected_time).replace(microsecond=0)
 
 
+@st.fragment(run_every=5)
+def render_replay_status_panel(db_file: str = DEFAULT_DB_FILE) -> None:
+    db = QuantSimDB(db_file)
+    active_run = db.get_active_sim_run()
+
+    st.markdown("#### 当前回放状态")
+    if active_run is None:
+        st.info("当前回放状态：暂无运行中的回放任务。")
+        return
+
+    run_id = int(active_run["id"])
+    progress_current = int(active_run.get("progress_current") or 0)
+    progress_total = int(active_run.get("progress_total") or 0)
+    progress_ratio = min(progress_current / progress_total, 1.0) if progress_total > 0 else 0.0
+    status_label = _format_replay_status(active_run)
+    status_message = str(active_run.get("status_message") or "等待执行")
+    latest_checkpoint = active_run.get("latest_checkpoint_at") or "暂无"
+
+    status_col1, status_col2, status_col3 = st.columns(3)
+    status_col1.metric("任务", f"#{run_id}")
+    status_col2.metric("状态", status_label)
+    status_col3.metric("最近检查点", str(latest_checkpoint))
+
+    st.progress(progress_ratio, text=f"当前进度：{progress_current}/{progress_total}")
+    st.caption(status_message)
+
+    if st.button("🚫 取消回放任务", key=f"quant_sim_cancel_replay_{run_id}", use_container_width=True):
+        runner = get_quant_sim_replay_runner(db_file=db_file)
+        if runner.cancel_run(run_id):
+            queue_quant_sim_flash("warning", f"已请求取消回放任务 #{run_id}")
+        else:
+            queue_quant_sim_flash("info", f"回放任务 #{run_id} 当前不可取消")
+        st.rerun()
+
+    st.markdown("##### 最近事件")
+    events = list(reversed(db.get_sim_run_events(run_id, limit=8)))
+    if not events:
+        st.caption("暂无事件记录。")
+        return
+
+    for event in events:
+        st.caption(f"{event.get('created_at')} | {event.get('level')} | {event.get('message')}")
+
+
+def _format_replay_status(run: dict) -> str:
+    status = str(run.get("status") or "").lower()
+    return {
+        "queued": "等待中",
+        "running": "运行中",
+        "completed": "已完成",
+        "failed": "已失败",
+        "cancelled": "已取消",
+    }.get(status, status or "未知")
+
+
 def build_scheduler_status_message(status: dict) -> tuple[str, str]:
     auto_execute_label = "自动执行已开启" if status.get("auto_execute") else "自动执行已关闭"
     timeframe_label = _format_analysis_timeframe(str(status.get("analysis_timeframe") or "30m"))
+    start_date_label = str(status.get("start_date") or "未设置")
     if status.get("running"):
         return (
             "success",
             f"🟢 定时分析运行中，当前按每 {status.get('interval_minutes', 0)} 分钟执行一次。"
-            f" 当前策略粒度：{timeframe_label}。{auto_execute_label}。下次运行：{status.get('next_run') or '计算中'}。",
+            f" 当前策略粒度：{timeframe_label}。开始日期：{start_date_label}。"
+            f"{auto_execute_label}。下次运行：{status.get('next_run') or '计算中'}。",
         )
     if status.get("enabled"):
         return (
             "warning",
             f"🟡 已配置定时分析，但当前还未启动。计划间隔 {status.get('interval_minutes', 0)} 分钟，"
-            f"当前策略粒度：{timeframe_label}，{auto_execute_label}，请点击“启动定时分析”。",
+            f"当前策略粒度：{timeframe_label}，开始日期：{start_date_label}，"
+            f"{auto_execute_label}，请点击“启动定时分析”。",
         )
     return (
         "info",
-        f"⚪ 当前未启用定时分析，只会在你手动点击“立即分析候选池”时运行。当前策略粒度：{timeframe_label}。{auto_execute_label}。",
+        f"⚪ 当前未启用定时分析，只会在你手动点击“立即分析候选池”时运行。"
+        f"当前策略粒度：{timeframe_label}。开始日期：{start_date_label}。{auto_execute_label}。",
     )
 
 
@@ -684,6 +755,7 @@ def handle_scheduler_save(
     interval_minutes: int,
     trading_hours_only: bool,
     analysis_timeframe: str,
+    start_date: str,
     market: str,
     state=None,
 ) -> None:
@@ -693,6 +765,7 @@ def handle_scheduler_save(
         interval_minutes=interval_minutes,
         trading_hours_only=trading_hours_only,
         analysis_timeframe=analysis_timeframe,
+        start_date=start_date,
         market=market,
     )
     queue_quant_sim_flash("success", "✅ 定时分析配置已保存", state=state)
@@ -706,6 +779,7 @@ def handle_scheduler_start(
     interval_minutes: int,
     trading_hours_only: bool,
     analysis_timeframe: str,
+    start_date: str,
     market: str,
     state=None,
 ) -> bool:
@@ -715,6 +789,7 @@ def handle_scheduler_start(
         interval_minutes=interval_minutes,
         trading_hours_only=trading_hours_only,
         analysis_timeframe=analysis_timeframe,
+        start_date=start_date,
         market=market,
     )
     started = scheduler.start()
@@ -742,6 +817,64 @@ def handle_account_update(portfolio_service, initial_cash: float, state=None) ->
         return False
     queue_quant_sim_flash("success", "✅ 资金池已更新", state=state)
     return True
+
+
+def queue_historical_replay(
+    replay_service,
+    *,
+    start_datetime,
+    end_datetime=None,
+    timeframe: str,
+    market: str,
+    state=None,
+) -> int | None:
+    try:
+        run_id = replay_service.enqueue_historical_range(
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            timeframe=timeframe,
+            market=market,
+        )
+    except Exception as exc:
+        queue_quant_sim_flash("error", f"启动失败：{exc}", state=state)
+        return None
+    queue_quant_sim_flash(
+        "success",
+        f"✅ 历史区间回放任务已创建（#{run_id}），请在“当前回放状态”查看进度。",
+        state=state,
+    )
+    return run_id
+
+
+def queue_continuous_replay(
+    replay_service,
+    *,
+    start_datetime,
+    end_datetime=None,
+    timeframe: str,
+    market: str,
+    overwrite_live: bool,
+    auto_start_scheduler: bool,
+    state=None,
+) -> int | None:
+    try:
+        run_id = replay_service.enqueue_past_to_live(
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            timeframe=timeframe,
+            market=market,
+            overwrite_live=overwrite_live,
+            auto_start_scheduler=auto_start_scheduler,
+        )
+    except Exception as exc:
+        queue_quant_sim_flash("error", f"启动失败：{exc}", state=state)
+        return None
+    queue_quant_sim_flash(
+        "success",
+        f"✅ 接续回放任务已创建（#{run_id}），请在“当前回放状态”查看进度。",
+        state=state,
+    )
+    return run_id
 
 
 def handle_historical_replay(

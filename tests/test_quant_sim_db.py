@@ -148,3 +148,37 @@ def test_account_summary_and_trade_history_track_cash_and_realized_pnl(tmp_path)
     assert len(trades_after_sell) == 2
     assert trades_after_sell[0]["action"] == "sell"
     assert trades_after_sell[0]["realized_pnl"] == 200.0
+
+
+def test_finalize_cancelled_run_preserves_completed_progress(tmp_path):
+    db = QuantSimDB(tmp_path / "quant_sim.db")
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2026-04-01 09:30:00",
+        end_datetime="2026-04-09 15:00:00",
+        initial_cash=100000.0,
+        status="running",
+        progress_current=2,
+        progress_total=176,
+        status_message="正在执行",
+    )
+
+    db.finalize_sim_run(
+        run_id,
+        status="cancelled",
+        final_equity=100000.0,
+        total_return_pct=0.0,
+        max_drawdown_pct=0.0,
+        win_rate=0.0,
+        trade_count=0,
+        status_message="回放任务已取消",
+    )
+
+    run = db.get_sim_run(run_id)
+
+    assert run is not None
+    assert run["status"] == "cancelled"
+    assert run["progress_current"] == 2
+    assert run["progress_total"] == 176

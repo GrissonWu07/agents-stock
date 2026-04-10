@@ -48,15 +48,11 @@ class LowPriceBullService:
             tdx_host = os.getenv('TDX_HOST', '').strip() or None
             tdx_port = int(os.getenv('TDX_PORT', '7709'))
             tdx_timeout = int(os.getenv('TDX_TIMEOUT', '5'))
-            tdx_fallback_hosts = [
-                item.strip()
-                for item in os.getenv('TDX_FALLBACK_HOSTS', '').split(',')
-                if item.strip()
-            ]
+            tdx_hosts_file = os.getenv('TDX_HOSTS_FILE', '').strip() or None
             self.tdx_fetcher = SmartMonitorTDXDataFetcher(
                 host=tdx_host,
                 port=tdx_port,
-                fallback_hosts=tdx_fallback_hosts,
+                hosts_file=tdx_hosts_file,
                 timeout=tdx_timeout,
             )
             

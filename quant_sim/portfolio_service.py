@@ -100,10 +100,13 @@ class PortfolioService:
             return True
 
         if action == "SELL":
-            position = self._get_position(stock_code)
+            position = self._get_position(stock_code, as_of=executed_at)
             if not position:
                 return False
-            quantity = int(position.get("sellable_quantity") or 0)
+            quantity = min(
+                int(position.get("quantity") or 0),
+                int(position.get("sellable_quantity") or 0),
+            )
             price = self._resolve_signal_price(signal, fallback=position)
             if price <= 0 or quantity <= 0:
                 return False
@@ -146,8 +149,8 @@ class PortfolioService:
                     return value
         return 0.0
 
-    def _get_position(self, stock_code: str) -> Optional[dict]:
-        for position in self.list_positions():
+    def _get_position(self, stock_code: str, *, as_of: str | datetime | None = None) -> Optional[dict]:
+        for position in self.db.get_positions(as_of=as_of):
             if position.get("stock_code") == stock_code:
                 return position
         return None

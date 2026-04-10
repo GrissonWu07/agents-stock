@@ -40,7 +40,7 @@ class StockMonitorService:
                 self.tdx_fetcher = SmartMonitorTDXDataFetcher(
                     host=TDX_CONFIG.get('host'),
                     port=TDX_CONFIG.get('port', 7709),
-                    fallback_hosts=TDX_CONFIG.get('fallback_hosts', []),
+                    hosts_file=TDX_CONFIG.get('hosts_file'),
                     timeout=TDX_CONFIG.get('timeout', 5),
                 )
                 self.use_tdx = True

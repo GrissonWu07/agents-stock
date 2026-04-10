@@ -11,7 +11,8 @@ class HoldSnapshotProvider:
     def prepare(self, stock_codes, start_datetime, end_datetime, timeframe):
         return None
 
-    def get_snapshot(self, stock_code, checkpoint, timeframe):
+    def get_snapshot(self, stock_code, checkpoint, timeframe, stock_name=None):
+        del stock_code, stock_name
         return {
             "current_price": 10.0,
             "latest_price": 10.0,
@@ -108,7 +109,8 @@ class OrderedSnapshotProvider:
     def prepare(self, stock_codes, start_datetime, end_datetime, timeframe):
         self.prepared.append((tuple(stock_codes), start_datetime, end_datetime, timeframe))
 
-    def get_snapshot(self, stock_code, checkpoint, timeframe):
+    def get_snapshot(self, stock_code, checkpoint, timeframe, stock_name=None):
+        del stock_code, timeframe, stock_name
         price_map = {
             datetime(2026, 1, 5, 14, 50): 10.0,
             datetime(2026, 1, 6, 14, 50): 12.0,

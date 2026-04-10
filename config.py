@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 加载环境变量（override=True 强制覆盖已存在的环境变量）
@@ -27,11 +28,13 @@ MINIQMT_CONFIG = {
 }
 
 # TDX 股票数据源配置（使用 pytdx 直连通达信行情服务器）
+DEFAULT_TDX_HOSTS_FILE = str(Path(__file__).resolve().parent / "config" / "pytdx_hosts.json")
 TDX_CONFIG = {
     'enabled': os.getenv("TDX_ENABLED", "false").lower() == "true",
     'host': os.getenv("TDX_HOST", "").strip() or None,
     'port': int(os.getenv("TDX_PORT", "7709")),
     'timeout': int(os.getenv("TDX_TIMEOUT", "5")),
+    'hosts_file': os.getenv("TDX_HOSTS_FILE", DEFAULT_TDX_HOSTS_FILE).strip() or DEFAULT_TDX_HOSTS_FILE,
     'fallback_hosts': [
         item.strip()
         for item in os.getenv("TDX_FALLBACK_HOSTS", "").split(",")

@@ -335,7 +335,129 @@ git add quant_sim/ui.py tests/test_quant_sim_ui_feedback.py
 git commit -m "feat: show strategy basics for each quant signal"
 ```
 
-### Task 6: End-to-end verification and final two-pass review
+### Task 6: Add repo-local `pytdx` host configuration
+
+**Files:**
+- Create: `C:\Projects\githubs\aiagents-stock\config\pytdx_hosts.json`
+- Create: `C:\Projects\githubs\aiagents-stock\pytdx_host_config.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\config.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\smart_monitor_tdx_data.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\tests\test_smart_monitor_tdx_data.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_fetcher_loads_repo_local_pytdx_hosts_before_bundled_defaults(tmp_path, monkeypatch):
+    ...
+    assert fetcher.hosts[0] == ("上证云成都电信一", "218.6.170.47", 7709)
+
+
+def test_fetcher_deduplicates_repo_host_file_and_env_fallbacks(tmp_path, monkeypatch):
+    ...
+    assert fetcher.hosts == [
+        ("primary", "1.1.1.1", 7709),
+        ("成都", "218.6.170.47", 7709),
+        ("fallback-123.125.108.14", "123.125.108.14", 7709),
+    ]
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+
+```powershell
+python -m pytest -q -p no:cacheprovider tests/test_smart_monitor_tdx_data.py
+```
+
+Expected: FAIL because no repo-local host loader exists yet.
+
+- [ ] **Step 3: Implement the host-file loader and config wiring**
+
+```python
+def load_pytdx_hosts(config_file: str | Path | None) -> list[tuple[str, str, int]]:
+    ...
+    return hosts
+```
+
+- [ ] **Step 4: Run tests to verify host loading works**
+
+Run:
+
+```powershell
+python -m pytest -q -p no:cacheprovider tests/test_smart_monitor_tdx_data.py
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add config/pytdx_hosts.json pytdx_host_config.py config.py smart_monitor_tdx_data.py tests/test_smart_monitor_tdx_data.py
+git commit -m "feat: externalize pytdx host configuration"
+```
+
+### Task 7: Move replay execution into a background task runner
+
+**Files:**
+- Create: `C:\Projects\githubs\aiagents-stock\quant_sim\replay_runner.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\quant_sim\db.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\quant_sim\replay_service.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\quant_sim\ui.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\tests\test_quant_replay_engine.py`
+- Modify: `C:\Projects\githubs\aiagents-stock\tests\test_quant_sim_ui_feedback.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_replay_runner_starts_background_run_without_blocking_ui(tmp_path):
+    ...
+    assert run["status"] in {"queued", "running"}
+    assert run["progress_total"] == 2
+
+
+def test_replay_ui_source_shows_running_status_progress_and_cancel():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    assert "运行中" in ui_source
+    assert "取消回放任务" in ui_source
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+
+```powershell
+python -m pytest -q -p no:cacheprovider tests/test_quant_replay_engine.py tests/test_quant_sim_ui_feedback.py
+```
+
+Expected: FAIL because replay still runs synchronously and has no background-task state/progress/cancel UI.
+
+- [ ] **Step 3: Implement the background replay runner and persistence**
+
+```python
+class QuantSimReplayRunner:
+    def start_run(...):
+        ...
+        return run_id
+```
+
+- [ ] **Step 4: Run tests to verify replay-task workflow**
+
+Run:
+
+```powershell
+python -m pytest -q -p no:cacheprovider tests/test_quant_replay_engine.py tests/test_quant_sim_ui_feedback.py
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add quant_sim/replay_runner.py quant_sim/db.py quant_sim/replay_service.py quant_sim/ui.py tests/test_quant_replay_engine.py tests/test_quant_sim_ui_feedback.py
+git commit -m "feat: run quant replay in background with progress"
+```
+
+### Task 8: End-to-end verification and final two-pass review
 
 **Files:**
 - Modify: `C:\Projects\githubs\aiagents-stock\docs\superpowers\specs\2026-04-09-quant-kernel-design.md`
@@ -349,6 +471,8 @@ Check every spec requirement against code:
 - derived risk style
 - supported timeframe modes
 - omitted replay end datetime
+- repo-local `pytdx` host config
+- replay background-task status/progress/cancel
 - persisted strategy profile
 - per-stock strategy basics in UI
 

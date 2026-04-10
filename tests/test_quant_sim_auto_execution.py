@@ -87,3 +87,61 @@ def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch)
     assert history[0]["action"] == "SELL"
     assert history[0]["status"] == "executed"
     assert trades[0]["action"] == "sell"
+
+
+def test_auto_execute_sell_clamps_quantity_to_historical_sellable_quantity(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+
+    candidate_service.add_manual_candidate("301291", "明阳电气", "main_force", latest_price=53.0)
+    candidate = candidate_service.list_candidates()[0]
+
+    first_buy = signal_service.create_signal(
+        candidate,
+        {"action": "BUY", "confidence": 82, "reasoning": "第一笔建仓", "position_size_pct": 20},
+    )
+    portfolio_service.confirm_buy(
+        first_buy["id"],
+        price=53.0,
+        quantity=100,
+        note="第一笔",
+        executed_at="2026-04-08 10:00:00",
+    )
+
+    second_buy = signal_service.create_signal(
+        candidate,
+        {"action": "BUY", "confidence": 80, "reasoning": "第二笔建仓", "position_size_pct": 20},
+    )
+    portfolio_service.confirm_buy(
+        second_buy["id"],
+        price=52.0,
+        quantity=100,
+        note="第二笔",
+        executed_at="2026-04-09 10:00:00",
+    )
+
+    sell_signal = signal_service.create_signal(
+        candidate,
+        {"action": "SELL", "confidence": 78, "reasoning": "自动卖出", "position_size_pct": 0},
+    )
+
+    executed = portfolio_service.auto_execute_signal(
+        sell_signal,
+        note="历史回放自动卖出",
+        executed_at="2026-04-09 10:30:00",
+    )
+
+    positions = portfolio_service.db.get_positions(as_of="2026-04-09 10:30:00")
+    lots = portfolio_service.db.get_position_lots("301291", as_of="2026-04-09 10:30:00")
+    trades = portfolio_service.get_trade_history()
+
+    assert executed is True
+    assert len(positions) == 1
+    assert positions[0]["quantity"] == 100
+    assert positions[0]["sellable_quantity"] == 0
+    assert positions[0]["locked_quantity"] == 100
+    assert len(lots) == 1
+    assert lots[0]["remaining_quantity"] == 100
+    assert trades[0]["action"] == "sell"
+    assert trades[0]["quantity"] == 100

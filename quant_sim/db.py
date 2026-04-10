@@ -179,6 +179,7 @@ class QuantSimDB:
                 interval_minutes INTEGER DEFAULT 15,
                 trading_hours_only INTEGER DEFAULT 1,
                 analysis_timeframe TEXT DEFAULT '30m',
+                start_date TEXT,
                 market TEXT DEFAULT 'CN',
                 last_run_at TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -204,7 +205,11 @@ class QuantSimDB:
                 win_rate REAL DEFAULT 0,
                 trade_count INTEGER DEFAULT 0,
                 checkpoint_count INTEGER DEFAULT 0,
+                progress_current INTEGER DEFAULT 0,
+                progress_total INTEGER DEFAULT 0,
                 latest_checkpoint_at TEXT,
+                status_message TEXT,
+                cancel_requested INTEGER DEFAULT 0,
                 metadata_json TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -286,6 +291,18 @@ class QuantSimDB:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sim_run_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                level TEXT NOT NULL DEFAULT 'info',
+                message TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(run_id) REFERENCES sim_runs(id)
+            )
+            """
+        )
 
         self._ensure_column(cursor, "strategy_signals", "decision_type", "TEXT")
         self._ensure_column(cursor, "strategy_signals", "tech_score", "REAL DEFAULT 0")
@@ -301,6 +318,11 @@ class QuantSimDB:
             "analysis_timeframe",
             "TEXT DEFAULT '30m'",
         )
+        self._ensure_column(cursor, "sim_scheduler_config", "start_date", "TEXT")
+        self._ensure_column(cursor, "sim_runs", "progress_current", "INTEGER DEFAULT 0")
+        self._ensure_column(cursor, "sim_runs", "progress_total", "INTEGER DEFAULT 0")
+        self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
+        self._ensure_column(cursor, "sim_runs", "cancel_requested", "INTEGER DEFAULT 0")
 
         self._backfill_candidate_sources(cursor)
         self._backfill_lot_defaults(cursor)
@@ -633,8 +655,12 @@ class QuantSimDB:
         start_datetime: str,
         end_datetime: str,
         initial_cash: float,
+        status: str = "running",
         auto_execute: bool = True,
         handoff_to_live: bool = False,
+        progress_current: int = 0,
+        progress_total: int = 0,
+        status_message: str | None = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> int:
         conn = self._connect()
@@ -644,12 +670,14 @@ class QuantSimDB:
             INSERT INTO sim_runs
             (
                 mode, status, timeframe, market, auto_execute, handoff_to_live,
-                start_datetime, end_datetime, initial_cash, metadata_json, created_at, updated_at
+                start_datetime, end_datetime, initial_cash, progress_current, progress_total,
+                status_message, metadata_json, created_at, updated_at
             )
-            VALUES (?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 mode,
+                status,
                 timeframe,
                 market,
                 int(auto_execute),
@@ -657,6 +685,9 @@ class QuantSimDB:
                 start_datetime,
                 end_datetime,
                 float(initial_cash),
+                int(progress_current),
+                int(progress_total),
+                status_message,
                 json.dumps(metadata or {}, ensure_ascii=False),
                 self._now(),
                 self._now(),
@@ -720,6 +751,140 @@ class QuantSimDB:
         conn.commit()
         conn.close()
         return checkpoint_id
+
+    def update_sim_run_progress(
+        self,
+        run_id: int,
+        *,
+        status: Optional[str] = None,
+        progress_current: Optional[int] = None,
+        progress_total: Optional[int] = None,
+        latest_checkpoint_at: Optional[str] = None,
+        status_message: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        updates: list[str] = []
+        params: list[Any] = []
+
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if progress_current is not None:
+            updates.append("progress_current = ?")
+            params.append(int(progress_current))
+        if progress_total is not None:
+            updates.append("progress_total = ?")
+            params.append(int(progress_total))
+        if latest_checkpoint_at is not None:
+            updates.append("latest_checkpoint_at = ?")
+            params.append(latest_checkpoint_at)
+        if status_message is not None:
+            updates.append("status_message = ?")
+            params.append(status_message)
+
+        if metadata is not None:
+            conn = self._connect()
+            cursor = conn.cursor()
+            cursor.execute("SELECT metadata_json FROM sim_runs WHERE id = ?", (run_id,))
+            row = cursor.fetchone()
+            merged_metadata = {**self._loads_metadata(row["metadata_json"] if row else None), **metadata}
+            updates.append("metadata_json = ?")
+            params.append(json.dumps(merged_metadata, ensure_ascii=False))
+        else:
+            conn = self._connect()
+            cursor = conn.cursor()
+
+        if not updates:
+            conn.close()
+            return
+
+        updates.append("updated_at = ?")
+        params.append(self._now())
+        params.append(run_id)
+        cursor.execute(
+            f"UPDATE sim_runs SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        conn.commit()
+        conn.close()
+
+    def append_sim_run_event(self, run_id: int, message: str, *, level: str = "info") -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO sim_run_events (run_id, level, message, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (run_id, level, message, self._now()),
+        )
+        event_id = int(cursor.lastrowid)
+        conn.commit()
+        conn.close()
+        return event_id
+
+    def get_sim_run(self, run_id: int) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sim_runs WHERE id = ?", (run_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return self._row_to_dict(row) if row is not None else None
+
+    def get_active_sim_run(self) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM sim_runs
+            WHERE status IN ('queued', 'running')
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return self._row_to_dict(row) if row is not None else None
+
+    def get_sim_run_events(self, run_id: int, limit: int = 20) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM sim_run_events
+            WHERE run_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (run_id, limit),
+        )
+        rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def request_sim_run_cancel(self, run_id: int) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE sim_runs
+            SET cancel_requested = 1,
+                status_message = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            ("已请求取消，正在尽快停止当前回放", self._now(), run_id),
+        )
+        conn.commit()
+        conn.close()
+
+    def is_sim_run_cancel_requested(self, run_id: int) -> bool:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT cancel_requested FROM sim_runs WHERE id = ?", (run_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return bool(row["cancel_requested"]) if row is not None else False
 
     def replace_sim_run_results(
         self,
@@ -822,19 +987,24 @@ class QuantSimDB:
         max_drawdown_pct: float,
         win_rate: float,
         trade_count: int,
+        status_message: str | None = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT metadata_json FROM sim_runs WHERE id = ?", (run_id,))
+        cursor.execute("SELECT metadata_json, progress_total, progress_current FROM sim_runs WHERE id = ?", (run_id,))
         row = cursor.fetchone()
         existing_metadata = self._loads_metadata(row["metadata_json"] if row else None)
         merged_metadata = {**existing_metadata, **(metadata or {})}
+        progress_total = int(row["progress_total"] or 0) if row is not None else 0
+        progress_current = int(row["progress_current"] or 0) if row is not None else 0
+        final_progress_current = progress_total if status == "completed" else progress_current
         cursor.execute(
             """
             UPDATE sim_runs
             SET status = ?, final_equity = ?, total_return_pct = ?, max_drawdown_pct = ?,
-                win_rate = ?, trade_count = ?, metadata_json = ?, updated_at = ?
+                win_rate = ?, trade_count = ?, progress_current = ?, status_message = ?,
+                metadata_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -844,6 +1014,8 @@ class QuantSimDB:
                 round(max_drawdown_pct, 4),
                 round(win_rate, 4),
                 int(trade_count),
+                final_progress_current,
+                status_message,
                 json.dumps(merged_metadata, ensure_ascii=False),
                 self._now(),
                 run_id,
@@ -932,6 +1104,7 @@ class QuantSimDB:
             "interval_minutes": int(row["interval_minutes"]),
             "trading_hours_only": bool(row["trading_hours_only"]),
             "analysis_timeframe": self._normalize_analysis_timeframe(row["analysis_timeframe"]),
+            "start_date": self._normalize_start_date(row["start_date"]),
             "market": row["market"] or "CN",
             "last_run_at": row["last_run_at"],
             "updated_at": row["updated_at"],
@@ -945,6 +1118,7 @@ class QuantSimDB:
         interval_minutes: Optional[int] = None,
         trading_hours_only: Optional[bool] = None,
         analysis_timeframe: Optional[str] = None,
+        start_date: Optional[str | date | datetime] = None,
         market: Optional[str] = None,
         last_run_at: Optional[str] = None,
     ) -> None:
@@ -957,6 +1131,7 @@ class QuantSimDB:
             "analysis_timeframe": self._normalize_analysis_timeframe(
                 existing["analysis_timeframe"] if analysis_timeframe is None else analysis_timeframe
             ),
+            "start_date": self._normalize_start_date(existing["start_date"] if start_date is None else start_date),
             "market": existing["market"] if market is None else str(market),
             "last_run_at": existing["last_run_at"] if last_run_at is None else last_run_at,
         }
@@ -969,7 +1144,7 @@ class QuantSimDB:
             """
             UPDATE sim_scheduler_config
             SET enabled = ?, auto_execute = ?, interval_minutes = ?, trading_hours_only = ?,
-                analysis_timeframe = ?, market = ?, last_run_at = ?, updated_at = ?
+                analysis_timeframe = ?, start_date = ?, market = ?, last_run_at = ?, updated_at = ?
             WHERE id = 1
             """,
             (
@@ -978,6 +1153,7 @@ class QuantSimDB:
                 payload["interval_minutes"],
                 payload["trading_hours_only"],
                 payload["analysis_timeframe"],
+                payload["start_date"],
                 payload["market"],
                 payload["last_run_at"],
                 self._now(),
@@ -1702,11 +1878,11 @@ class QuantSimDB:
                 INSERT INTO sim_scheduler_config
                 (
                     id, enabled, auto_execute, interval_minutes, trading_hours_only,
-                    analysis_timeframe, market, last_run_at, updated_at
+                    analysis_timeframe, start_date, market, last_run_at, updated_at
                 )
-                VALUES (1, 0, 0, 15, 1, ?, 'CN', NULL, ?)
+                VALUES (1, 0, 0, 15, 1, ?, ?, 'CN', NULL, ?)
                 """,
-                (DEFAULT_ANALYSIS_TIMEFRAME, self._now()),
+                (DEFAULT_ANALYSIS_TIMEFRAME, date.today().isoformat(), self._now()),
             )
         else:
             cursor.execute(
@@ -1716,6 +1892,14 @@ class QuantSimDB:
                 WHERE id = 1
                 """,
                 (DEFAULT_ANALYSIS_TIMEFRAME,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET start_date = COALESCE(NULLIF(start_date, ''), ?)
+                WHERE id = 1
+                """,
+                (date.today().isoformat(),),
             )
 
     @staticmethod
@@ -1728,6 +1912,16 @@ class QuantSimDB:
         if normalized not in SUPPORTED_ANALYSIS_TIMEFRAMES:
             raise ValueError(f"Unsupported analysis_timeframe: {value}")
         return normalized
+
+    @staticmethod
+    def _normalize_start_date(value: str | date | datetime | None) -> str:
+        if value is None or value == "":
+            return date.today().isoformat()
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return date.fromisoformat(str(value)).isoformat()
 
     def _get_available_cash(self, cursor: sqlite3.Cursor) -> float:
         cursor.execute("SELECT available_cash FROM sim_account WHERE id = 1")

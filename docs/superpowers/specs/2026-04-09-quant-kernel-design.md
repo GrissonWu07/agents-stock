@@ -11,9 +11,11 @@ Unify quantitative strategy execution inside the main project by extracting a re
 - `quant_sim` supports automatic execution in simulation mode.
 - `quant_sim` supports replay over a user-selected datetime range.
 - Replay can run from a start datetime through an explicit end datetime or, when end is left empty, from the start datetime through the current time.
+- Replay runs as a background task and reports status/progress in the Streamlit page instead of blocking the request.
 - The same strategy core is reusable for future live trading.
 - `stockpolicy` YAML config, standalone data fetchers, and standalone model clients are no longer runtime dependencies for the main workflow.
 - Every per-stock analysis view shows the strategy basics that produced the decision.
+- `pytdx` host selection is driven by a repo-local configuration file containing the currently verified endpoints.
 
 ## Scope
 
@@ -25,6 +27,8 @@ This design covers:
 - adding a replay engine for historical-range and past-to-future simulation
 - adding dynamic strategy selection based on market regime, stock quality, and selected timeframe mode
 - surfacing strategy basics in each stock analysis record shown in Streamlit
+- externalizing `pytdx` host configuration into a dedicated repo-local host file
+- making replay execution asynchronous with visible progress/cancel state
 - keeping Streamlit, SQLite, data providers, and model providers inside the main project
 
 This design does not cover:
@@ -104,6 +108,23 @@ Key files:
   - live execution provider later
 
 This keeps runtime ownership inside the main project while still reusing the core strategy logic.
+
+### 2a. Repo-local `pytdx` host configuration
+
+The main project must own a dedicated `pytdx` host file so host maintenance does not require source edits or environment rewrites.
+
+First implementation uses:
+
+- `C:\Projects\githubs\aiagents-stock\config\pytdx_hosts.json`
+
+Resolution order for host selection:
+
+1. explicit constructor host / fallback arguments
+2. repo-local `pytdx` host file
+3. environment-configured fallback hosts
+4. bundled `pytdx.config.hosts.hq_hosts`
+
+The loader must preserve configured order, deduplicate by `host:port`, and tolerate a missing or invalid file by falling back cleanly.
 
 ### 3. `quant_sim` becomes orchestration + persistence + UI
 
@@ -273,14 +294,17 @@ Flow:
    - market
    - timeframe mode
 2. If end datetime is omitted, replay runs from start datetime through current time.
-3. Replay engine generates evaluation checkpoints.
-4. For each checkpoint:
+3. UI creates a replay run immediately and returns control to the page.
+4. A background worker executes the replay against that run.
+5. Replay engine generates evaluation checkpoints.
+6. For each checkpoint:
    - fetch historical view available at that checkpoint
    - evaluate candidates and positions through `quant_kernel`
    - derive per-stock strategy profile
    - automatically execute according to simulation execution rules
    - record trades, signals, strategy profile, and equity snapshots
-5. Final metrics and timeline are shown in Streamlit.
+7. Progress, status text, and recent events are persisted while the run is executing.
+8. Final metrics and timeline are shown in Streamlit.
 
 ### Past-to-Future Continuous Simulation
 
@@ -335,6 +359,12 @@ Current `quant_sim` tables are not enough for replay runs and strategy-profile d
   - summary metrics per run
 - `strategy_signals`
   - persist strategy profile payload for each decision
+- replay progress fields on `sim_runs`
+  - progress current / total
+  - cancel requested flag
+  - current status text
+- `sim_run_events`
+  - lightweight run log lines for the UI
 
 Replay/account history ordering rules:
 
@@ -363,6 +393,17 @@ Main-project UI values map into these dataclasses before kernel execution.
 
 ## UI Requirements
 
+### Realtime Scheduler Controls
+
+The realtime quant-simulation controls must:
+
+- avoid duplicate top-level action bars for the same scheduler actions
+- expose manual `立即分析候选池` within the main scheduler configuration area
+- expose a scheduler `开始日期`
+- persist that start date in scheduler config
+- keep manual analysis available immediately even if the configured start date is in the future
+- prevent scheduled scans from running before the configured start date
+
 ### Replay Controls
 
 The replay UI must support:
@@ -374,6 +415,11 @@ The replay UI must support:
 - timeframe mode selector
 - market selector
 - explicit option meaning “end not provided, replay through now”
+- non-blocking start action that immediately returns to the page
+- run status panel with `运行中 / 已完成 / 已失败 / 已取消`
+- progress display using completed checkpoints vs total checkpoints
+- recent run-event log lines
+- cancel action for a running replay task
 
 The timeframe selector must expose all first-release modes:
 
@@ -384,6 +430,7 @@ The timeframe selector must expose all first-release modes:
 The default UI selection is `30m`.
 
 The UI must no longer force replay to `00:00 -> 15:00`.
+The UI must not block the Streamlit request thread for long replay work.
 
 ### Per-Stock Strategy Basics
 
@@ -431,8 +478,15 @@ The goal is that a user can understand why a stock is being treated aggressively
 - implement historical-range replay with datetime start/end
 - support omitted end datetime meaning “through now”
 - add run persistence and results views
+- run replay in a background worker with progress, status, and cancel support
 
-### Phase 5: Continuous from past to future
+### Phase 5: `pytdx` host configuration hardening
+
+- add a repo-local `pytdx` host configuration file with the verified endpoints
+- load that file before environment or bundled host fallbacks
+- cover loader ordering, deduplication, and fallback behavior with tests
+
+### Phase 6: Continuous from past to future
 
 - hand off replay end state into realtime scheduler
 
@@ -451,7 +505,10 @@ Mandatory coverage:
 - replay over a range generates runs, checkpoints, trades, and metrics
 - omitted replay end datetime resolves to current time
 - snapshot ordering for metrics and handoff is chronological
+- replay starts in the background and the page remains responsive
+- replay progress and recent events remain visible while the task runs
 - replay and realtime data do not contaminate one another
+- repo-local `pytdx` host config is loaded before environment or bundled hosts
 - UI exposes strategy basics and replay controls clearly
 
 ## Review Protocol

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import schedule
@@ -65,6 +65,7 @@ class QuantSimScheduler:
         interval_minutes: int | None = None,
         trading_hours_only: bool | None = None,
         analysis_timeframe: str | None = None,
+        start_date: str | None = None,
         market: str | None = None,
     ) -> None:
         self.db.update_scheduler_config(
@@ -73,6 +74,7 @@ class QuantSimScheduler:
             interval_minutes=interval_minutes,
             trading_hours_only=trading_hours_only,
             analysis_timeframe=analysis_timeframe,
+            start_date=start_date,
             market=market,
         )
         if self.running:
@@ -93,6 +95,7 @@ class QuantSimScheduler:
             "interval_minutes": config["interval_minutes"],
             "trading_hours_only": config["trading_hours_only"],
             "analysis_timeframe": config["analysis_timeframe"],
+            "start_date": config["start_date"],
             "market": config["market"],
             "last_run_at": config["last_run_at"],
             "next_run": next_run,
@@ -135,6 +138,8 @@ class QuantSimScheduler:
 
     def _run_scheduled_cycle(self) -> None:
         config = self.db.get_scheduler_config()
+        if not self._has_reached_start_date(str(config["start_date"])):
+            return
         if config["trading_hours_only"] and not self._is_trading_time(config["market"]):
             return
         self.run_once(run_reason="scheduled_scan")
@@ -180,6 +185,14 @@ class QuantSimScheduler:
     @staticmethod
     def _now() -> str:
         return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+
+    @staticmethod
+    def _has_reached_start_date(start_date_text: str) -> bool:
+        try:
+            configured_date = date.fromisoformat(str(start_date_text))
+        except ValueError:
+            return True
+        return datetime.now().date() >= configured_date
 
 
 def get_quant_sim_scheduler(db_file: str | Path = DEFAULT_DB_FILE) -> QuantSimScheduler:

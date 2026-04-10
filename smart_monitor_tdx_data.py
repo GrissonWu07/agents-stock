@@ -6,11 +6,14 @@
 from console_utils import safe_print as print
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from pytdx.config.hosts import hq_hosts
 from pytdx.hq import TdxHq_API
+
+from pytdx_host_config import load_pytdx_hosts
 
 
 DEFAULT_TDX_PORT = 7709
@@ -38,11 +41,28 @@ class SmartMonitorTDXDataFetcher:
         host: Optional[str] = None,
         port: int = DEFAULT_TDX_PORT,
         fallback_hosts: Optional[Sequence[Tuple[str, str, int] | str]] = None,
+        hosts_file: Optional[str | Path] = None,
         timeout: int = DEFAULT_TDX_TIMEOUT,
     ):
         self.logger = logging.getLogger(__name__)
         self.timeout = timeout
-        self.hosts = self._build_hosts(host, port, fallback_hosts)
+        config_host = None
+        config_fallback_hosts: Sequence[Tuple[str, str, int] | str] | None = None
+        config_hosts_file = None
+        try:
+            from config import TDX_CONFIG
+
+            config_host = TDX_CONFIG.get("host")
+            config_fallback_hosts = TDX_CONFIG.get("fallback_hosts", [])
+            config_hosts_file = TDX_CONFIG.get("hosts_file")
+        except Exception:
+            pass
+
+        effective_host = host if host is not None else config_host
+        effective_fallback_hosts = fallback_hosts if fallback_hosts is not None else config_fallback_hosts
+        effective_hosts_file = hosts_file if hosts_file is not None else config_hosts_file
+
+        self.hosts = self._build_hosts(effective_host, port, effective_fallback_hosts, effective_hosts_file)
         self._name_cache: Dict[Tuple[int, str], str] = {}
 
         host_summary = ", ".join(f"{name}:{ip}:{host_port}" for name, ip, host_port in self.hosts[:3])
@@ -373,7 +393,13 @@ class SmartMonitorTDXDataFetcher:
 
         return result
 
-    def build_snapshot_from_history(self, stock_code: str, history_df: Optional[pd.DataFrame]) -> Dict:
+    def build_snapshot_from_history(
+        self,
+        stock_code: str,
+        history_df: Optional[pd.DataFrame],
+        *,
+        stock_name: Optional[str] = None,
+    ) -> Dict:
         """Build a comprehensive snapshot from historical bars only."""
 
         if history_df is None or history_df.empty:
@@ -389,7 +415,7 @@ class SmartMonitorTDXDataFetcher:
         latest = df.iloc[-1]
         snapshot = {
             "code": self._normalize_stock_code(stock_code),
-            "name": self._get_stock_name(stock_code),
+            "name": stock_name or self._get_stock_name(stock_code),
             "current_price": float(latest["收盘"]),
             "change_pct": 0.0,
             "change_amount": 0.0,
@@ -459,6 +485,7 @@ class SmartMonitorTDXDataFetcher:
         host: Optional[str],
         port: int,
         fallback_hosts: Optional[Sequence[Tuple[str, str, int] | str]],
+        hosts_file: Optional[str | Path],
     ) -> List[Tuple[str, str, int]]:
         hosts: List[Tuple[str, str, int]] = []
 
@@ -479,6 +506,8 @@ class SmartMonitorTDXDataFetcher:
                 hosts.append((f"fallback-{host_name}", host_name, int(host_port)))
             else:
                 hosts.append((f"fallback-{host_info}", host_info, DEFAULT_TDX_PORT))
+
+        hosts.extend(load_pytdx_hosts(hosts_file))
 
         if not hosts:
             for name, host_name, host_port in hq_hosts[:DEFAULT_HOST_LIMIT]:

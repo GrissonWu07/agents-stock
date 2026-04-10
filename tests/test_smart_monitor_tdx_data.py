@@ -163,3 +163,25 @@ def test_build_snapshot_from_history_computes_historical_replay_snapshot(monkeyp
     assert snapshot["current_price"] == history_df.iloc[-1]["收盘"]
     assert "ma5" in snapshot
     assert "macd" in snapshot
+
+
+def test_build_snapshot_from_history_uses_supplied_stock_name_without_lookup(monkeypatch):
+    fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
+    monkeypatch.setattr(fetcher, "_get_stock_name", lambda stock_code: (_ for _ in ()).throw(AssertionError("should not lookup stock name")))
+
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    history_df = pd.DataFrame(
+        {
+            "日期": dates,
+            "开盘": [10 + index * 0.1 for index in range(80)],
+            "收盘": [10.1 + index * 0.1 for index in range(80)],
+            "最高": [10.2 + index * 0.1 for index in range(80)],
+            "最低": [9.9 + index * 0.1 for index in range(80)],
+            "成交量": [1000 + index * 10 for index in range(80)],
+            "成交额": [10000 + index * 100 for index in range(80)],
+        }
+    )
+
+    snapshot = fetcher.build_snapshot_from_history("000001", history_df, stock_name="测试股票")
+
+    assert snapshot["name"] == "测试股票"

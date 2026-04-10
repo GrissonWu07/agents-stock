@@ -1,3 +1,5 @@
+from datetime import date
+
 from quant_sim.candidate_pool_service import CandidatePoolService
 from quant_sim.portfolio_service import PortfolioService
 from quant_sim.signal_center_service import SignalCenterService
@@ -87,12 +89,14 @@ def test_scheduler_supports_background_start_stop_and_persists_run_metadata(tmp_
     assert status_before["enabled"] is False
     assert status_before["interval_minutes"] == 15
     assert status_before["analysis_timeframe"] == "30m"
+    assert status_before["start_date"] == date.today().isoformat()
 
-    scheduler.update_config(enabled=True, interval_minutes=20, analysis_timeframe="1d+30m")
+    scheduler.update_config(enabled=True, interval_minutes=20, analysis_timeframe="1d+30m", start_date="2026-04-12")
     status_after_config = scheduler.get_status()
     assert status_after_config["enabled"] is True
     assert status_after_config["interval_minutes"] == 20
     assert status_after_config["analysis_timeframe"] == "1d+30m"
+    assert status_after_config["start_date"] == "2026-04-12"
 
     started = scheduler.start()
     status_running = scheduler.get_status()
@@ -151,3 +155,22 @@ def test_scheduler_run_once_uses_configured_analysis_timeframe(tmp_path, monkeyp
     scheduler.run_once()
 
     assert captured["analysis_timeframe"] == "1d+30m"
+
+
+def test_scheduled_cycle_skips_before_start_date(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "main_force")
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler.update_config(enabled=True, start_date="2099-01-01")
+    called = {"count": 0}
+
+    def fail_if_called(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("run_once should not execute before configured start_date")
+
+    monkeypatch.setattr(scheduler, "run_once", fail_if_called)
+
+    scheduler._run_scheduled_cycle()
+
+    assert called["count"] == 0

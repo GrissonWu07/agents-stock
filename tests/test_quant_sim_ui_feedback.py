@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 from streamlit_flash import consume_flash_messages
@@ -78,6 +79,7 @@ def test_handle_scheduler_start_queues_feedback_and_updates_config():
         interval_minutes=15,
         trading_hours_only=True,
         analysis_timeframe="30m",
+        start_date="2026-04-10",
         market="CN",
         state=state,
     )
@@ -92,6 +94,7 @@ def test_handle_scheduler_start_queues_feedback_and_updates_config():
             "interval_minutes": 15,
             "trading_hours_only": True,
             "analysis_timeframe": "30m",
+            "start_date": "2026-04-10",
             "market": "CN",
         }
     ]
@@ -109,18 +112,36 @@ def test_handle_account_update_queues_success_flash_message():
     assert flashes == [{"level": "success", "message": "✅ 资金池已更新"}]
 
 
-def test_quant_sim_ui_exposes_visible_scheduled_analysis_controls():
+def test_quant_sim_ui_exposes_single_scheduler_control_area():
     ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
 
-    assert "▶️ 启动定时分析" in ui_source
+    assert 'key="quant_sim_start_scheduler_top"' not in ui_source
+    assert 'key="quant_sim_scan_now"' not in ui_source
+    assert 'key="quant_sim_manual_scan_config"' in ui_source
     assert "⏹️ 停止定时分析" in ui_source
 
 
-def test_quant_sim_duplicate_scheduler_buttons_use_explicit_keys():
+def test_quant_sim_scheduler_buttons_use_explicit_keys():
     ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
 
-    assert 'key="quant_sim_stop_scheduler_top"' in ui_source
     assert 'key="quant_sim_stop_scheduler_config"' in ui_source
+    assert 'key="quant_sim_manual_scan_config"' in ui_source
+    assert 'key="quant_sim_scheduler_start_date"' in ui_source
+
+
+def test_quant_sim_replay_ui_exposes_background_status_and_cancel_controls():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert "当前回放状态" in ui_source
+    assert "取消回放任务" in ui_source
+    assert "最近事件" in ui_source
+
+
+def test_quant_sim_replay_results_expose_latest_status_and_events():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert "最近一次回放状态" in ui_source
+    assert "最近一次回放事件" in ui_source
 
 
 def test_build_scheduler_status_message_distinguishes_running_and_idle_states():
@@ -131,6 +152,7 @@ def test_build_scheduler_status_message_distinguishes_running_and_idle_states():
             "auto_execute": True,
             "interval_minutes": 15,
             "analysis_timeframe": "30m",
+            "start_date": "2026-04-10",
             "last_run_at": "2026-04-09 15:00:00",
             "next_run": "2026-04-09 15:15:00",
         }
@@ -142,6 +164,7 @@ def test_build_scheduler_status_message_distinguishes_running_and_idle_states():
             "auto_execute": False,
             "interval_minutes": 15,
             "analysis_timeframe": "30m",
+            "start_date": "2026-04-10",
             "last_run_at": None,
             "next_run": None,
         }
@@ -152,6 +175,8 @@ def test_build_scheduler_status_message_distinguishes_running_and_idle_states():
             "enabled": False,
             "auto_execute": False,
             "interval_minutes": 15,
+            "analysis_timeframe": "30m",
+            "start_date": "2026-04-10",
             "last_run_at": None,
             "next_run": None,
         }
@@ -167,6 +192,38 @@ def test_build_scheduler_status_message_distinguishes_running_and_idle_states():
     assert "自动执行已关闭" in configured_message
     assert disabled_level == "info"
     assert "未启用" in disabled_message
+    assert "2026-04-10" in running_message
+
+
+def test_handle_scheduler_save_queues_feedback_and_updates_start_date():
+    state = {}
+    scheduler = DummyScheduler()
+
+    ui.handle_scheduler_save(
+        scheduler,
+        enabled=True,
+        auto_execute=False,
+        interval_minutes=20,
+        trading_hours_only=False,
+        analysis_timeframe="1d+30m",
+        start_date="2026-04-12",
+        market="CN",
+        state=state,
+    )
+    flashes = consume_flash_messages(state, ui.QUANT_SIM_FLASH_NAMESPACE)
+
+    assert scheduler.config_updates == [
+        {
+            "enabled": True,
+            "auto_execute": False,
+            "interval_minutes": 20,
+            "trading_hours_only": False,
+            "analysis_timeframe": "1d+30m",
+            "start_date": "2026-04-12",
+            "market": "CN",
+        }
+    ]
+    assert flashes == [{"level": "success", "message": "✅ 定时分析配置已保存"}]
 
 
 def test_resolve_pending_signal_default_price_prefers_candidate_latest_price():
