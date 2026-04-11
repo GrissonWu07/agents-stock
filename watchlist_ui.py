@@ -106,7 +106,7 @@ def _render_next_step_buttons(activate_view: Callable[[str | None], None]) -> No
         ("实时监控", "show_monitor"),
         ("AI盯盘", "show_smart_monitor"),
         ("发现股票", "show_discovery_hub"),
-        ("研究情报", "show_sector_strategy"),
+        ("研究情报", "show_research_hub"),
         ("量化模拟", "show_quant_sim"),
         ("历史回放", "show_quant_replay"),
     ]

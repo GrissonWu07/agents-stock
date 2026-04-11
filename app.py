@@ -25,6 +25,7 @@ from notification_service import notification_service
 from config_manager import config_manager
 from discovery_hub_ui import display_discovery_hub
 from main_force_ui import display_main_force_selector
+from research_hub_ui import display_research_hub
 from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
 from quant_sim.ui import display_quant_replay, display_quant_sim
@@ -45,6 +46,7 @@ SIDEBAR_VIEW_FLAGS = [
     "show_monitor",
     "show_config",
     "show_discovery_hub",
+    "show_research_hub",
     "show_main_force",
     "show_low_price_bull",
     "show_small_cap",
@@ -80,13 +82,9 @@ SIDEBAR_NAV_GROUPS = [
     },
     {
         "title": "策略",
-        "description": "AI驱动的板块和龙虎榜策略",
+        "description": "把板块、龙虎榜、新闻、宏观和周期分析统一收在一个入口里",
         "items": [
-            {"label": "智策板块", "icon": "🎯", "key": "nav_sector_strategy", "flag": "show_sector_strategy", "help": "AI板块策略分析"},
-            {"label": "智瞰龙虎", "icon": "🐉", "key": "nav_longhubang", "flag": "show_longhubang", "help": "龙虎榜深度分析"},
-            {"label": "新闻流量", "icon": "📰", "key": "nav_news_flow", "flag": "show_news_flow", "help": "新闻流量监测与短线指导"},
-            {"label": "宏观分析", "icon": "🌏", "key": "nav_macro_analysis", "flag": "show_macro_analysis", "help": "国家统计局宏观数据 × A股行业映射 × 优质标的"},
-            {"label": "宏观周期", "icon": "🧭", "key": "nav_macro_cycle", "flag": "show_macro_cycle", "help": "康波周期 × 美林投资时钟 × 政策分析"},
+            {"label": "研究情报", "icon": "🧠", "key": "nav_research_hub", "flag": "show_research_hub", "help": "统一查看板块、龙虎榜、新闻、宏观和周期分析"},
         ],
     },
     {
@@ -655,6 +653,10 @@ def main():
     # 检查是否显示主力选股
     if 'show_discovery_hub' in st.session_state and st.session_state.show_discovery_hub:
         display_discovery_hub()
+        return
+
+    if 'show_research_hub' in st.session_state and st.session_state.show_research_hub:
+        display_research_hub()
         return
 
     # 检查是否显示主力选股
