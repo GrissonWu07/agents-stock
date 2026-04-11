@@ -65,5 +65,18 @@ class WatchlistService:
         for watch in self.list_watches():
             self.mark_in_quant_pool(watch["stock_code"], watch["stock_code"] in normalized_codes)
 
+    def update_watch_snapshot(
+        self,
+        stock_code: str,
+        *,
+        latest_signal: str | None = None,
+        latest_price: float | None = None,
+    ) -> None:
+        self.db.update_watch_snapshot(
+            stock_code,
+            latest_signal=latest_signal,
+            latest_price=latest_price,
+        )
+
     def delete_stock(self, stock_code: str) -> None:
         self.db.delete_watch(stock_code)

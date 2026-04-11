@@ -35,3 +35,24 @@ def add_watchlist_rows_to_quant_pool(
         summary["success_count"] += 1
 
     return summary
+
+
+def remove_watchlist_rows_from_quant_pool(
+    stock_codes: list[str],
+    watchlist_service: WatchlistService,
+    candidate_service: CandidatePoolService | None = None,
+    db_file: str | Path | None = None,
+) -> dict[str, Any]:
+    candidate_service = candidate_service or CandidatePoolService(db_file=db_file)  # type: ignore[arg-type]
+    summary = {"attempted": 0, "success_count": 0, "failures": []}
+
+    for stock_code in stock_codes:
+        summary["attempted"] += 1
+        try:
+            candidate_service.delete_candidate(stock_code)
+            watchlist_service.mark_in_quant_pool(stock_code, False)
+            summary["success_count"] += 1
+        except Exception as exc:
+            summary["failures"].append(f"{stock_code}: {exc}")
+
+    return summary

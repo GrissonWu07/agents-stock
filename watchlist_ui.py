@@ -5,6 +5,8 @@ from typing import Callable
 import pandas as pd
 import streamlit as st
 
+from quant_sim.candidate_pool_service import CandidatePoolService
+from watchlist_integration import add_watchlist_rows_to_quant_pool, remove_watchlist_rows_from_quant_pool
 from watchlist_service import WatchlistService
 
 
@@ -32,7 +34,7 @@ def display_watchlist_workbench(activate_view: Callable[[str | None], None]) -> 
             "先看你真正关心的股票：实时价格、来源和状态都汇总在这里，后续股票分析与量化都从这里发起。",
         )
         _render_watchlist_actions(service)
-        _render_watchlist_table(watches)
+        _render_watchlist_table(service, watches)
 
     with top_right:
         _render_section_header(
@@ -64,7 +66,7 @@ def _render_watchlist_actions(service: WatchlistService) -> None:
                 st.warning("请完整填写股票代码、名称和来源。")
 
 
-def _render_watchlist_table(watches: list[dict]) -> None:
+def _render_watchlist_table(service: WatchlistService, watches: list[dict]) -> None:
     if not watches:
         st.info("关注池还是空的。你可以手工添加，也可以先去发现股票或研究情报页挑股票。")
         return
@@ -87,6 +89,41 @@ def _render_watchlist_table(watches: list[dict]) -> None:
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+    watch_options = {
+        row["stock_code"]: f'{row["stock_code"]} - {row["stock_name"]}'
+        for row in watches
+    }
+    selected_codes = st.multiselect(
+        "选择关注股票",
+        options=list(watch_options.keys()),
+        format_func=lambda code: watch_options.get(code, code),
+        key="watchlist_quant_multiselect",
+        help="从关注池手动推进到共享量化候选池，量化模拟和历史回放都会使用这套池子。",
+    )
+    quant_action_cols = st.columns(2)
+    with quant_action_cols[0]:
+        if st.button("加入量化候选池", key="watchlist_add_to_quant_pool", use_container_width=True):
+            if not selected_codes:
+                st.warning("请先选择至少一只关注股票。")
+            else:
+                summary = add_watchlist_rows_to_quant_pool(selected_codes, service, CandidatePoolService())
+                if summary["success_count"] > 0:
+                    st.success(f"✅ 已加入 {summary['success_count']} 只股票到量化候选池")
+                if summary["failures"]:
+                    st.warning("；".join(summary["failures"]))
+                st.rerun()
+    with quant_action_cols[1]:
+        if st.button("移出量化候选池", key="watchlist_remove_from_quant_pool", use_container_width=True):
+            if not selected_codes:
+                st.warning("请先选择至少一只关注股票。")
+            else:
+                summary = remove_watchlist_rows_from_quant_pool(selected_codes, service, CandidatePoolService())
+                if summary["success_count"] > 0:
+                    st.success(f"✅ 已移出 {summary['success_count']} 只股票")
+                if summary["failures"]:
+                    st.warning("；".join(summary["failures"]))
+                st.rerun()
+
     with st.expander("管理关注池", expanded=False):
         delete_code = st.selectbox(
             "删除股票",
@@ -94,7 +131,6 @@ def _render_watchlist_table(watches: list[dict]) -> None:
             format_func=lambda code: f"{code} - {next(item['stock_name'] for item in watches if item['stock_code'] == code)}",
         )
         if st.button("删除", key="watchlist_delete_button", use_container_width=True):
-            service = WatchlistService()
             service.delete_stock(delete_code)
             st.success(f"已从关注池移除 {delete_code}")
             st.rerun()

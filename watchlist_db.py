@@ -155,6 +155,33 @@ class WatchlistDB:
             )
             conn.commit()
 
+    def update_watch_snapshot(
+        self,
+        stock_code: str,
+        *,
+        latest_signal: str | None = None,
+        latest_price: float | None = None,
+    ) -> None:
+        normalized_code = str(stock_code).strip().upper()
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE watchlist
+                SET latest_signal = COALESCE(?, latest_signal),
+                    latest_price = COALESCE(?, latest_price),
+                    updated_at = ?
+                WHERE stock_code = ?
+                """,
+                (
+                    latest_signal,
+                    float(latest_price) if latest_price is not None else None,
+                    datetime.now().isoformat(timespec="seconds"),
+                    normalized_code,
+                ),
+            )
+            conn.commit()
+
     def delete_watch(self, stock_code: str) -> None:
         normalized_code = str(stock_code).strip().upper()
         with self._connect() as conn:
