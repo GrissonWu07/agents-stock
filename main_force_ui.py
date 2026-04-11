@@ -15,7 +15,7 @@ from batch_deep_analysis import (
 from main_force_analysis import MainForceAnalyzer
 from main_force_pdf_generator import display_report_download_section
 from main_force_history_ui import display_batch_history
-from quant_sim.integration import add_stock_to_quant_sim
+from watchlist_selector_integration import add_stock_to_watchlist
 
 
 def update_main_force_progress_ui(status_widget, progress_bar, detail_placeholder, percent: int, message: str):
@@ -38,8 +38,8 @@ def _extract_main_force_latest_price(recommendation: dict) -> float | None:
     return None
 
 
-def sync_main_force_recommendations_to_quant_sim(recommendations: list[dict]) -> dict:
-    """Sync selected recommendations into the shared quant-sim candidate pool."""
+def sync_main_force_recommendations_to_watchlist(recommendations: list[dict]) -> dict:
+    """Sync selected recommendations into the shared watchlist."""
     summary = {
         "attempted": 0,
         "success_count": 0,
@@ -58,7 +58,7 @@ def sync_main_force_recommendations_to_quant_sim(recommendations: list[dict]) ->
         summary["attempted"] += 1
         latest_price = _extract_main_force_latest_price(recommendation)
         notes = f"主力选股第{recommendation.get('rank', '?')}名；亮点：{recommendation.get('highlights', 'N/A')}"
-        success, message, _ = add_stock_to_quant_sim(
+        success, message, _ = add_stock_to_watchlist(
             stock_code=stock_code,
             stock_name=stock_name,
             source="main_force",
@@ -94,15 +94,8 @@ def display_main_force_selector():
         display_batch_history()
         return
 
-    # 页面标题和历史记录按钮
-    col_title, col_history = st.columns([4, 1])
-    with col_title:
-        st.markdown("## 🎯 主力选股 - 智能筛选优质标的")
-    with col_history:
-        st.write("")  # 占位
-        if st.button("📚 批量分析历史", width='content'):
-            st.session_state.main_force_view_history = True
-            st.rerun()
+    # 页面标题
+    st.markdown("## 🎯 主力选股 - 智能筛选优质标的")
 
     st.markdown("---")
 
@@ -241,7 +234,7 @@ def display_main_force_selector():
         if result['success']:
             selected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.session_state.main_force_selected_at = selected_at
-            st.session_state.pop("main_force_batch_quant_sync", None)
+            st.session_state.pop("main_force_batch_watchlist_sync", None)
             save_main_force_state(result=result, analyzer=analyzer, selected_at=selected_at)
             status_widget.update(label="主力选股分析完成", state="complete")
             progress_bar.progress(100)
@@ -291,18 +284,25 @@ def display_analysis_results(result: dict, analyzer, selected_at: str | None = N
 
     st.markdown("---")
 
-    if selected_at:
-        st.info(f"🕒 最近一次选股时间：{selected_at} | ⭐ 最终推荐：{len(result['final_recommendations'])} 只")
+    summary_col, history_col = st.columns([4.4, 1.0], gap="small")
+    with summary_col:
+        if selected_at:
+            st.info(f"🕒 最近一次选股时间：{selected_at} | ⭐ 最终推荐：{len(result['final_recommendations'])} 只")
+    with history_col:
+        st.markdown('<div style="height: 0.35rem;"></div>', unsafe_allow_html=True)
+        if st.button("📚 查看历史", key="main_force_view_history_inline", use_container_width=True):
+            st.session_state.main_force_view_history = True
+            st.rerun()
 
-    batch_sync_summary = st.session_state.get("main_force_batch_quant_sync")
-    if st.button("🧪 批量加入候选池", key="main_force_batch_quant_sync_button", use_container_width=True):
-        batch_sync_summary = sync_main_force_recommendations_to_quant_sim(
+    batch_sync_summary = st.session_state.get("main_force_batch_watchlist_sync")
+    if st.button("⭐ 批量加入关注池", key="main_force_batch_watchlist_sync_button", use_container_width=True):
+        batch_sync_summary = sync_main_force_recommendations_to_watchlist(
             result.get("final_recommendations", [])
         )
-        st.session_state.main_force_batch_quant_sync = batch_sync_summary
+        st.session_state.main_force_batch_watchlist_sync = batch_sync_summary
     if batch_sync_summary:
         if batch_sync_summary["success_count"] > 0:
-            st.success(f"🧪 已加入 {batch_sync_summary['success_count']} 只主力选股结果到候选池")
+            st.success(f"⭐ 已加入 {batch_sync_summary['success_count']} 只主力选股结果到关注池")
         if batch_sync_summary["failures"]:
             st.warning("；".join(batch_sync_summary["failures"]))
 
@@ -447,8 +447,8 @@ def display_recommendation_detail(rec: dict):
         stock_code = str(stock_data.get('股票代码') or rec.get('symbol', '')).split('.')[0].strip()
         stock_name = str(stock_data.get('股票简称') or rec.get('name', '')).strip()
         if stock_code and stock_name:
-            if st.button(f"🧪 加入候选池", key=f"main_force_quant_{stock_code}", use_container_width=True):
-                success, message, _ = add_stock_to_quant_sim(
+            if st.button(f"⭐ 加入关注池", key=f"main_force_watchlist_{stock_code}", use_container_width=True):
+                success, message, _ = add_stock_to_watchlist(
                     stock_code=stock_code,
                     stock_name=stock_name,
                     source="main_force",

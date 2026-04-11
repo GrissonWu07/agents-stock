@@ -13,7 +13,7 @@ from batch_deep_analysis import display_batch_deep_analysis_section
 from profit_growth_selector import profit_growth_selector
 from notification_service import notification_service
 from profit_growth_monitor import profit_growth_monitor
-from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
+from watchlist_selector_integration import add_stock_to_watchlist, sync_selector_dataframe_to_watchlist
 
 
 def display_profit_growth():
@@ -34,7 +34,6 @@ def display_profit_growth():
             st.rerun()
         return
     
-    st.markdown("### 顶部按钮区")
     col_select, col_monitor = st.columns([3, 1])
     
     with col_select:
@@ -108,7 +107,7 @@ def display_profit_growth():
             # 保存到session_state
             st.session_state.profit_growth_stocks = stocks_df
             st.session_state.profit_growth_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.pop("profit_growth_batch_quant_sync", None)
+            st.session_state.pop("profit_growth_batch_watchlist_sync", None)
             save_simple_selector_state(
                 strategy_key="profit_growth",
                 stocks_df=stocks_df,
@@ -124,17 +123,17 @@ def display_profit_growth():
         select_time = st.session_state.profit_growth_time
         
         st.info(f"🕒 选股时间：{select_time} | 📊 股票数量：{len(stocks_df)} 只")
-        sync_summary = st.session_state.get('profit_growth_batch_quant_sync')
-        if st.button("🧪 批量加入候选池", key="profit_growth_batch_quant_sync_button", use_container_width=True):
-            sync_summary = sync_selector_dataframe_to_quant_sim(
+        sync_summary = st.session_state.get('profit_growth_batch_watchlist_sync')
+        if st.button("⭐ 批量加入关注池", key="profit_growth_batch_watchlist_sync_button", use_container_width=True):
+            sync_summary = sync_selector_dataframe_to_watchlist(
                 stocks_df,
                 source="profit_growth",
                 note_prefix="净利增长",
             )
-            st.session_state.profit_growth_batch_quant_sync = sync_summary
+            st.session_state.profit_growth_batch_watchlist_sync = sync_summary
         if sync_summary:
             if sync_summary["success_count"] > 0:
-                st.success(f"🧪 已加入 {sync_summary['success_count']} 只净利增长结果到候选池")
+                st.success(f"⭐ 已加入 {sync_summary['success_count']} 只净利增长结果到关注池")
             if sync_summary["failures"]:
                 st.warning("；".join(sync_summary["failures"]))
         
@@ -252,8 +251,8 @@ def add_stock_to_monitor_button(stock_code: str, stock_name: str, price: float =
                 st.error(f"❌ {message}")
 
     with col_quant:
-        if st.button(f"🧪 加入候选池", key=f"add_quant_sim_{stock_code}", use_container_width=True):
-            success, message, _ = add_stock_to_quant_sim(
+        if st.button(f"⭐ 加入关注池", key=f"add_watchlist_{stock_code}", use_container_width=True):
+            success, message, _ = add_stock_to_watchlist(
                 stock_code=stock_code,
                 stock_name=stock_name,
                 source="profit_growth",

@@ -23,6 +23,7 @@ from monitor_manager import display_monitor_manager, get_monitor_summary
 from monitor_service import monitor_service
 from notification_service import notification_service
 from config_manager import config_manager
+from discovery_hub_ui import display_discovery_hub
 from main_force_ui import display_main_force_selector
 from sector_strategy_ui import display_sector_strategy
 from longhubang_ui import display_longhubang
@@ -43,6 +44,7 @@ SIDEBAR_VIEW_FLAGS = [
     "show_history",
     "show_monitor",
     "show_config",
+    "show_discovery_hub",
     "show_main_force",
     "show_low_price_bull",
     "show_small_cap",
@@ -71,13 +73,9 @@ SIDEBAR_HOME_ITEM = {
 SIDEBAR_NAV_GROUPS = [
     {
         "title": "选股",
-        "description": "根据不同策略筛选优质股票",
+        "description": "把主力、低价、小市值、净利增长和低估值选股统一收在一个入口里",
         "items": [
-            {"label": "主力选股", "icon": "💰", "key": "nav_main_force", "flag": "show_main_force", "help": "基于主力资金流向的选股策略"},
-            {"label": "低价擒牛", "icon": "🐂", "key": "nav_low_price_bull", "flag": "show_low_price_bull", "help": "低价高成长股票筛选策略"},
-            {"label": "小市值策略", "icon": "📊", "key": "nav_small_cap", "flag": "show_small_cap", "help": "小盘高成长股票筛选策略"},
-            {"label": "净利增长", "icon": "📈", "key": "nav_profit_growth", "flag": "show_profit_growth", "help": "净利润增长稳健股票筛选策略"},
-            {"label": "低估值策略", "icon": "💎", "key": "nav_value_stock", "flag": "show_value_stock", "help": "低PE+低PB+高股息+低负债 价值投资筛选"},
+            {"label": "发现股票", "icon": "🔎", "key": "nav_discovery_hub", "flag": "show_discovery_hub", "help": "统一查看主力、低价、小市值、净利增长和低估值选股"},
         ],
     },
     {
@@ -652,6 +650,11 @@ def main():
     # 检查是否显示监测面板
     if 'show_monitor' in st.session_state and st.session_state.show_monitor:
         display_monitor_manager()
+        return
+
+    # 检查是否显示主力选股
+    if 'show_discovery_hub' in st.session_state and st.session_state.show_discovery_hub:
+        display_discovery_hub()
         return
 
     # 检查是否显示主力选股

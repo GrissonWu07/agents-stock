@@ -13,7 +13,7 @@ from small_cap_selector import small_cap_selector
 from notification_service import notification_service
 from low_price_bull_monitor import low_price_bull_monitor
 from low_price_bull_service import low_price_bull_service
-from quant_sim.integration import add_stock_to_quant_sim, sync_selector_dataframe_to_quant_sim
+from watchlist_selector_integration import add_stock_to_watchlist, sync_selector_dataframe_to_watchlist
 
 
 def display_small_cap():
@@ -35,7 +35,6 @@ def display_small_cap():
             st.rerun()
         return
     
-    st.markdown("顶部按钮区")
     col_select, col_monitor = st.columns([3, 1])
     
     with col_select:
@@ -109,7 +108,7 @@ def display_small_cap():
             # 保存到session_state
             st.session_state.small_cap_stocks = stocks_df
             st.session_state.small_cap_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.pop("small_cap_batch_quant_sync", None)
+            st.session_state.pop("small_cap_batch_watchlist_sync", None)
             save_simple_selector_state(
                 strategy_key="small_cap",
                 stocks_df=stocks_df,
@@ -125,17 +124,17 @@ def display_small_cap():
         select_time = st.session_state.small_cap_time
         
         st.info(f"🕒 选股时间：{select_time} | 📊 股票数量：{len(stocks_df)} 只")
-        sync_summary = st.session_state.get('small_cap_batch_quant_sync')
-        if st.button("🧪 批量加入候选池", key="small_cap_batch_quant_sync_button", use_container_width=True):
-            sync_summary = sync_selector_dataframe_to_quant_sim(
+        sync_summary = st.session_state.get('small_cap_batch_watchlist_sync')
+        if st.button("⭐ 批量加入关注池", key="small_cap_batch_watchlist_sync_button", use_container_width=True):
+            sync_summary = sync_selector_dataframe_to_watchlist(
                 stocks_df,
                 source="small_cap",
                 note_prefix="小市值策略",
             )
-            st.session_state.small_cap_batch_quant_sync = sync_summary
+            st.session_state.small_cap_batch_watchlist_sync = sync_summary
         if sync_summary:
             if sync_summary["success_count"] > 0:
-                st.success(f"🧪 已加入 {sync_summary['success_count']} 只小市值策略结果到候选池")
+                st.success(f"⭐ 已加入 {sync_summary['success_count']} 只小市值策略结果到关注池")
             if sync_summary["failures"]:
                 st.warning("；".join(sync_summary["failures"]))
         
@@ -230,8 +229,8 @@ def display_stock_detail(row: pd.Series):
         with col_monitor:
             add_stock_to_monitor_button(stock_code, stock_name, price_float)
         with col_quant:
-            if st.button(f"🧪 加入候选池", key=f"small_cap_quant_{stock_code}", use_container_width=True):
-                success, message, _ = add_stock_to_quant_sim(
+            if st.button(f"⭐ 加入关注池", key=f"small_cap_watchlist_{stock_code}", use_container_width=True):
+                success, message, _ = add_stock_to_watchlist(
                     stock_code=stock_code,
                     stock_name=stock_name,
                     source="small_cap",
