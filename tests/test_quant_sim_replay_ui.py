@@ -219,9 +219,21 @@ def test_quant_replay_page_uses_same_two_column_layout_style_as_realtime():
 
     assert "render_quant_sim_layout_styles()" in replay_block
     assert 'st.columns([1.0, 2.25], gap="large")' in replay_block
+    assert "render_replay_candidate_pool_summary" in replay_block
     assert "render_replay_status_panel" in replay_block
     assert "render_replay_run_overview_list" in replay_block
     assert "render_replay_run_detail_panel" in replay_block
+
+
+def test_quant_replay_page_exposes_read_only_candidate_pool_summary():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    replay_block = ui_source.split("def display_quant_replay()", 1)[1]
+
+    assert "### 量化候选池" in replay_block
+    assert "股票代码" in replay_block
+    assert "股票名称" in replay_block
+    assert "最新价格" in replay_block
+    assert "先在工作台的“我的关注”里挑选股票，再推进到共享量化候选池。" in replay_block
 
 
 def test_quant_replay_page_mentions_report_sections_and_delete_action():
@@ -240,6 +252,14 @@ def test_quant_replay_page_mentions_report_sections_and_delete_action():
     assert "成交ID" in replay_block
     assert "最近一次回放事件" not in replay_block
     assert "##### 最近事件" not in replay_block
+
+
+def test_quant_replay_page_uses_compact_trade_analysis_cards():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    replay_block = ui_source.split("def display_quant_replay()", 1)[1]
+
+    assert "render_replay_trade_analysis_cards(" in replay_block
+    assert "quant-sim-trade-analysis-grid" in ui_source
 
 
 def test_quant_replay_signal_table_uses_row_selection_for_detail_view():
