@@ -135,7 +135,7 @@ def test_quant_sim_ui_exposes_single_scheduler_control_area():
     assert 'key="quant_sim_start_scheduler_top"' not in ui_source
     assert 'key="quant_sim_scan_now"' not in ui_source
     assert 'key="quant_sim_manual_scan_config"' not in ui_source
-    assert "⏹️ 停止定时分析" in ui_source
+    assert 'render_compact_action_button("停止"' in ui_source
 
 
 def test_quant_sim_ui_no_longer_hides_realtime_controls_in_expander():
@@ -159,7 +159,7 @@ def test_quant_sim_candidate_section_exposes_add_delete_and_inline_analyze_actio
     ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
     realtime_block = ui_source.split("def display_quant_sim()", 1)[1].split("def display_quant_replay()", 1)[0]
 
-    assert "➕ 添加股票" in realtime_block
+    assert 'st.button("添加"' in realtime_block
     assert "删除" in realtime_block
     assert "立即分析该标的" not in realtime_block
 
@@ -182,12 +182,48 @@ def test_quant_sim_candidate_analysis_detail_reuses_full_strategy_explanation_pa
     assert "render_quant_sim_signal_detail(selected_signal)" in ui_source
 
 
+def test_candidate_pool_analyze_action_does_not_force_extra_rerun_after_setting_dialog_state():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    candidate_block = ui_source.split("def render_quant_sim_candidate_pool", 1)[1].split("def render_quant_sim_execution_center", 1)[0]
+    analyze_block = candidate_block.split('if render_compact_action_button("分析"', 1)[1].split('with row_cols[5]:', 1)[0]
+
+    assert 'st.session_state["quant_sim_candidate_analysis_signal"] = signal' in analyze_block
+    assert "st.rerun()" not in analyze_block
+
+
+def test_candidate_analysis_dialog_uses_large_width():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert '@st.dialog("候选股分析详情", width="large")' in ui_source
+
+
 def test_quant_sim_config_panel_exposes_update_and_reset_account_actions():
     ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
     realtime_block = ui_source.split("def display_quant_sim()", 1)[1].split("def display_quant_replay()", 1)[0]
 
-    assert "💰 更新资金池" in realtime_block
-    assert "🔄 重置模拟账户" in realtime_block
+    assert 'render_compact_action_button("更新"' in realtime_block
+    assert 'render_compact_action_button("重置"' in realtime_block
+
+
+def test_quant_sim_config_panel_uses_compact_two_row_action_groups():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert 'render_compact_action_button("保存"' in ui_source
+    assert 'render_compact_action_button("启动"' in ui_source
+    assert 'render_compact_action_button("停止"' in ui_source
+    assert 'render_compact_action_button("更新"' in ui_source
+    assert 'render_compact_action_button("重置"' in ui_source
+    assert 'st.button("▶️ 保存并启动定时分析"' not in ui_source
+
+
+def test_quant_sim_candidate_pool_uses_compact_row_layout_without_internal_scroll_container():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    candidate_block = ui_source.split("def render_quant_sim_candidate_pool", 1)[1].split("def render_quant_sim_execution_center", 1)[0]
+
+    assert 'st.columns([1.0, 1.3, 1.6, 0.9, 0.75, 0.55], gap="small")' in candidate_block
+    assert "quant-sim-candidate-cell" in ui_source
+    assert "quant-sim-row-divider" in ui_source
+    assert 'overflow-y: auto' not in candidate_block
 
 
 def test_quant_sim_realtime_ui_uses_b3_switching_layout_instead_of_legacy_six_tabs():
@@ -221,7 +257,7 @@ def test_quant_sim_replay_ui_exposes_background_status_and_cancel_controls():
     ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
 
     assert "当前回放状态" in ui_source
-    assert "取消回放任务" in ui_source
+    assert 'st.button("取消"' in ui_source
 
 
 def test_quant_sim_replay_results_expose_latest_status():

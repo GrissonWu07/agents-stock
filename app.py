@@ -750,173 +750,152 @@ def main():
 
     st.markdown("---")
 
-    workspace_left, workspace_right = st.columns([1.05, 1.35], gap="large")
+    render_workbench_section_header(
+        "股票分析",
+        "先确定分析师视角，再配置分析模式与周期，最后输入股票代码并启动分析。",
+    )
+    if "workbench_prefill_stock_input" in st.session_state:
+        st.session_state["home_stock_input"] = st.session_state.pop("workbench_prefill_stock_input")
+    with st.container(border=True):
+        st.markdown("#### 👥 分析师团队")
+        st.caption("先确定我们要启用哪些分析视角，再进入后面的分析模式和股票输入。")
 
-    with workspace_left:
-        render_workbench_section_header(
-            "分析工作区",
-            "在统一的工作台里配置分析模式、输入股票并组合分析师团队，保持操作入口清晰稳定。",
-        )
-        with st.container(border=True):
-            col_mode1, col_mode2, col_mode3 = st.columns([1.1, 1.7, 1.2], gap="large")
-            with col_mode1:
-                analysis_mode = st.radio(
-                    "分析模式",
-                    ["单个分析", "批量分析"],
+        col1, col2, col3 = st.columns(3, gap="large")
+
+        with col1:
+            enable_technical = st.checkbox(
+                "📊 技术分析师",
+                value=True,
+                help="负责技术指标分析、图表形态识别、趋势判断",
+            )
+            enable_fundamental = st.checkbox(
+                "💼 基本面分析师",
+                value=True,
+                help="负责公司财务分析、行业研究、估值分析",
+            )
+
+        with col2:
+            enable_fund_flow = st.checkbox(
+                "💰 资金面分析师",
+                value=True,
+                help="负责资金流向分析、主力行为研究",
+            )
+            enable_risk = st.checkbox(
+                "⚠️ 风险管理师",
+                value=True,
+                help="负责风险识别、风险评估、风险控制策略制定",
+            )
+
+        with col3:
+            enable_sentiment = st.checkbox(
+                "📈 市场情绪分析师",
+                value=True,
+                help="负责市场情绪研究、ARBR指标分析（仅A股）",
+            )
+            enable_news = st.checkbox(
+                "📰 新闻分析师",
+                value=True,
+                help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）",
+            )
+
+        selected_analysts = []
+        if enable_technical:
+            selected_analysts.append("技术分析师")
+        if enable_fundamental:
+            selected_analysts.append("基本面分析师")
+        if enable_fund_flow:
+            selected_analysts.append("资金面分析师")
+        if enable_risk:
+            selected_analysts.append("风险管理师")
+        if enable_sentiment:
+            selected_analysts.append("市场情绪分析师")
+        if enable_news:
+            selected_analysts.append("新闻分析师")
+
+        if selected_analysts:
+            st.success(f"✅ 已选择 {len(selected_analysts)} 位分析师：{', '.join(selected_analysts)}")
+        else:
+            st.warning("⚠️ 请至少选择一位分析师")
+
+        st.divider()
+
+        mode_col, detail_col, period_col = st.columns([1.1, 1.7, 1.1], gap="large")
+        with mode_col:
+            analysis_mode = st.radio(
+                "分析模式",
+                ["单个分析", "批量分析"],
+                horizontal=True,
+                help="单个分析：分析单只股票；批量分析：同时分析多只股票",
+            )
+
+        with detail_col:
+            if analysis_mode == "批量分析":
+                batch_mode = st.radio(
+                    "批量模式",
+                    ["顺序分析", "多线程并行"],
                     horizontal=True,
-                    help="单个分析：分析单只股票；批量分析：同时分析多只股票",
+                    help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源",
+                )
+                st.session_state.batch_mode = batch_mode
+            else:
+                st.caption("单股模式会直接输出完整分析、团队讨论和最终决策。")
+
+        with period_col:
+            period = st.selectbox(
+                "数据周期",
+                ["1y", "6mo", "3mo", "1mo"],
+                index=0,
+                help="选择历史数据的时间范围",
+            )
+
+        st.divider()
+
+        if not api_key_status:
+            st.warning("❌ 当前未配置模型 API Key，请先在 .env 中设置后再开始分析。")
+
+        if analysis_mode == "单个分析":
+            input_col, analyze_col, clear_col = st.columns([5.2, 0.9, 0.8], gap="small")
+
+            with input_col:
+                stock_input = st.text_input(
+                    "🔍 请输入股票代码或名称",
+                    placeholder="例如: AAPL, 000001, 00700",
+                    help="支持A股(如000001)、港股(如00700)和美股(如AAPL)",
+                    key="home_stock_input",
                 )
 
-            with col_mode2:
-                if analysis_mode == "批量分析":
-                    batch_mode = st.radio(
-                        "批量模式",
-                        ["顺序分析", "多线程并行"],
-                        horizontal=True,
-                        help="顺序分析：按次序分析，稳定但较慢；多线程并行：同时分析多只，快速但消耗资源",
-                    )
-                    st.session_state.batch_mode = batch_mode
-                else:
-                    st.caption("单股模式会直接输出完整分析、团队讨论和最终决策。")
+            with analyze_col:
+                st.markdown('<div style="height: 1.95rem;"></div>', unsafe_allow_html=True)
+                analyze_button = st.button("分析", type="primary", use_container_width=True)
 
-            with col_mode3:
-                period = st.selectbox(
-                    "数据周期",
-                    ["1y", "6mo", "3mo", "1mo"],
-                    index=0,
-                    help="选择历史数据的时间范围",
-                )
+            with clear_col:
+                st.markdown('<div style="height: 1.95rem;"></div>', unsafe_allow_html=True)
+                if st.button("清除", use_container_width=True):
+                    st.cache_data.clear()
+                    st.success("缓存已清除")
 
-            st.divider()
+        else:
+            stock_input = st.text_area(
+                "🔍 请输入多个股票代码（每行一个或用逗号分隔）",
+                placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
+                height=120,
+                help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股",
+            )
 
-            if not api_key_status:
-                st.warning("❌ 当前未配置模型 API Key，请先在 .env 中设置后再开始分析。")
-
-            if analysis_mode == "单个分析":
-                input_col, analyze_col, clear_col = st.columns([4.8, 1.15, 0.95], gap="small")
-
-                with input_col:
-                    stock_input = st.text_input(
-                        "🔍 请输入股票代码或名称",
-                        placeholder="例如: AAPL, 000001, 00700",
-                        help="支持A股(如000001)、港股(如00700)和美股(如AAPL)",
-                    )
-
-                with analyze_col:
-                    st.markdown('<div style="height: 1.95rem;"></div>', unsafe_allow_html=True)
-                    analyze_button = st.button("分析", type="primary", use_container_width=True)
-
-                with clear_col:
-                    st.markdown('<div style="height: 1.95rem;"></div>', unsafe_allow_html=True)
+            action_spacer, action_col = st.columns([2.9, 1.1], gap="medium")
+            with action_col:
+                action_cols = st.columns([0.95, 0.85, 0.85], gap="small")
+                with action_cols[0]:
+                    analyze_button = st.button("批量", type="primary", use_container_width=True)
+                with action_cols[1]:
                     if st.button("清除", use_container_width=True):
                         st.cache_data.clear()
                         st.success("缓存已清除")
-
-            else:
-                stock_input = st.text_area(
-                    "🔍 请输入多个股票代码（每行一个或用逗号分隔）",
-                    placeholder="例如:\n000001\n600036\n00700\n\n或者: 000001, 600036, 00700, AAPL",
-                    height=120,
-                    help="支持多种格式：每行一个代码或用逗号分隔。支持A股、港股、美股",
-                )
-
-                action_spacer, action_col = st.columns([2.85, 1.15], gap="medium")
-                with action_col:
-                    action_cols = st.columns([1.0, 0.9, 0.9], gap="small")
-                    with action_cols[0]:
-                        analyze_button = st.button("批量", type="primary", use_container_width=True)
-                    with action_cols[1]:
-                        if st.button("清除", use_container_width=True):
-                            st.cache_data.clear()
-                            st.success("缓存已清除")
-                    with action_cols[2]:
-                        if st.button("清空", use_container_width=True):
-                            if "batch_analysis_results" in st.session_state:
-                                del st.session_state.batch_analysis_results
-                            st.success("已清除批量分析结果")
-
-            st.divider()
-            st.markdown("#### 👥 分析师团队")
-            st.caption("按需组合不同分析师视角，让结果和后续工作台保持同一套结构化输出。")
-
-            col1, col2, col3 = st.columns(3, gap="large")
-
-            with col1:
-                enable_technical = st.checkbox(
-                    "📊 技术分析师",
-                    value=True,
-                    help="负责技术指标分析、图表形态识别、趋势判断",
-                )
-                enable_fundamental = st.checkbox(
-                    "💼 基本面分析师",
-                    value=True,
-                    help="负责公司财务分析、行业研究、估值分析",
-                )
-
-            with col2:
-                enable_fund_flow = st.checkbox(
-                    "💰 资金面分析师",
-                    value=True,
-                    help="负责资金流向分析、主力行为研究",
-                )
-                enable_risk = st.checkbox(
-                    "⚠️ 风险管理师",
-                    value=True,
-                    help="负责风险识别、风险评估、风险控制策略制定",
-                )
-
-            with col3:
-                enable_sentiment = st.checkbox(
-                    "📈 市场情绪分析师",
-                    value=True,
-                    help="负责市场情绪研究、ARBR指标分析（仅A股）",
-                )
-                enable_news = st.checkbox(
-                    "📰 新闻分析师",
-                    value=True,
-                    help="负责新闻事件分析、舆情研究（仅A股，qstock数据源）",
-                )
-
-            selected_analysts = []
-            if enable_technical:
-                selected_analysts.append("技术分析师")
-            if enable_fundamental:
-                selected_analysts.append("基本面分析师")
-            if enable_fund_flow:
-                selected_analysts.append("资金面分析师")
-            if enable_risk:
-                selected_analysts.append("风险管理师")
-            if enable_sentiment:
-                selected_analysts.append("市场情绪分析师")
-            if enable_news:
-                selected_analysts.append("新闻分析师")
-
-            if selected_analysts:
-                st.success(f"✅ 已选择 {len(selected_analysts)} 位分析师：{', '.join(selected_analysts)}")
-            else:
-                st.warning("⚠️ 请至少选择一位分析师")
-
-    with workspace_right:
-        render_workbench_section_header(
-            "统一结果工作台",
-            "分析结果、图表、团队观点和最终决策会在同一套结果面板中展开，保持阅读和复盘体验一致。",
-        )
-        with st.container(border=True):
-            overview_left, overview_right = st.columns([1.1, 0.9], gap="large")
-            with overview_left:
-                st.markdown("##### 当前设置")
-                st.caption("先确认当前模式与团队配置，再启动分析。")
-                st.write(f"**分析模式：** {analysis_mode}")
-                if analysis_mode == "批量分析":
-                    st.write(f"**批量模式：** {st.session_state.get('batch_mode', '顺序分析')}")
-                st.write(f"**分析师数量：** {len(selected_analysts)} 位")
-            with overview_right:
-                st.markdown("##### 结果将展示什么")
-                st.caption("统一结果面板会承接摘要、图表、分析师观点、团队讨论和最终决策。")
-                st.write("• 股票基础信息与技术指标")
-                st.write("• 多分析师独立观点")
-                st.write("• 团队讨论与综合结论")
-                st.write("• 风险提示与操作建议")
+                with action_cols[2]:
+                    if st.button("清空", use_container_width=True):
+                        if "batch_analysis_results" in st.session_state:
+                            del st.session_state.batch_analysis_results
+                        st.success("已清除批量分析结果")
 
     # 保存选择到session_state
     st.session_state.enable_technical = enable_technical
@@ -1025,11 +1004,6 @@ def main():
             # 显示最终决策
             display_final_decision(final_decision, stock_info, agents_results, discussion_result)
 
-    # 示例和说明
-    elif not stock_input:
-        st.divider()
-        show_example_interface()
-
 def check_api_key():
     """检查API密钥是否配置"""
     try:
@@ -1043,7 +1017,7 @@ def get_stock_data(symbol, period):
     """获取股票数据（带缓存）"""
     fetcher = StockDataFetcher()
     stock_data = fetcher.get_stock_data(symbol, period)
-    stock_info = fetcher.get_stock_info(symbol, include_price_snapshot=False)
+    stock_info = fetcher.get_fast_stock_info(symbol)
 
     if isinstance(stock_data, dict) and "error" in stock_data:
         if isinstance(stock_info, dict):
@@ -1111,6 +1085,69 @@ def parse_stock_list(stock_input):
             unique_list.append(code)
 
     return unique_list
+
+
+def _coerce_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_indicator_explanations(indicators, current_price=None):
+    explanations = {}
+
+    current_price_value = _coerce_float(current_price)
+    rsi = _coerce_float(indicators.get("rsi")) if indicators else None
+    if rsi is None:
+        explanations["RSI"] = {"state": "暂无数据", "summary": "当前没有可用的 RSI 数据。"}
+    elif rsi > 70:
+        explanations["RSI"] = {"state": "偏热", "summary": "RSI 高于 70，短线偏热，继续追高要更谨慎。"}
+    elif rsi < 30:
+        explanations["RSI"] = {"state": "偏冷", "summary": "RSI 低于 30，短线偏弱，但也意味着市场在观察超跌修复机会。"}
+    else:
+        explanations["RSI"] = {"state": "中性", "summary": "RSI 位于 30-70 之间，暂未进入极端区间。"}
+
+    ma20 = _coerce_float(indicators.get("ma20")) if indicators else None
+    if ma20 is None or current_price_value is None:
+        explanations["MA20"] = {"state": "暂无判断", "summary": "缺少当前价或 MA20，暂时无法判断中期趋势强弱。"}
+    elif current_price_value >= ma20:
+        explanations["MA20"] = {"state": "强于中期趋势", "summary": "当前价高于 MA20，中期趋势仍偏强，回调后更容易获得支撑。"}
+    else:
+        explanations["MA20"] = {"state": "弱于中期趋势", "summary": "当前价低于 MA20，中期趋势偏弱，反弹更需要成交量和趋势确认。"}
+
+    volume_ratio = _coerce_float(indicators.get("volume_ratio")) if indicators else None
+    if volume_ratio is None:
+        explanations["量比"] = {"state": "暂无数据", "summary": "当前没有可用的量比数据。"}
+    elif volume_ratio > 1.5:
+        explanations["量比"] = {"state": "明显放量", "summary": "量比大于 1.5，说明当前成交活跃度明显高于常态，价格波动更值得关注。"}
+    elif volume_ratio < 0.8:
+        explanations["量比"] = {"state": "成交偏淡", "summary": "量比低于 0.8，说明资金参与意愿偏弱，价格信号的持续性要打折扣。"}
+    else:
+        explanations["量比"] = {"state": "正常成交", "summary": "量比接近 1，成交活跃度没有明显异常。"}
+
+    macd = _coerce_float(indicators.get("macd")) if indicators else None
+    if macd is None:
+        explanations["MACD"] = {"state": "暂无数据", "summary": "当前没有可用的 MACD 数据。"}
+    elif macd > 0:
+        explanations["MACD"] = {"state": "多头动能", "summary": "MACD 大于 0，说明价格动能偏强，多头仍占优势。"}
+    elif macd < 0:
+        explanations["MACD"] = {"state": "空头动能", "summary": "MACD 小于 0，说明价格动能偏弱，空头压力仍在。"}
+    else:
+        explanations["MACD"] = {"state": "动能平衡", "summary": "MACD 接近 0，说明多空动能暂时比较均衡。"}
+
+    return explanations
+
+
+def build_indicator_summary(explanations):
+    ordered_keys = ["RSI", "MA20", "量比", "MACD"]
+    parts = []
+    for key in ordered_keys:
+        payload = explanations.get(key)
+        if not payload:
+            continue
+        parts.append(f"{key}：{payload['state']}。{payload['summary']}")
+    return " ".join(parts)
 
 def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None, selected_model=None):
     """单个股票分析（用于批量分析）
@@ -1664,7 +1701,7 @@ def display_stock_info(stock_info, indicators):
             st.metric("市值", f"{market_cap}")
 
     # 技术指标
-    if indicators and not isinstance(indicators, dict) or "error" not in indicators:
+    if indicators and (not isinstance(indicators, dict) or "error" not in indicators):
         st.subheader("📈 关键技术指标")
 
         col1, col2, col3, col4 = st.columns(4)
@@ -1701,6 +1738,22 @@ def display_stock_info(stock_info, indicators):
                 st.metric("MACD", f"{macd:.4f}")
             else:
                 st.metric("MACD", f"{macd}")
+
+        indicator_explanations = build_indicator_explanations(
+            indicators,
+            current_price=stock_info.get("current_price") if isinstance(stock_info, dict) else None,
+        )
+
+        st.markdown("#### 📖 技术指标解读")
+        explain_cols = st.columns(2, gap="large")
+        ordered_keys = ["RSI", "MA20", "量比", "MACD"]
+        for index, key in enumerate(ordered_keys):
+            payload = indicator_explanations.get(key, {"state": "暂无判断", "summary": "暂无说明。"})
+            with explain_cols[index % 2]:
+                st.markdown(f"**{key} · {payload['state']}**")
+                st.caption(payload["summary"])
+
+        st.info(build_indicator_summary(indicator_explanations))
 
 def display_stock_chart(stock_data, stock_info):
     """显示股票图表"""
@@ -1907,74 +1960,6 @@ def display_final_decision(final_decision, stock_info, agents_results=None, disc
         display_pdf_export_section(stock_info, agents_results, discussion_result, final_decision)
     else:
         st.warning("⚠️ PDF导出功能需要完整的分析数据")
-
-def show_example_interface():
-    """显示示例界面"""
-    render_workbench_section_header(
-        "快速上手",
-        "先熟悉支持市场、分析维度和示例代码，再进入统一结果工作台查看完整结论。",
-    )
-
-    intro_col, sample_col = st.columns(2, gap="large")
-    with intro_col:
-        with st.container(border=True):
-            st.markdown("##### 如何使用")
-            st.caption("按照固定节奏完成输入、分析和复盘，结果会统一落到工作台面板。")
-            st.markdown(
-                """
-                1. **输入股票代码**：支持 A 股（如 000001）、港股（如 00700）和美股（如 AAPL）
-                2. **点击开始分析**：系统会启动多位 AI 分析师并行给出观点
-                3. **查看统一结果面板**：摘要、图表、分析师观点、讨论和最终决策会同步呈现
-                4. **结合风险提示执行**：将结论延伸到量化模拟、历史回放和后续跟踪
-                """
-            )
-            st.markdown("##### 分析维度")
-            st.markdown(
-                """
-                - **技术面**：趋势、指标、支撑阻力
-                - **基本面**：财务、估值、行业分析
-                - **资金面**：资金流向、主力行为
-                - **风险管理**：风险识别与控制
-                - **市场情绪**：情绪指标、热点分析
-                """
-            )
-    with sample_col:
-        with st.container(border=True):
-            st.markdown("##### 示例股票代码")
-            st.caption("可直接复制这些示例，快速验证单股分析、批量分析和跨市场支持。")
-            st.markdown(
-                """
-                **A股热门**
-                - 000001（平安银行）
-                - 600036（招商银行）
-                - 600519（贵州茅台）
-
-                **港股热门**
-                - 00700 / 700（腾讯控股）
-                - 09988 / 9988（阿里巴巴-SW）
-                - 01810 / 1810（小米集团-W）
-
-                **美股热门**
-                - AAPL（苹果）
-                - MSFT（微软）
-                - NVDA（英伟达）
-                """
-            )
-
-    st.info("💡 首次运行前，请先在 .env 中配置 `DEEPSEEK_API_KEY`，分析工作台才能正常调用模型。")
-
-    with st.container(border=True):
-        st.markdown("##### 市场支持说明")
-        st.caption("不同市场的数据完备度不同，建议先从支持最完整的 A 股工作流开始。")
-        st.markdown(
-            """
-            - **A股**：完整支持（技术分析、财务数据、资金流向、市场情绪、新闻数据 qstock）
-            - **港股**：部分支持（技术分析、21 项财务指标）
-            - **美股**：完整支持（技术分析、财务数据）
-            """
-        )
-        st.markdown("##### 港股支持的财务指标")
-        st.write("盈利能力（6项）、营运能力（3项）、偿债能力（2项）、市场表现（4项）、分红指标（3项）、股本结构（3项）")
 
 def display_history_records():
     """显示历史分析记录"""

@@ -31,7 +31,7 @@ def display_low_price_bull():
         display_monitor_panel()
         
         # 返回按钮
-        if st.button("🔙 返回选股", type="secondary"):
+        if st.button("🔙 返回选股", type="secondary", key="low_price_bull_back_to_selector"):
             del st.session_state.show_low_price_monitor
             st.rerun()
         return
@@ -43,7 +43,7 @@ def display_low_price_bull():
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("📊 策略监控", type="primary", width='content'):
+        if st.button("📊 策略监控", type="primary", width='content', key="low_price_bull_open_monitor"):
             st.session_state.show_low_price_monitor = True
             st.rerun()
     
@@ -84,7 +84,8 @@ def display_low_price_bull():
             max_value=10,
             value=5,
             step=1,
-            help="选择展示的股票数量"
+            help="选择展示的股票数量",
+            key="low_price_bull_top_n",
         )
     
     with col2:
@@ -93,7 +94,7 @@ def display_low_price_bull():
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("🚀 开始低价擒牛选股", type="primary", width='content'):
+    if st.button("🚀 开始低价擒牛选股", type="primary", width='content', key="low_price_bull_start_selector"):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
@@ -440,11 +441,11 @@ def display_strategy_simulation(stocks_df: pd.DataFrame, selector):
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("🎮 开始策略模拟", type="primary", width='content'):
+        if st.button("🎮 开始策略模拟", type="primary", width='content', key="low_price_bull_start_simulation"):
             st.session_state.show_strategy_simulation = True
     
     with col2:
-        if st.button("🔗 连接MiniQMT实盘", type="secondary", width='content'):
+        if st.button("🔗 连接MiniQMT实盘", type="secondary", width='content', key="low_price_bull_connect_miniqmt"):
             st.warning("⚠️ MiniQMT实盘交易功能需要先配置环境变量，详见系统配置")
     
     # 显示模拟结果

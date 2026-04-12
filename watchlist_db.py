@@ -161,6 +161,7 @@ class WatchlistDB:
         *,
         latest_signal: str | None = None,
         latest_price: float | None = None,
+        stock_name: str | None = None,
     ) -> None:
         normalized_code = str(stock_code).strip().upper()
         with self._connect() as conn:
@@ -168,12 +169,14 @@ class WatchlistDB:
             cursor.execute(
                 """
                 UPDATE watchlist
-                SET latest_signal = COALESCE(?, latest_signal),
+                SET stock_name = COALESCE(?, stock_name),
+                    latest_signal = COALESCE(?, latest_signal),
                     latest_price = COALESCE(?, latest_price),
                     updated_at = ?
                 WHERE stock_code = ?
                 """,
                 (
+                    stock_name,
                     latest_signal,
                     float(latest_price) if latest_price is not None else None,
                     datetime.now().isoformat(timespec="seconds"),

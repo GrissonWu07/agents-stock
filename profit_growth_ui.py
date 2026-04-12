@@ -29,7 +29,7 @@ def display_profit_growth():
         display_profit_growth_monitor_panel()
         
         # 返回按钮
-        if st.button("🔙 返回选股", type="secondary"):
+        if st.button("🔙 返回选股", type="secondary", key="profit_growth_back_to_selector"):
             del st.session_state.show_profit_growth_monitor
             st.rerun()
         return
@@ -41,7 +41,7 @@ def display_profit_growth():
     
     with col_monitor:
         st.write("")  # 占位
-        if st.button("📊 策略监控", type="primary", use_container_width=True):
+        if st.button("📊 策略监控", type="primary", use_container_width=True, key="profit_growth_open_monitor"):
             st.session_state.show_profit_growth_monitor = True
             st.rerun()
     
@@ -83,7 +83,8 @@ def display_profit_growth():
             max_value=10,
             value=5,
             step=1,
-            help="选择展示的股票数量"
+            help="选择展示的股票数量",
+            key="profit_growth_top_n",
         )
     
     with col2:
@@ -92,7 +93,7 @@ def display_profit_growth():
     st.markdown("---")
     
     # 开始选股按钮
-    if st.button("🚀 开始净利增长选股", type="primary", use_container_width=True):
+    if st.button("🚀 开始净利增长选股", type="primary", use_container_width=True, key="profit_growth_start_selector"):
         
         with st.spinner("正在获取数据，请稍候..."):
             # 创建选股器
@@ -149,7 +150,7 @@ def display_profit_growth():
         
         # 发送钉钉通知
         st.markdown("---")
-        if st.button("📲 发送钉钉通知", type="secondary", use_container_width=True):
+        if st.button("📲 发送钉钉通知", type="secondary", use_container_width=True, key="profit_growth_send_dingtalk"):
             send_dingtalk_notification(stocks_df)
 
 
