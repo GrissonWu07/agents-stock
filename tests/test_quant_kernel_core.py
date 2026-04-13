@@ -2,9 +2,9 @@ from datetime import datetime
 
 
 def test_dual_track_resolver_full_resonance_returns_full_buy_position():
-    from quant_kernel.config import QuantKernelConfig
-    from quant_kernel.decision_engine import DualTrackResolver
-    from quant_kernel.models import ContextualScore, Decision
+    from app.quant_kernel.config import QuantKernelConfig
+    from app.quant_kernel.decision_engine import DualTrackResolver
+    from app.quant_kernel.models import ContextualScore, Decision
 
     resolver = DualTrackResolver(QuantKernelConfig.default().dual_track)
     tech_decision = Decision(
@@ -37,9 +37,9 @@ def test_dual_track_resolver_full_resonance_returns_full_buy_position():
 
 
 def test_dual_track_resolver_context_veto_blocks_buy():
-    from quant_kernel.config import QuantKernelConfig
-    from quant_kernel.decision_engine import DualTrackResolver
-    from quant_kernel.models import ContextualScore, Decision
+    from app.quant_kernel.config import QuantKernelConfig
+    from app.quant_kernel.decision_engine import DualTrackResolver
+    from app.quant_kernel.models import ContextualScore, Decision
 
     resolver = DualTrackResolver(QuantKernelConfig.default().dual_track)
     tech_decision = Decision(
@@ -72,9 +72,9 @@ def test_dual_track_resolver_context_veto_blocks_buy():
 
 
 def test_dual_track_resolver_extreme_context_delays_sell_exit():
-    from quant_kernel.config import QuantKernelConfig
-    from quant_kernel.decision_engine import DualTrackResolver
-    from quant_kernel.models import ContextualScore, Decision
+    from app.quant_kernel.config import QuantKernelConfig
+    from app.quant_kernel.decision_engine import DualTrackResolver
+    from app.quant_kernel.models import ContextualScore, Decision
 
     resolver = DualTrackResolver(QuantKernelConfig.default().dual_track)
     tech_decision = Decision(
@@ -107,7 +107,7 @@ def test_dual_track_resolver_extreme_context_delays_sell_exit():
 
 
 def test_kernel_runtime_context_score_changes_with_dynamic_market_context():
-    from quant_kernel.runtime import KernelStrategyRuntime
+    from app.quant_kernel.runtime import KernelStrategyRuntime
 
     runtime = KernelStrategyRuntime()
     candidate = {
@@ -154,7 +154,7 @@ def test_kernel_runtime_context_score_changes_with_dynamic_market_context():
 
 
 def test_kernel_runtime_derives_dynamic_strategy_profile():
-    from quant_kernel.runtime import KernelStrategyRuntime
+    from app.quant_kernel.runtime import KernelStrategyRuntime
 
     runtime = KernelStrategyRuntime()
     candidate = {

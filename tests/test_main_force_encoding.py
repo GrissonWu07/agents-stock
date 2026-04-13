@@ -1,7 +1,7 @@
 import pandas as pd
 
-import main_force_analysis as mfa
-import main_force_selector as mfs
+import app.main_force_analysis as mfa
+import app.main_force_selector as mfs
 
 
 class GbkStdout:

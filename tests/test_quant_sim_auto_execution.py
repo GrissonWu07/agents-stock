@@ -1,16 +1,16 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.portfolio_service import PortfolioService
-from quant_sim.scheduler import QuantSimScheduler
-from quant_sim.signal_center_service import SignalCenterService
-from watchlist_integration import add_watchlist_rows_to_quant_pool
-from watchlist_service import WatchlistService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.scheduler import QuantSimScheduler
+from app.quant_sim.signal_center_service import SignalCenterService
+from app.watchlist_integration import add_watchlist_rows_to_quant_pool
+from app.watchlist_service import WatchlistService
 
 
 def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidate_service.add_manual_candidate("300390", "天华新能", "main_force", latest_price=62.0)
 
-    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
 
     monkeypatch.setattr(
@@ -26,8 +26,8 @@ def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
     )
 
     summary = scheduler.run_once(run_reason="manual_scan")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     positions = portfolio_service.list_positions()
     pending = signal_service.list_pending_signals()
@@ -44,7 +44,7 @@ def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
 
 def test_scheduler_auto_executes_buy_signal_from_watchlist_candidate_and_syncs_watchlist(tmp_path, monkeypatch):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)
@@ -82,9 +82,9 @@ def test_scheduler_auto_executes_buy_signal_from_watchlist_candidate_and_syncs_w
 
 
 def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("301291", "明阳电气", "main_force", latest_price=53.0)
     candidate = candidate_service.list_candidates()[0]
@@ -100,7 +100,7 @@ def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch)
         executed_at="2026-04-08 10:00:00",
     )
 
-    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
 
     monkeypatch.setattr(
@@ -131,9 +131,9 @@ def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch)
 
 
 def test_auto_execute_sell_clamps_quantity_to_historical_sellable_quantity(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("301291", "明阳电气", "main_force", latest_price=53.0)
     candidate = candidate_service.list_candidates()[0]
@@ -189,12 +189,12 @@ def test_auto_execute_sell_clamps_quantity_to_historical_sellable_quantity(tmp_p
 
 
 def test_scheduler_auto_execute_buy_signal_records_skip_reason_when_under_one_lot(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidate_service.add_manual_candidate("002463", "沪电股份", "main_force", latest_price=89.99)
 
-    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
-    PortfolioService(db_file=tmp_path / "quant_sim.db").configure_account(10000.0)
+    PortfolioService(db_file=tmp_path / "app.quant_sim.db").configure_account(10000.0)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -209,7 +209,7 @@ def test_scheduler_auto_execute_buy_signal_records_skip_reason_when_under_one_lo
     )
 
     summary = scheduler.run_once(run_reason="manual_scan")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
     pending = signal_service.list_pending_signals()
 
     assert summary["auto_executed"] == 0

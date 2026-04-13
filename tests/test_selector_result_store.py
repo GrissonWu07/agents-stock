@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-import selector_result_store as store
+import app.selector_result_store as store
 
 
 def test_save_and_load_latest_result_round_trips_nested_dataframes(tmp_path):

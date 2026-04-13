@@ -1,6 +1,6 @@
 import pandas as pd
 
-from stock_data import StockDataFetcher
+from app.stock_data import StockDataFetcher
 
 
 def test_get_chinese_stock_data_prefers_tdx_before_primary_sources(monkeypatch):
@@ -50,7 +50,7 @@ def test_get_chinese_stock_data_prefers_tdx_before_primary_sources(monkeypatch):
             )
 
     fetcher.data_source_manager = DummyDataSourceManager()
-    monkeypatch.setattr("smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", DummyTDXFetcher)
+    monkeypatch.setattr("app.smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", DummyTDXFetcher)
 
     df = fetcher._get_chinese_stock_data("301511", period="1y")
 
@@ -92,7 +92,7 @@ def test_get_chinese_stock_data_falls_back_to_tdx_when_primary_sources_fail(monk
             )
 
     fetcher.data_source_manager = DummyDataSourceManager()
-    monkeypatch.setattr("smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", DummyTDXFetcher)
+    monkeypatch.setattr("app.smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", DummyTDXFetcher)
 
     df = fetcher._get_chinese_stock_data("301511", period="1y")
 

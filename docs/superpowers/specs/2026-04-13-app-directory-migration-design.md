@@ -87,7 +87,7 @@
 - `config/`
 - `data/`
 - `requirements.txt`
-- `Dockerfile`、`docker-compose.yml`
+- `build/Dockerfile`、`build/docker-compose.yml`
 - `.streamlit/`
 - `start_app.bat`
 - 其他工程与运维文件

@@ -1,18 +1,18 @@
 import pandas as pd
 
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.portfolio_service import PortfolioService
-from quant_sim.scheduler import QuantSimScheduler
-from quant_sim.signal_center_service import SignalCenterService
-from research_watchlist_integration import add_research_stocks_to_watchlist
-from watchlist_integration import add_watchlist_rows_to_quant_pool
-from watchlist_selector_integration import sync_selector_dataframe_to_watchlist
-from watchlist_service import WatchlistService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.scheduler import QuantSimScheduler
+from app.quant_sim.signal_center_service import SignalCenterService
+from app.research_watchlist_integration import add_research_stocks_to_watchlist
+from app.watchlist_integration import add_watchlist_rows_to_quant_pool
+from app.watchlist_selector_integration import sync_selector_dataframe_to_watchlist
+from app.watchlist_service import WatchlistService
 
 
 def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_path, monkeypatch):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     sync_selector_dataframe_to_watchlist(
         pd.DataFrame([{"股票代码": "002824.SZ", "股票简称": "和胜股份", "最新价": 22.97}]),
@@ -54,7 +54,7 @@ def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_p
 
 def test_research_outputs_flow_into_watchlist_quant_and_holdings(tmp_path, monkeypatch):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     add_research_stocks_to_watchlist(
         [

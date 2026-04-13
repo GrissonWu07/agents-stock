@@ -2,16 +2,16 @@
 
 ## 📋 概述
 
-`Dockerfile国内源版` 是专为中国大陆用户优化的Docker构建文件，所有依赖都从国内镜像源下载，大幅提升构建速度。
+`build/Dockerfile国内源版` 是专为中国大陆用户优化的Docker构建文件，所有依赖都从国内镜像源下载，大幅提升构建速度。
 
 ## 🚀 快速构建
 
 ```bash
 # Windows PowerShell
-docker build -f "Dockerfile国内源版" -t agentsstock1:latest .
+docker build -f "build/Dockerfile国内源版" -t agentsstock1:latest .
 
 # Linux/macOS
-docker build -f Dockerfile国内源版 -t agentsstock1:latest .
+docker build -f build/Dockerfile国内源版 -t agentsstock1:latest .
 ```
 
 ## 🌐 国内镜像源配置
@@ -149,7 +149,7 @@ NODE_VERSION=16.20.2  # 改为16.x LTS
 ### 4. 构建缓存问题
 如需强制重新构建（不使用缓存）：
 ```bash
-docker build --no-cache -f "Dockerfile国内源版" -t agentsstock1:latest .
+docker build --no-cache -f "build/Dockerfile国内源版" -t agentsstock1:latest .
 ```
 
 ## 📊 构建日志示例
@@ -216,7 +216,7 @@ cp .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY
 
 # 3. 构建镜像（国内源版）
-docker build -f "Dockerfile国内源版" -t agentsstock1:latest .
+docker build -f "build/Dockerfile国内源版" -t agentsstock1:latest .
 
 # 4. 运行容器
 docker run -d -p 8503:8501 -v $(pwd)/.env:/app/.env --name agentsstock1 agentsstock1:latest
@@ -232,7 +232,7 @@ docker logs -f agentsstock1
 
 ### 开发环境
 ```bash
-docker build -f "Dockerfile国内源版" -t agentsstock1:dev .
+docker build -f "build/Dockerfile国内源版" -t agentsstock1:dev .
 docker run -d -p 8503:8501 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd):/app \
@@ -242,7 +242,7 @@ docker run -d -p 8503:8501 \
 
 ### 生产环境
 ```bash
-docker build -f "Dockerfile国内源版" -t agentsstock1:prod .
+docker build -f "build/Dockerfile国内源版" -t agentsstock1:prod .
 docker run -d -p 8503:8501 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd)/data:/app/data \

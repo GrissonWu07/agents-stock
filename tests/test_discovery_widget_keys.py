@@ -3,10 +3,10 @@ from pathlib import Path
 
 def test_discovery_selector_sliders_have_unique_keys():
     files = {
-        "low_price_bull": Path("C:/Projects/githubs/aiagents-stock/low_price_bull_ui.py"),
-        "small_cap": Path("C:/Projects/githubs/aiagents-stock/small_cap_ui.py"),
-        "profit_growth": Path("C:/Projects/githubs/aiagents-stock/profit_growth_ui.py"),
-        "value_stock": Path("C:/Projects/githubs/aiagents-stock/value_stock_ui.py"),
+        "low_price_bull": Path("C:/Projects/githubs/aiagents-stock/app/low_price_bull_ui.py"),
+        "small_cap": Path("C:/Projects/githubs/aiagents-stock/app/small_cap_ui.py"),
+        "profit_growth": Path("C:/Projects/githubs/aiagents-stock/app/profit_growth_ui.py"),
+        "value_stock": Path("C:/Projects/githubs/aiagents-stock/app/value_stock_ui.py"),
     }
 
     expected_keys = {
@@ -23,9 +23,9 @@ def test_discovery_selector_sliders_have_unique_keys():
 
 
 def test_discovery_selector_shared_buttons_have_page_specific_keys():
-    source_small_cap = Path("C:/Projects/githubs/aiagents-stock/small_cap_ui.py").read_text(encoding="utf-8")
-    source_profit = Path("C:/Projects/githubs/aiagents-stock/profit_growth_ui.py").read_text(encoding="utf-8")
-    source_low_price = Path("C:/Projects/githubs/aiagents-stock/low_price_bull_ui.py").read_text(encoding="utf-8")
+    source_small_cap = Path("C:/Projects/githubs/aiagents-stock/app/small_cap_ui.py").read_text(encoding="utf-8")
+    source_profit = Path("C:/Projects/githubs/aiagents-stock/app/profit_growth_ui.py").read_text(encoding="utf-8")
+    source_low_price = Path("C:/Projects/githubs/aiagents-stock/app/low_price_bull_ui.py").read_text(encoding="utf-8")
 
     assert 'key="small_cap_open_monitor"' in source_small_cap
     assert 'key="small_cap_send_dingtalk"' in source_small_cap

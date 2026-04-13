@@ -1,6 +1,6 @@
 import pandas as pd
 
-from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
+from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
 
 def test_get_realtime_quote_normalizes_pytdx_fields(monkeypatch):

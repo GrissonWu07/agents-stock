@@ -1,4 +1,4 @@
-import streamlit_flash as flash
+import app.streamlit_flash as flash
 
 
 def test_queue_and_consume_flash_messages_round_trip():

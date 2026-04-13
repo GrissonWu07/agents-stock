@@ -1,7 +1,7 @@
 import threading
 import pandas as pd
 
-import main_force_analysis as mfa
+import app.main_force_analysis as mfa
 
 
 class DummyAgents:

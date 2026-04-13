@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 
-from main_force_selector import MainForceStockSelector
+from app.main_force_selector import MainForceStockSelector
 
 
 PROXY_KEYS = [
@@ -33,7 +33,7 @@ def test_get_main_force_stocks_temporarily_disables_proxy_env(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("app.main_force_selector.pywencai.get", fake_get)
 
     selector = MainForceStockSelector()
     success, stocks_df, _ = selector.get_main_force_stocks(
@@ -64,7 +64,7 @@ def test_get_main_force_stocks_prefers_simpler_stable_queries(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("app.main_force_selector.pywencai.get", fake_get)
 
     selector = MainForceStockSelector()
     success, _, _ = selector.get_main_force_stocks(
@@ -95,7 +95,7 @@ def test_get_main_force_stocks_retries_when_result_lacks_stock_columns(monkeypat
             ]
         )
 
-    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("app.main_force_selector.pywencai.get", fake_get)
 
     selector = MainForceStockSelector()
     success, stocks_df, _ = selector.get_main_force_stocks(
@@ -126,8 +126,8 @@ def test_get_main_force_stocks_only_sleeps_for_transient_errors(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
-    monkeypatch.setattr("main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr("app.main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("app.main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
 
     selector = MainForceStockSelector()
     success, _, _ = selector.get_main_force_stocks(
@@ -158,8 +158,8 @@ def test_get_main_force_stocks_skips_sleep_for_non_transient_errors(monkeypatch)
             ]
         )
 
-    monkeypatch.setattr("main_force_selector.pywencai.get", fake_get)
-    monkeypatch.setattr("main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr("app.main_force_selector.pywencai.get", fake_get)
+    monkeypatch.setattr("app.main_force_selector.time.sleep", lambda seconds: sleep_calls.append(seconds))
 
     selector = MainForceStockSelector()
     success, _, _ = selector.get_main_force_stocks(

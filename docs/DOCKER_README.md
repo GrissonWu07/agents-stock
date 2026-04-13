@@ -38,10 +38,10 @@ cp .env.template .env
 
 ```bash
 # 一键启动
-docker-compose up -d
+docker compose -f build/docker-compose.yml up -d
 
 # 查看日志（可选）
-docker-compose logs -f
+docker compose -f build/docker-compose.yml logs -f
 ```
 
 ### 4️⃣ 访问系统
@@ -52,16 +52,16 @@ docker-compose logs -f
 
 ```bash
 # 启动服务
-docker-compose up -d
+docker compose -f build/docker-compose.yml up -d
 
 # 停止服务
-docker-compose down
+docker compose -f build/docker-compose.yml down
 
 # 重启服务
-docker-compose restart
+docker compose -f build/docker-compose.yml restart
 
 # 查看日志
-docker-compose logs -f
+docker compose -f build/docker-compose.yml logs -f
 
 # 查看运行状态
 docker ps
@@ -74,9 +74,9 @@ docker exec -it agentsstock1 bash
 
 ```
 agentsstock1/
-├── Dockerfile              # Docker镜像构建文件
-├── docker-compose.yml      # Docker编排配置
-├── .dockerignore          # Docker构建忽略文件
+├── build/Dockerfile        # Docker镜像构建文件
+├── build/docker-compose.yml # Docker编排配置
+├── build/.dockerignore    # Docker构建忽略文件（副本）
 ├── .env.template          # 环境变量模板
 ├── .env                   # 环境变量配置（需自己创建）
 ├── DOCKER_DEPLOYMENT.md   # 详细部署文档
@@ -105,7 +105,7 @@ Docker镜像已内置Node.js 18.x环境，支持pywencai等需要Node.js的Pytho
 ### 问题1: 容器启动失败
 ```bash
 # 查看详细日志
-docker-compose logs
+docker compose -f build/docker-compose.yml logs
 
 # 检查 .env 文件是否存在并配置正确
 cat .env
@@ -124,7 +124,7 @@ docker exec agentsstock1 curl http://localhost:8501
 ```
 
 ### 问题3: 端口被占用
-修改 `docker-compose.yml` 文件：
+修改 `build/docker-compose.yml` 文件：
 ```yaml
 ports:
   - "8502:8501"  # 改用8502端口
@@ -141,26 +141,26 @@ chmod 777 data/
 ### 更新代码
 ```bash
 # 停止服务
-docker-compose down
+docker compose -f build/docker-compose.yml down
 
 # 拉取最新代码
 git pull
 
 # 重新构建并启动
-docker-compose up -d --build
+docker compose -f build/docker-compose.yml up -d --build
 ```
 
 ### 清理和重置
 ```bash
 # 完全清理（包括volumes）
-docker-compose down -v
+docker compose -f build/docker-compose.yml down -v
 
 # 删除镜像
 docker rmi agentsstock1:latest
 
 # 重新构建
-docker-compose build --no-cache
-docker-compose up -d
+docker compose -f build/docker-compose.yml build --no-cache
+docker compose -f build/docker-compose.yml up -d
 ```
 
 ### 备份数据
@@ -198,8 +198,8 @@ docker logs agentsstock1 2>&1 | wc -l
 3. **定期更新**
    ```bash
    # 更新Docker镜像
-   docker-compose pull
-   docker-compose up -d
+   docker compose -f build/docker-compose.yml pull
+   docker compose -f build/docker-compose.yml up -d
    ```
 
 ## 🌐 生产环境部署
@@ -240,7 +240,7 @@ server {
 
 遇到问题？
 
-1. 查看日志：`docker-compose logs -f`
+1. 查看日志：`docker compose -f build/docker-compose.yml logs -f`
 2. 查看完整文档：[DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
 3. 检查部署清单：[DOCKER_CHECKLIST.md](DOCKER_CHECKLIST.md)
 4. 联系支持：ws3101001@126.com

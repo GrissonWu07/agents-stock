@@ -1,8 +1,8 @@
-import app
+import app.app as app_module
 
 
 def test_build_indicator_explanations_returns_human_readable_labels():
-    explanations = app.build_indicator_explanations(
+    explanations = app_module.build_indicator_explanations(
         {
             "rsi": 78.2,
             "ma20": 14.8,
@@ -23,7 +23,7 @@ def test_build_indicator_explanations_returns_human_readable_labels():
 
 
 def test_build_indicator_summary_concatenates_indicator_takeaways():
-    summary = app.build_indicator_summary(
+    summary = app_module.build_indicator_summary(
         {
             "RSI": {"state": "中性", "summary": "RSI 位于 30-70 之间，暂未进入极端区间。"},
             "MA20": {"state": "强于中期趋势", "summary": "当前价高于 MA20，中期趋势仍偏强。"},

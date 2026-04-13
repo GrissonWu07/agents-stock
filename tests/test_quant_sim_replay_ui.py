@@ -1,8 +1,8 @@
 from datetime import date, datetime, time
 from pathlib import Path
 
-from streamlit_flash import consume_flash_messages
-from quant_sim import ui
+from app.streamlit_flash import consume_flash_messages
+from app.quant_sim import ui
 
 
 class DummyReplayService:
@@ -158,7 +158,7 @@ def test_build_replay_datetime_preserves_time_component():
 
 
 def test_quant_sim_ui_exposes_replay_controls_and_results_copy():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
 
     assert "历史区间回放" in ui_source
     assert "开始日期" in ui_source
@@ -175,20 +175,20 @@ def test_quant_sim_ui_exposes_replay_controls_and_results_copy():
 
 
 def test_quant_sim_ui_defaults_replay_timeframe_to_30m():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
 
     assert 'options=["30m", "1d", "1d+30m"]' in ui_source
 
 
 def test_quant_sim_replay_start_does_not_force_extra_rerun():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     start_block = ui_source.split('key="quant_sim_run_replay"', 1)[1].split("def render_replay_results", 1)[0]
 
     assert "st.rerun()" not in start_block
 
 
 def test_app_navigation_exposes_quant_replay_page():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert '"label": "历史回放"' in app_source
     assert '"key": "nav_quant_replay"' in app_source
@@ -196,14 +196,14 @@ def test_app_navigation_exposes_quant_replay_page():
 
 
 def test_quant_sim_page_no_longer_contains_replay_section():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     quant_sim_block = ui_source.split("def display_quant_sim()", 1)[1].split("def display_quant_replay()", 1)[0]
 
     assert "历史区间回放" not in quant_sim_block
 
 
 def test_quant_replay_page_exposes_direct_configuration_without_expander():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("def display_quant_replay()", 1)[1]
 
     assert "开始日期" in replay_block
@@ -214,7 +214,7 @@ def test_quant_replay_page_exposes_direct_configuration_without_expander():
 
 
 def test_quant_replay_page_uses_same_two_column_layout_style_as_realtime():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("def display_quant_replay()", 1)[1].split("def render_replay_configuration", 1)[0]
 
     assert "render_quant_sim_layout_styles()" in replay_block
@@ -226,7 +226,7 @@ def test_quant_replay_page_uses_same_two_column_layout_style_as_realtime():
 
 
 def test_quant_replay_page_exposes_read_only_candidate_pool_summary():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("def display_quant_replay()", 1)[1]
 
     assert "### 量化候选池" in replay_block
@@ -237,7 +237,7 @@ def test_quant_replay_page_exposes_read_only_candidate_pool_summary():
 
 
 def test_quant_replay_page_mentions_report_sections_and_delete_action():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("def display_quant_replay()", 1)[1]
 
     assert "回放总览" in replay_block
@@ -255,7 +255,7 @@ def test_quant_replay_page_mentions_report_sections_and_delete_action():
 
 
 def test_quant_replay_page_uses_compact_trade_analysis_cards():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("def display_quant_replay()", 1)[1]
 
     assert "render_replay_trade_analysis_cards(" in replay_block
@@ -263,7 +263,7 @@ def test_quant_replay_page_uses_compact_trade_analysis_cards():
 
 
 def test_quant_replay_signal_table_uses_row_selection_for_detail_view():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
     replay_block = ui_source.split("#### 信号执行记录", 1)[1]
 
     assert 'on_select="rerun"' in replay_block
@@ -274,7 +274,7 @@ def test_quant_replay_signal_table_uses_row_selection_for_detail_view():
 
 
 def test_sidebar_navigation_uses_grouped_cards_instead_of_expanders():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
     sidebar_block = app_source.split("with st.sidebar:", 1)[1].split("# 检查是否显示历史记录", 1)[0]
 
     assert "render_sidebar_navigation()" in app_source
@@ -284,7 +284,7 @@ def test_sidebar_navigation_uses_grouped_cards_instead_of_expanders():
 
 
 def test_sidebar_navigation_removes_current_model_block():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
     sidebar_block = app_source.split("with st.sidebar:", 1)[1].split("# 检查是否显示历史记录", 1)[0]
 
     assert "show_current_model_info()" not in app_source
@@ -293,7 +293,7 @@ def test_sidebar_navigation_removes_current_model_block():
 
 
 def test_sidebar_navigation_exposes_card_group_css_helpers():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert "render_sidebar_nav_styles" in app_source
     assert "sidebar-nav-card" in app_source
@@ -302,7 +302,7 @@ def test_sidebar_navigation_exposes_card_group_css_helpers():
 
 
 def test_sidebar_navigation_lists_all_expected_groups_and_destinations():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     for label in ["选股", "策略", "投资管理", "系统"]:
         assert label in app_source
@@ -329,7 +329,7 @@ def test_sidebar_navigation_lists_all_expected_groups_and_destinations():
 
 
 def test_app_uses_unified_workbench_page_header_copy():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert "render_workbench_page_header" in app_source
     assert ".workbench-shell" in app_source
@@ -337,7 +337,7 @@ def test_app_uses_unified_workbench_page_header_copy():
 
 
 def test_quant_sim_and_replay_use_shared_layout_helpers():
-    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/app/quant_sim/ui.py").read_text(encoding="utf-8")
 
     assert "render_quant_sim_layout_styles()" in ui_source
     assert "render_workspace_section_header(" in ui_source
@@ -345,7 +345,7 @@ def test_quant_sim_and_replay_use_shared_layout_helpers():
 
 
 def test_home_page_uses_single_stock_analysis_module_without_result_workbench_panel():
-    app_source = Path("C:/Projects/githubs\\aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert "股票分析" in app_source
     assert "分析工作区" not in app_source
@@ -355,7 +355,7 @@ def test_home_page_uses_single_stock_analysis_module_without_result_workbench_pa
 
 
 def test_home_page_orders_analysts_before_mode_before_stock_input():
-    app_source = Path("C:/Projects/githubs\\aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     analysts_index = app_source.index("#### 👥 分析师团队")
     mode_index = app_source.index('analysis_mode = st.radio(')
@@ -366,7 +366,7 @@ def test_home_page_orders_analysts_before_mode_before_stock_input():
 
 
 def test_home_page_no_longer_includes_quickstart_reference_blocks():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert "show_example_interface" not in app_source
     assert "快速上手" not in app_source
@@ -377,7 +377,7 @@ def test_home_page_no_longer_includes_quickstart_reference_blocks():
 
 
 def test_home_header_and_beginner_tip_no_longer_render_before_page_routing():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
     main_block = app_source.split("def main():", 1)[1].split("# 检查是否显示历史记录", 1)[0]
 
     assert "render_workbench_page_header(" not in main_block
@@ -385,7 +385,7 @@ def test_home_header_and_beginner_tip_no_longer_render_before_page_routing():
 
 
 def test_global_button_style_no_longer_uses_heavy_purple_gradient_cta():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert ".stButton>button[kind=\"primary\"]" in app_source
     assert ".stButton>button[kind=\"secondary\"]" in app_source
@@ -393,7 +393,8 @@ def test_global_button_style_no_longer_uses_heavy_purple_gradient_cta():
 
 
 def test_home_page_header_no_longer_renders_placeholder_actions():
-    app_source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    app_source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
 
     assert 'secondary_action_label="演示模式"' not in app_source
     assert 'primary_action_label="开始分析"' not in app_source
+

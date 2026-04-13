@@ -1,4 +1,4 @@
-from watchlist_db import WatchlistDB
+from app.watchlist_db import WatchlistDB
 
 
 def test_watchlist_db_adds_and_lists_entries(tmp_path):

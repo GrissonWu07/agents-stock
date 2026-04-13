@@ -1,11 +1,11 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from watchlist_integration import add_watchlist_rows_to_quant_pool, remove_watchlist_rows_from_quant_pool
-from watchlist_service import WatchlistService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.watchlist_integration import add_watchlist_rows_to_quant_pool, remove_watchlist_rows_from_quant_pool
+from app.watchlist_service import WatchlistService
 
 
 def test_watchlist_rows_promote_into_quant_candidate_pool(tmp_path):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)
@@ -26,7 +26,7 @@ def test_watchlist_rows_promote_into_quant_candidate_pool(tmp_path):
 
 def test_watchlist_quant_membership_clears_on_candidate_delete(tmp_path):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)
@@ -42,7 +42,7 @@ def test_watchlist_quant_membership_clears_on_candidate_delete(tmp_path):
 
 def test_watchlist_rows_can_be_removed_from_quant_candidate_pool(tmp_path):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)

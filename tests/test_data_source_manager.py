@@ -1,4 +1,4 @@
-import data_source_manager as dsm
+import app.data_source_manager as dsm
 
 
 class GbkStdout:

@@ -1,6 +1,6 @@
 import pandas as pd
 
-import app
+import app.app as app_module
 
 
 def test_get_stock_data_uses_fast_info_path(monkeypatch):
@@ -23,9 +23,9 @@ def test_get_stock_data_uses_fast_info_path(monkeypatch):
             call_order.append(("latest", len(stock_data)))
             return {"rsi": 55}
 
-    monkeypatch.setattr(app, "StockDataFetcher", FakeFetcher)
+    monkeypatch.setattr(app_module, "StockDataFetcher", FakeFetcher)
 
-    stock_info, stock_data, indicators = app.get_stock_data.__wrapped__("301511", "1y")
+    stock_info, stock_data, indicators = app_module.get_stock_data.__wrapped__("301511", "1y")
 
     assert stock_info["symbol"] == "301511"
     assert indicators == {"rsi": 55}
@@ -45,9 +45,9 @@ def test_get_stock_data_preserves_data_source_error(monkeypatch):
         def get_fast_stock_info(self, symbol):
             return {"symbol": symbol, "name": "测试股"}
 
-    monkeypatch.setattr(app, "StockDataFetcher", FakeFetcher)
+    monkeypatch.setattr(app_module, "StockDataFetcher", FakeFetcher)
 
-    stock_info, stock_data, indicators = app.get_stock_data.__wrapped__("301511", "1y")
+    stock_info, stock_data, indicators = app_module.get_stock_data.__wrapped__("301511", "1y")
 
     assert stock_data is None
     assert indicators is None

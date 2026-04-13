@@ -1,13 +1,13 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.db import QuantSimDB
-from quant_sim.portfolio_service import PortfolioService
-from watchlist_service import WatchlistService
-from watchlist_ui import _build_watchlist_overview_metrics
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.db import QuantSimDB
+from app.quant_sim.portfolio_service import PortfolioService
+from app.watchlist_service import WatchlistService
+from app.watchlist_ui import _build_watchlist_overview_metrics
 
 
 def test_build_watchlist_overview_metrics_counts_watch_positions_candidates_and_tasks(tmp_path):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watch_service = WatchlistService(db_file=watch_db)
     watch_service.add_manual_stock("300390")

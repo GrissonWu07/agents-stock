@@ -1,8 +1,8 @@
 from datetime import date, datetime
 
-from quant_kernel.portfolio_engine import LotStatus, PositionLot
-from quant_sim.stockpolicy_core import LotStatus as CompatLotStatus
-from quant_sim.stockpolicy_core import PositionLot as CompatPositionLot
+from app.quant_kernel.portfolio_engine import LotStatus, PositionLot
+from app.quant_sim.stockpolicy_core import LotStatus as CompatLotStatus
+from app.quant_sim.stockpolicy_core import PositionLot as CompatPositionLot
 
 
 def test_position_lot_follows_t_plus_one_availability():

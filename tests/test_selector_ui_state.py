@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-import selector_ui_state as state
+import app.selector_ui_state as state
 
 
 def test_save_and_load_simple_selector_state_round_trips_latest_result(tmp_path):

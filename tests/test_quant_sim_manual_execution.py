@@ -1,12 +1,12 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.portfolio_service import PortfolioService
-from quant_sim.signal_center_service import SignalCenterService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.signal_center_service import SignalCenterService
 
 
 def test_confirm_sell_closes_simulated_position(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="600036",
@@ -58,9 +58,9 @@ def test_confirm_sell_closes_simulated_position(tmp_path):
 
 
 def test_ignore_signal_removes_it_from_pending_queue(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="600887",
@@ -89,9 +89,9 @@ def test_ignore_signal_removes_it_from_pending_queue(tmp_path):
 
 
 def test_confirm_partial_sell_consumes_lot_quantity(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
     candidate = candidate_service.list_candidates()[0]
@@ -128,9 +128,9 @@ def test_confirm_partial_sell_consumes_lot_quantity(tmp_path):
 
 
 def test_confirm_sell_rejects_oversell_and_locked_quantity(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
     candidate = candidate_service.list_candidates()[0]
@@ -173,9 +173,9 @@ def test_confirm_sell_rejects_oversell_and_locked_quantity(tmp_path):
 
 
 def test_confirm_buy_rejects_non_positive_trade_inputs(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
     candidate = candidate_service.list_candidates()[0]
@@ -193,9 +193,9 @@ def test_confirm_buy_rejects_non_positive_trade_inputs(tmp_path):
 
 
 def test_confirm_buy_rejects_insufficient_available_cash(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
     candidate = candidate_service.list_candidates()[0]
@@ -219,9 +219,9 @@ def test_confirm_buy_rejects_insufficient_available_cash(tmp_path):
 
 
 def test_confirm_buy_unlocks_on_next_trading_day_not_calendar_day(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate("600036", "招商银行", "value_stock")
     candidate = candidate_service.list_candidates()[0]

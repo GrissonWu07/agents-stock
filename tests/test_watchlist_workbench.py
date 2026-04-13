@@ -2,13 +2,13 @@ from pathlib import Path
 
 
 def test_app_home_uses_watchlist_workbench():
-    source = Path("C:/Projects/githubs/aiagents-stock/app.py").read_text(encoding="utf-8")
+    source = Path("C:/Projects/githubs/aiagents-stock/app/app.py").read_text(encoding="utf-8")
     assert "display_watchlist_workbench" in source
     assert "股票工作台" in source
 
 
 def test_watchlist_ui_mentions_watchlist_stock_analysis_and_next_steps():
-    source = Path("C:/Projects/githubs/aiagents-stock/watchlist_ui.py").read_text(encoding="utf-8")
+    source = Path("C:/Projects/githubs/aiagents-stock/app/watchlist_ui.py").read_text(encoding="utf-8")
     assert "我的关注" in source
     assert "持仓分析" in source
     assert "实时监控" in source
@@ -20,7 +20,7 @@ def test_watchlist_ui_mentions_watchlist_stock_analysis_and_next_steps():
 
 
 def test_watchlist_ui_uses_wider_primary_layout_and_manual_code_only_input():
-    source = Path("C:/Projects/githubs/aiagents-stock/watchlist_ui.py").read_text(encoding="utf-8")
+    source = Path("C:/Projects/githubs/aiagents-stock/app/watchlist_ui.py").read_text(encoding="utf-8")
     assert "st.columns([2.8, 0.9]" in source
     assert 'st.text_input("股票代码"' in source
     assert 'add_manual_stock' in source
@@ -29,7 +29,7 @@ def test_watchlist_ui_uses_wider_primary_layout_and_manual_code_only_input():
 
 
 def test_watchlist_ui_supports_watchlist_to_quant_actions_without_watchlist_analysis_controls():
-    source = Path("C:/Projects/githubs/aiagents-stock/watchlist_ui.py").read_text(encoding="utf-8")
+    source = Path("C:/Projects/githubs/aiagents-stock/app/watchlist_ui.py").read_text(encoding="utf-8")
     assert "watchlist_row_add_quant_" in source
     assert "watchlist_row_delete_" in source
     assert "watchlist_bulk_add_quant" in source
@@ -51,7 +51,7 @@ def test_watchlist_ui_supports_watchlist_to_quant_actions_without_watchlist_anal
 
 
 def test_watchlist_ui_uses_select_all_callback_instead_of_pre_render_reset():
-    source = Path("C:/Projects/githubs/aiagents-stock/watchlist_ui.py").read_text(encoding="utf-8")
+    source = Path("C:/Projects/githubs/aiagents-stock/app/watchlist_ui.py").read_text(encoding="utf-8")
 
     assert "_toggle_watchlist_select_all" in source
     assert 'on_change=_toggle_watchlist_select_all' in source

@@ -1,7 +1,7 @@
 import pandas as pd
 import threading
 
-from batch_deep_analysis import (
+from app.batch_deep_analysis import (
     enrich_batch_result_metadata,
     extract_batch_candidates,
     run_batch_deep_analysis,

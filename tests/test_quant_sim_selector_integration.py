@@ -1,5 +1,5 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.integration import add_stock_to_quant_sim
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.integration import add_stock_to_quant_sim
 
 
 def test_add_selected_stock_to_quant_sim_candidate_pool(tmp_path):
@@ -8,10 +8,10 @@ def test_add_selected_stock_to_quant_sim_candidate_pool(tmp_path):
         stock_name="浦发银行",
         source="main_force",
         latest_price=10.45,
-        db_file=tmp_path / "quant_sim.db",
+        db_file=tmp_path / "app.quant_sim.db",
     )
 
-    service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidates = service.list_candidates()
 
     assert success is True
@@ -27,17 +27,17 @@ def test_add_stock_to_quant_sim_is_idempotent_per_stock(tmp_path):
         stock_name="平安银行",
         source="profit_growth",
         latest_price=12.34,
-        db_file=tmp_path / "quant_sim.db",
+        db_file=tmp_path / "app.quant_sim.db",
     )
     success, _, candidate_id = add_stock_to_quant_sim(
         stock_code="000001",
         stock_name="平安银行",
         source="profit_growth",
         latest_price=12.5,
-        db_file=tmp_path / "quant_sim.db",
+        db_file=tmp_path / "app.quant_sim.db",
     )
 
-    service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidates = service.list_candidates()
 
     assert success is True

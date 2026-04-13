@@ -2,13 +2,13 @@ from datetime import datetime
 
 import pandas as pd
 
-from quant_kernel.models import Decision
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.db import QuantSimDB
-from quant_sim.engine import QuantSimEngine
-from quant_sim.portfolio_service import PortfolioService
-from quant_sim.replay_service import MainProjectHistoricalSnapshotProvider, QuantSimReplayService
-from quant_sim.signal_center_service import SignalCenterService
+from app.quant_kernel.models import Decision
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.db import QuantSimDB
+from app.quant_sim.engine import QuantSimEngine
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.replay_service import MainProjectHistoricalSnapshotProvider, QuantSimReplayService
+from app.quant_sim.signal_center_service import SignalCenterService
 
 
 class FakeSnapshotProvider:
@@ -178,7 +178,7 @@ def test_snapshot_provider_falls_back_to_stock_code_when_name_missing():
 
 
 def test_historical_replay_persists_run_artifacts_without_touching_live_account(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -232,7 +232,7 @@ def test_historical_replay_persists_run_artifacts_without_touching_live_account(
 
 
 def test_historical_replay_allows_open_ended_end_datetime(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -262,7 +262,7 @@ def test_historical_replay_allows_open_ended_end_datetime(tmp_path):
 
 
 def test_historical_replay_passes_requested_timeframe_to_adapter(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -291,7 +291,7 @@ def test_historical_replay_passes_requested_timeframe_to_adapter(tmp_path):
 
 
 def test_historical_replay_supports_resonance_timeframe(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -320,7 +320,7 @@ def test_historical_replay_supports_resonance_timeframe(tmp_path):
 
 
 def test_historical_replay_persists_run_strategy_signals(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -355,7 +355,7 @@ def test_historical_replay_persists_run_strategy_signals(tmp_path):
 
 
 def test_historical_replay_persists_selected_strategy_mode(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -391,7 +391,7 @@ def test_historical_replay_persists_selected_strategy_mode(tmp_path):
 
 
 def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monkeypatch):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -414,7 +414,7 @@ def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monke
             runner_calls.append({"run_id": run_id, "target": target, "args": args})
             return True
 
-    monkeypatch.setattr("quant_sim.replay_service.get_quant_sim_replay_runner", lambda db_file=None: FakeReplayRunner())
+    monkeypatch.setattr("app.quant_sim.replay_service.get_quant_sim_replay_runner", lambda db_file=None: FakeReplayRunner())
 
     run_id = replay_service.enqueue_historical_range(
         start_datetime=datetime(2026, 1, 5, 0, 0),
@@ -441,7 +441,7 @@ def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monke
 
 
 def test_run_checkpoint_honors_cancel_request_inside_candidate_loop(tmp_path, monkeypatch):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(stock_code="300390", stock_name="天华新能", source="main_force", latest_price=10.0, notes="回放测试")
     candidate_service.add_candidate(stock_code="600531", stock_name="豫光金铅", source="main_force", latest_price=8.0, notes="回放测试")
@@ -477,7 +477,7 @@ def test_run_checkpoint_honors_cancel_request_inside_candidate_loop(tmp_path, mo
 
 
 def test_run_checkpoint_logs_signal_execution_error_and_continues(tmp_path, monkeypatch):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     replay_service = QuantSimReplayService(
         db_file=db_file,
         snapshot_provider=FakeSnapshotProvider(),
@@ -521,7 +521,7 @@ def test_run_checkpoint_logs_signal_execution_error_and_continues(tmp_path, monk
 
 
 def test_run_checkpoint_updates_run_status_message_for_substeps(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",

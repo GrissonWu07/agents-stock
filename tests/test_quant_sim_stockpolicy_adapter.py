@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from quant_kernel.models import Decision
-from quant_sim.stockpolicy_adapter import StockPolicyAdapter
+from app.quant_kernel.models import Decision
+from app.quant_sim.stockpolicy_adapter import StockPolicyAdapter
 
 
 class FakeFetcher:

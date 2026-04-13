@@ -1,8 +1,8 @@
-from quant_sim.db import QuantSimDB
+from app.quant_sim.db import QuantSimDB
 
 
 def test_add_candidate_records_source_and_status(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     candidate_id = db.add_candidate(
         {
@@ -25,7 +25,7 @@ def test_add_candidate_records_source_and_status(tmp_path):
 
 
 def test_add_candidate_preserves_multiple_sources(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     db.add_candidate(
         {
@@ -53,7 +53,7 @@ def test_add_candidate_preserves_multiple_sources(tmp_path):
 
 
 def test_delete_candidate_removes_candidate(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
     db.add_candidate(
         {
             "stock_code": "600000",
@@ -70,7 +70,7 @@ def test_delete_candidate_removes_candidate(tmp_path):
 
 
 def test_scheduler_config_persists_strategy_mode(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     config = db.get_scheduler_config()
     assert config["strategy_mode"] == "auto"
@@ -81,7 +81,7 @@ def test_scheduler_config_persists_strategy_mode(tmp_path):
 
 
 def test_confirm_buy_creates_simulated_position(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     signal_id = db.add_signal(
         {
@@ -114,7 +114,7 @@ def test_confirm_buy_creates_simulated_position(tmp_path):
 
 
 def test_account_summary_and_trade_history_track_cash_and_realized_pnl(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     buy_signal_id = db.add_signal(
         {
@@ -179,7 +179,7 @@ def test_account_summary_and_trade_history_track_cash_and_realized_pnl(tmp_path)
 
 
 def test_finalize_cancelled_run_preserves_completed_progress(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -213,7 +213,7 @@ def test_finalize_cancelled_run_preserves_completed_progress(tmp_path):
 
 
 def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -278,7 +278,7 @@ def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
 
 
 def test_delete_sim_run_removes_all_replay_artifacts(tmp_path):
-    db = QuantSimDB(tmp_path / "quant_sim.db")
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",

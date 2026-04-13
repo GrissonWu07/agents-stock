@@ -1,10 +1,10 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.portfolio_service import PortfolioService
-from quant_sim.signal_center_service import SignalCenterService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.signal_center_service import SignalCenterService
 
 
 def test_candidate_pool_service_adds_manual_candidate(tmp_path):
-    service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_id = service.add_manual_candidate(
         stock_code="000001",
@@ -23,8 +23,8 @@ def test_candidate_pool_service_adds_manual_candidate(tmp_path):
 
 
 def test_signal_center_creates_pending_and_observed_signals(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_id = candidate_service.add_manual_candidate(
         stock_code="600519",
@@ -64,9 +64,9 @@ def test_signal_center_creates_pending_and_observed_signals(tmp_path):
 
 
 def test_portfolio_service_confirm_buy_and_delay_signal(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
-    portfolio_service = PortfolioService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="300750",
@@ -98,8 +98,8 @@ def test_portfolio_service_confirm_buy_and_delay_signal(tmp_path):
 
 
 def test_signal_center_upserts_repeated_pending_signal_for_same_stock_and_action(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="600519",
@@ -138,8 +138,8 @@ def test_signal_center_upserts_repeated_pending_signal_for_same_stock_and_action
 
 
 def test_signal_center_does_not_emit_sell_signal_without_open_position(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="301291",
@@ -167,8 +167,8 @@ def test_signal_center_does_not_emit_sell_signal_without_open_position(tmp_path)
 
 
 def test_signal_center_sanitizes_legacy_pending_sell_without_open_position(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="301291",
@@ -205,8 +205,8 @@ def test_signal_center_sanitizes_legacy_pending_sell_without_open_position(tmp_p
 
 
 def test_signal_center_persists_strategy_profile(tmp_path):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
-    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
 
     candidate_service.add_manual_candidate(
         stock_code="300390",

@@ -73,7 +73,7 @@ EMAIL_ENABLED=false
 
 4. **启动服务**
 ```bash
-docker-compose up -d
+docker compose -f build/docker-compose.yml up -d
 ```
 
 5. **访问应用**
@@ -81,19 +81,19 @@ docker-compose up -d
 
 6. **查看日志**
 ```bash
-docker-compose logs -f
+docker compose -f build/docker-compose.yml logs -f
 ```
 
 7. **停止服务**
 ```bash
-docker-compose down
+docker compose -f build/docker-compose.yml down
 ```
 
 ### 方法二：使用 Docker 命令
 
 1. **构建镜像**
 ```bash
-docker build -t agentsstock1:latest .
+docker build -f build/Dockerfile -t agentsstock1:latest .
 ```
 
 2. **创建数据目录**
@@ -157,28 +157,28 @@ Docker 部署会自动挂载以下目录/文件到宿主机：
 
 ```bash
 # 启动服务（后台运行）
-docker-compose up -d
+docker compose -f build/docker-compose.yml up -d
 
 # 启动服务（前台运行，可看日志）
-docker-compose up
+docker compose -f build/docker-compose.yml up
 
 # 停止服务
-docker-compose down
+docker compose -f build/docker-compose.yml down
 
 # 重启服务
-docker-compose restart
+docker compose -f build/docker-compose.yml restart
 
 # 查看日志
-docker-compose logs -f
+docker compose -f build/docker-compose.yml logs -f
 
 # 查看服务状态
-docker-compose ps
+docker compose -f build/docker-compose.yml ps
 
 # 重新构建并启动
-docker-compose up -d --build
+docker compose -f build/docker-compose.yml up -d --build
 
 # 完全清理（包括volumes）
-docker-compose down -v
+docker compose -f build/docker-compose.yml down -v
 ```
 
 ### Docker 命令
@@ -225,7 +225,7 @@ docker stats agentsstock1
 
 **检查日志**：
 ```bash
-docker-compose logs
+docker compose -f build/docker-compose.yml logs
 # 或
 docker logs agentsstock1
 ```
@@ -237,7 +237,7 @@ docker logs agentsstock1
 
 ### 2. 端口被占用
 
-修改 `docker-compose.yml` 中的端口映射：
+修改 `build/docker-compose.yml` 中的端口映射：
 ```yaml
 ports:
   - "8502:8501"  # 改为其他端口
@@ -293,7 +293,7 @@ npm --version
 - 推荐至少 4GB RAM
 - 推荐至少 2GB Swap
 
-或在 docker-compose.yml 中限制：
+或在 build/docker-compose.yml 中限制：
 ```yaml
 services:
   agentsstock:
@@ -328,8 +328,8 @@ secrets:
 
 3. **定期更新镜像**
 ```bash
-docker-compose pull
-docker-compose up -d
+docker compose -f build/docker-compose.yml pull
+docker compose -f build/docker-compose.yml up -d
 ```
 
 ## 🌐 反向代理（可选）
@@ -358,11 +358,11 @@ server {
 
 1. **使用构建缓存**
 ```bash
-docker-compose build --no-cache  # 清除缓存重建
+docker compose -f build/docker-compose.yml build --no-cache  # 清除缓存重建
 ```
 
 2. **多阶段构建（高级）**
-可以修改 Dockerfile 使用多阶段构建减小镜像体积。
+可以修改 build/Dockerfile 使用多阶段构建减小镜像体积。
 
 3. **资源限制**
 ```yaml
@@ -388,7 +388,7 @@ services:
 ## 🆘 获取帮助
 
 如遇到问题：
-1. 查看日志：`docker-compose logs -f`
+1. 查看日志：`docker compose -f build/docker-compose.yml logs -f`
 2. 检查容器状态：`docker ps -a`
 3. 查看 GitHub Issues
 4. 联系：ws3101001@126.com

@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 
-from data_source_manager import DataSourceManager
+from app.data_source_manager import DataSourceManager
 
 
 def test_get_stock_hist_data_temporarily_disables_proxy_env(monkeypatch):

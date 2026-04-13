@@ -1,10 +1,10 @@
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.engine import QuantSimEngine
-from quant_kernel.models import Decision
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.engine import QuantSimEngine
+from app.quant_kernel.models import Decision
 
 
 def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidate_service.add_manual_candidate(
         stock_code="600000",
         stock_name="浦发银行",
@@ -12,7 +12,7 @@ def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch
     )
     candidate = candidate_service.list_candidates()[0]
 
-    engine = QuantSimEngine(db_file=tmp_path / "quant_sim.db")
+    engine = QuantSimEngine(db_file=tmp_path / "app.quant_sim.db")
     captured = {}
 
     def fake_analyze_candidate(payload, market_snapshot=None, analysis_timeframe="1d"):
@@ -36,7 +36,7 @@ def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch
 
 
 def test_engine_records_hold_as_observed_signal(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidate_service.add_manual_candidate(
         stock_code="000001",
         stock_name="平安银行",
@@ -44,7 +44,7 @@ def test_engine_records_hold_as_observed_signal(tmp_path, monkeypatch):
     )
     candidate = candidate_service.list_candidates()[0]
 
-    engine = QuantSimEngine(db_file=tmp_path / "quant_sim.db")
+    engine = QuantSimEngine(db_file=tmp_path / "app.quant_sim.db")
     monkeypatch.setattr(
         engine.adapter,
         "analyze_candidate",
@@ -63,7 +63,7 @@ def test_engine_records_hold_as_observed_signal(tmp_path, monkeypatch):
 
 
 def test_engine_uses_embedded_stockpolicy_dual_track_decision(tmp_path, monkeypatch):
-    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     candidate_service.add_manual_candidate(
         stock_code="601318",
         stock_name="中国平安",
@@ -71,7 +71,7 @@ def test_engine_uses_embedded_stockpolicy_dual_track_decision(tmp_path, monkeypa
     )
     candidate = candidate_service.list_candidates()[0]
 
-    engine = QuantSimEngine(db_file=tmp_path / "quant_sim.db")
+    engine = QuantSimEngine(db_file=tmp_path / "app.quant_sim.db")
     monkeypatch.setattr(
         engine.adapter,
         "analyze_candidate",

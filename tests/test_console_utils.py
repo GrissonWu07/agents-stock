@@ -1,6 +1,6 @@
 import builtins
 
-import console_utils
+import app.console_utils as console_utils
 
 
 class GbkStdout:

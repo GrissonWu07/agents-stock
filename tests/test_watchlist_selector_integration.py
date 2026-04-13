@@ -1,10 +1,10 @@
 import pandas as pd
 
-from watchlist_selector_integration import (
+from app.watchlist_selector_integration import (
     add_stock_to_watchlist,
     sync_selector_dataframe_to_watchlist,
 )
-from watchlist_service import WatchlistService
+from app.watchlist_service import WatchlistService
 
 
 def test_add_stock_to_watchlist_creates_watch_entry(tmp_path):

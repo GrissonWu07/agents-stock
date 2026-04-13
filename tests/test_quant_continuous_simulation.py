@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from quant_kernel.models import Decision
-from quant_sim.candidate_pool_service import CandidatePoolService
-from quant_sim.db import QuantSimDB
-from quant_sim.replay_service import QuantSimReplayService
-from quant_sim.scheduler import get_quant_sim_scheduler
-from watchlist_integration import add_watchlist_rows_to_quant_pool
-from watchlist_service import WatchlistService
+from app.quant_kernel.models import Decision
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.db import QuantSimDB
+from app.quant_sim.replay_service import QuantSimReplayService
+from app.quant_sim.scheduler import get_quant_sim_scheduler
+from app.watchlist_integration import add_watchlist_rows_to_quant_pool
+from app.watchlist_service import WatchlistService
 
 
 class HoldSnapshotProvider:
@@ -59,7 +59,7 @@ class BuyAndHoldAdapter:
 
 
 def test_continuous_replay_handoff_replaces_live_state_and_enables_scheduler(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -106,7 +106,7 @@ def test_continuous_replay_handoff_replaces_live_state_and_enables_scheduler(tmp
 
 def test_continuous_replay_accepts_candidates_promoted_from_watchlist(tmp_path):
     watch_db = tmp_path / "watchlist.db"
-    quant_db = tmp_path / "quant_sim.db"
+    quant_db = tmp_path / "app.quant_sim.db"
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)
@@ -205,7 +205,7 @@ class BuyThenSellAdapter:
 
 
 def test_continuous_replay_preserves_snapshot_order_and_allows_open_ended_end_datetime(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",
@@ -241,7 +241,7 @@ def test_continuous_replay_preserves_snapshot_order_and_allows_open_ended_end_da
 
 
 def test_continuous_replay_handoff_preserves_requested_timeframe(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
         stock_code="300390",

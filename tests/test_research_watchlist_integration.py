@@ -1,8 +1,8 @@
-from research_watchlist_integration import (
+from app.research_watchlist_integration import (
     add_research_stock_to_watchlist,
     add_research_stocks_to_watchlist,
 )
-from watchlist_service import WatchlistService
+from app.watchlist_service import WatchlistService
 
 
 def test_add_research_stock_to_watchlist_accepts_code_name_shape(tmp_path):

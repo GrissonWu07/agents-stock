@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 
-from low_price_bull_service import LowPriceBullService
+from app.low_price_bull_service import LowPriceBullService
 
 
 def test_get_stock_data_uses_tdx_fetcher_instead_of_rest():

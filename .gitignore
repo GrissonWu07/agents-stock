@@ -7,11 +7,13 @@
 /__pycache__
 __pycache__/
 .pytest_cache/
-app.log
-app.err.log
+logs/*.log
 test_stress_output/
 stockpolicy/
 data/selector_results/
+data/*.db
+data/*.db.bak-*
+data/stocks/
 /.codex-runtime/
 quant_sim.db
 # 环境变量文件

@@ -1,4 +1,4 @@
-from main_force_ui import update_main_force_progress_ui
+from app.main_force_ui import update_main_force_progress_ui
 
 
 class FakeStatus:

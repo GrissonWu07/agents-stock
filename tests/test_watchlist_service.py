@@ -1,4 +1,4 @@
-from watchlist_service import WatchlistService
+from app.watchlist_service import WatchlistService
 
 
 def test_watchlist_service_add_from_selector_row(tmp_path):

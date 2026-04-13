@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from quant_kernel.runtime import KernelStrategyRuntime
+from app.quant_kernel.runtime import KernelStrategyRuntime
 
 
 def test_kernel_candidate_decision_exposes_structured_vote_breakdown():

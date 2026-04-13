@@ -1,6 +1,6 @@
 import pandas as pd
 
-from quant_sim import integration
+from app.quant_sim import integration
 
 
 def test_sync_selector_dataframe_to_quant_sim_adds_valid_rows(monkeypatch):

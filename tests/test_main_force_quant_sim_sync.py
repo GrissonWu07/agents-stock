@@ -1,16 +1,16 @@
-import main_force_ui as mfui
+import app.main_force_ui as mfui
 
 
-def test_sync_main_force_recommendations_to_quant_sim_adds_each_recommendation(monkeypatch):
+def test_sync_main_force_recommendations_to_watchlist_adds_each_recommendation(monkeypatch):
     captured_calls = []
 
-    def fake_add_stock_to_quant_sim(**kwargs):
+    def fake_add_stock_to_watchlist(**kwargs):
         captured_calls.append(kwargs)
         return True, f"ok-{kwargs['stock_code']}", 1
 
-    monkeypatch.setattr(mfui, "add_stock_to_quant_sim", fake_add_stock_to_quant_sim)
+    monkeypatch.setattr(mfui, "add_stock_to_watchlist", fake_add_stock_to_watchlist)
 
-    summary = mfui.sync_main_force_recommendations_to_quant_sim(
+    summary = mfui.sync_main_force_recommendations_to_watchlist(
         [
             {
                 "rank": 1,
@@ -46,15 +46,15 @@ def test_sync_main_force_recommendations_to_quant_sim_adds_each_recommendation(m
     assert "主力选股第1名" in captured_calls[0]["notes"]
 
 
-def test_sync_main_force_recommendations_to_quant_sim_collects_failures(monkeypatch):
-    def fake_add_stock_to_quant_sim(**kwargs):
+def test_sync_main_force_recommendations_to_watchlist_collects_failures(monkeypatch):
+    def fake_add_stock_to_watchlist(**kwargs):
         if kwargs["stock_code"] == "600000":
             return False, "db error", 0
         return True, "ok", 1
 
-    monkeypatch.setattr(mfui, "add_stock_to_quant_sim", fake_add_stock_to_quant_sim)
+    monkeypatch.setattr(mfui, "add_stock_to_watchlist", fake_add_stock_to_watchlist)
 
-    summary = mfui.sync_main_force_recommendations_to_quant_sim(
+    summary = mfui.sync_main_force_recommendations_to_watchlist(
         [
             {
                 "rank": 1,

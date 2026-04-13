@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from main_force_ui import build_main_force_candidate_display_df
+from app.main_force_ui import build_main_force_candidate_display_df
 
 
 def test_build_main_force_candidate_display_df_normalizes_candidate_columns():

@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from pytdx_host_config import load_pytdx_hosts
-from smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
+from app.pytdx_host_config import load_pytdx_hosts
+from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
 
 def _write_hosts_file(path: Path, hosts: list[dict]) -> None:

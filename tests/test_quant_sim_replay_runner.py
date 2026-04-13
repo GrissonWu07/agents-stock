@@ -2,8 +2,8 @@ import json
 import time
 from pathlib import Path
 
-from quant_sim.db import QuantSimDB
-from quant_sim.replay_runner import get_quant_sim_replay_runner
+from app.quant_sim.db import QuantSimDB
+from app.quant_sim.replay_runner import get_quant_sim_replay_runner
 
 
 def _raise_system_exit_worker() -> None:
@@ -45,7 +45,7 @@ def _wait_for_matching_event(db: QuantSimDB, run_id: int, expected_text: str, *,
 
 
 def test_replay_runner_persists_worker_pid_and_reports_running(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     db = QuantSimDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
@@ -68,7 +68,7 @@ def test_replay_runner_persists_worker_pid_and_reports_running(tmp_path):
 
 
 def test_replay_runner_marks_unhandled_worker_failure_as_failed(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     db = QuantSimDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
@@ -96,7 +96,7 @@ def test_replay_runner_marks_unhandled_worker_failure_as_failed(tmp_path):
 
 
 def test_replay_runner_marks_silent_worker_exit_as_failed(tmp_path):
-    db_file = tmp_path / "quant_sim.db"
+    db_file = tmp_path / "app.quant_sim.db"
     db = QuantSimDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
