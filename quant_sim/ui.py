@@ -661,7 +661,7 @@ def render_quant_sim_signal_detail(signal: dict) -> None:
     overview_cols[3].metric("执行状态", str(signal.get("status") or "observed"))
     st.markdown(f"**标的名称**：{signal.get('stock_name') or '未命名'}")
     st.markdown("#### 当前交易策略")
-    strategy_summary = render_strategy_profile_summary(signal.get("strategy_profile"))
+    strategy_summary = render_strategy_profile_summary(signal.get("strategy_profile"), signal=signal)
     if strategy_summary:
         st.markdown(strategy_summary)
     explainability_summary = render_strategy_explainability_summary(
@@ -669,9 +669,9 @@ def render_quant_sim_signal_detail(signal: dict) -> None:
         signal=signal,
     )
     if explainability_summary:
-        st.markdown(explainability_summary)
-    st.info(_build_replay_signal_detail_summary(signal))
-    st.markdown(f"**推理**：{signal.get('reasoning') or '暂无'}")
+        with st.expander("量化证据", expanded=False):
+            st.markdown(explainability_summary)
+    st.markdown(f"**模型推理**：{signal.get('reasoning') or '暂无'}")
     st.caption(
         f"创建时间：{signal.get('created_at') or '刚刚'} | 股票：{signal.get('stock_code') or '未知'} | 状态：{signal.get('status') or 'observed'}"
     )
@@ -1048,7 +1048,7 @@ def render_replay_results(db_file: str, *, selected_run_id: int | None = None) -
         if selected_rows:
             selected_signal = replay_report["strategy_signals"][int(selected_rows[0])]
             st.markdown("#### 当前交易策略")
-            strategy_summary = render_strategy_profile_summary(selected_signal.get("strategy_profile"))
+            strategy_summary = render_strategy_profile_summary(selected_signal.get("strategy_profile"), signal=selected_signal)
             if strategy_summary:
                 st.markdown(strategy_summary)
             explainability_summary = render_strategy_explainability_summary(
@@ -1056,8 +1056,9 @@ def render_replay_results(db_file: str, *, selected_run_id: int | None = None) -
                 signal=selected_signal,
             )
             if explainability_summary:
-                st.markdown(explainability_summary)
-            st.info(_build_replay_signal_detail_summary(selected_signal))
+                with st.expander("量化证据", expanded=False):
+                    st.markdown(explainability_summary)
+            st.markdown(f"**模型推理**：{selected_signal.get('reasoning') or '暂无'}")
         else:
             st.info("点击上方信号执行记录中的任意一行，即可查看完整策略解释、阈值与推理说明。")
     else:
@@ -1455,7 +1456,7 @@ def _build_replay_signal_detail_summary(signal: dict) -> str:
     return " | ".join(details)
 
 
-def render_strategy_profile_summary(strategy_profile: dict | None) -> str:
+def render_strategy_profile_summary(strategy_profile: dict | None, *, signal: dict | None = None) -> str:
     if not strategy_profile:
         return ""
 
@@ -1466,27 +1467,35 @@ def render_strategy_profile_summary(strategy_profile: dict | None) -> str:
     strategy_mode = strategy_profile.get("strategy_mode") or {}
     analysis_timeframe = strategy_profile.get("analysis_timeframe") or {}
     effective_thresholds = strategy_profile.get("effective_thresholds") or {}
+    explainability = _resolve_signal_explainability(signal or {}, strategy_profile)
+    guidance = _build_strategy_guidance(strategy_profile, signal=signal, explainability=explainability)
 
     lines = [
-        "**策略概览**",
-        f"- 策略模式：{strategy_mode.get('label', '自动')}",
-        f"- 市场状态：{market_regime.get('label', '未知')}",
-        f"- 基本面质量：{fundamental_quality.get('label', '未知')}",
-        f"- 自动推导风格：{auto_inferred_risk_style.get('label', risk_style.get('label', '未知'))}",
-        f"- 当前风格：{risk_style.get('label', '未知')}",
+        "**当前结论**",
+        f"- 当前判断：{guidance['judgement']}",
+        f"- 操作建议：{guidance['action_advice']}",
+        f"- 核心原因：{guidance['core_reason']}",
+        f"- 风险与观察点：{guidance['watch_points']}",
+        "",
+        "**策略解释**",
+        f"- 市场判断：{market_regime.get('label', '未知')}。{_clean_reason_sentence(market_regime.get('reason'))}",
+        f"- 基本面判断：{fundamental_quality.get('label', '未知')}。{_clean_reason_sentence(fundamental_quality.get('reason'))}",
+        f"- 当前策略风格：{risk_style.get('label', '未知')}。{_clean_reason_sentence(risk_style.get('reason'))}",
+        (
+            f"- 风格来源：系统当前处于 {strategy_mode.get('label', '自动')} 模式，"
+            f"自动推导风格为 {auto_inferred_risk_style.get('label', risk_style.get('label', '未知'))}。"
+        ),
         f"- 时间框架：{analysis_timeframe.get('key', '未知')}",
     ]
 
     max_position_ratio = effective_thresholds.get("max_position_ratio")
     if max_position_ratio is not None:
-        lines.append(f"- 建议仓位：{float(max_position_ratio) * 100:.1f}%")
+        lines.append(f"- 建议仓位上限：{float(max_position_ratio) * 100:.1f}%")
 
     buy_threshold = effective_thresholds.get("buy_threshold")
     sell_threshold = effective_thresholds.get("sell_threshold")
     if buy_threshold is not None and sell_threshold is not None:
-        lines.append(
-            f"- 阈值：买入 {float(buy_threshold):.2f} / 卖出 {float(sell_threshold):.2f}"
-        )
+        lines.append(f"- 触发阈值：买入 {float(buy_threshold):.2f} / 卖出 {float(sell_threshold):.2f}")
 
     confirmation = effective_thresholds.get("confirmation")
     if confirmation:
@@ -1510,37 +1519,203 @@ def render_strategy_explainability_summary(
             "> 历史旧记录兼容重建：原始逐因子投票未落库，以下内容基于当时保留的策略概览、推理摘要与检查点信息重建。"
         )
 
+    lines.append("**量化证据**")
+
     tech_votes = explainability.get("tech_votes") or []
     if tech_votes:
-        lines.append("**技术投票**")
+        lines.append("**技术证据**")
         for vote in tech_votes:
             lines.append(
-                f"- {vote.get('factor', '未知')} -> {vote.get('signal', 'HOLD')} "
+                f"- {_translate_factor_label(str(vote.get('factor') or '未知'))}："
+                f"{_format_vote_signal_label(str(vote.get('signal') or 'HOLD'))} "
                 f"({float(vote.get('score') or 0):+.2f})：{vote.get('reason', '')}"
             )
 
     context_votes = explainability.get("context_votes") or []
     if context_votes:
-        lines.append("**环境投票**")
+        lines.append("**环境证据**")
         for vote in context_votes:
             lines.append(
-                f"- {vote.get('component', '未知')} ({float(vote.get('score') or 0):+.2f})：{vote.get('reason', '')}"
+                f"- {_translate_context_component_label(str(vote.get('component') or '未知'))}："
+                f"{_format_context_score_label(float(vote.get('score') or 0))} "
+                f"({float(vote.get('score') or 0):+.2f})：{vote.get('reason', '')}"
             )
 
     dual_track = explainability.get("dual_track") or {}
     if dual_track:
         lines.append("**双轨裁决**")
-        lines.append(
-            "- 技术信号：{tech}；环境信号：{ctx}；规则：{rule}；共振类型：{res}; 仓位比例：{ratio:.0%}".format(
-                tech=dual_track.get("tech_signal", "未知"),
-                ctx=dual_track.get("context_signal", "未知"),
-                rule=dual_track.get("rule_hit", "未知"),
-                res=dual_track.get("resonance_type", "未知"),
-                ratio=float(dual_track.get("position_ratio") or 0),
-            )
-        )
+        lines.append(f"- 技术面结论：{_format_vote_signal_label(str(dual_track.get('tech_signal') or 'HOLD'))}")
+        lines.append(f"- 环境面结论：{_format_vote_signal_label(str(dual_track.get('context_signal') or 'HOLD'))}")
+        lines.append(f"- 命中规则：{_translate_dual_track_rule(str(dual_track.get('rule_hit') or 'unknown'))}")
+        lines.append(f"- 共振类型：{_translate_resonance_type(str(dual_track.get('resonance_type') or 'unknown'))}")
+        lines.append(f"- 仓位建议：{float(dual_track.get('position_ratio') or 0):.0%}")
 
     return "\n".join(lines)
+
+
+def _build_strategy_guidance(strategy_profile: dict, *, signal: dict | None, explainability: dict | None) -> dict[str, str]:
+    action = str((signal or {}).get("action") or "HOLD").upper()
+    market_regime = (strategy_profile.get("market_regime") or {}).get("label", "未知")
+    fundamental_quality = (strategy_profile.get("fundamental_quality") or {}).get("label", "未知")
+    risk_style = (strategy_profile.get("risk_style") or {}).get("label", "未知")
+    effective_thresholds = strategy_profile.get("effective_thresholds") or {}
+    max_position_ratio = float(effective_thresholds.get("max_position_ratio") or 0.0)
+    dual_track = (explainability or {}).get("dual_track") or {}
+    tech_signal = _format_vote_signal_label(str(dual_track.get("tech_signal") or action))
+    context_signal = _format_vote_signal_label(str(dual_track.get("context_signal") or "HOLD"))
+
+    if action == "BUY":
+        if risk_style == "激进":
+            judgement = "当前偏积极，可以顺势参与。"
+            action_advice = "没有持仓可考虑分批介入；已有持仓则按计划持有或小幅加仓。"
+        elif risk_style == "稳重":
+            judgement = "当前出现买入机会，但更适合分步参与。"
+            action_advice = "优先轻仓试探，等后续确认信号继续改善后再考虑扩大仓位。"
+        else:
+            judgement = "当前有一定买点，但整体仍偏谨慎。"
+            action_advice = "更适合轻仓试探，不建议一次性打满仓位。"
+    elif action == "SELL":
+        judgement = "当前偏谨慎，系统更倾向于减仓或回避。"
+        action_advice = "已有持仓优先控制风险或按计划减仓；没有持仓先不要逆势参与。"
+    else:
+        if risk_style == "保守":
+            judgement = "当前偏谨慎，先观察更合适。"
+            action_advice = "不急于动作，先等待趋势和量能出现更明确的确认信号。"
+        else:
+            judgement = "当前信号中性，继续等待下一步确认。"
+            action_advice = "已有持仓按计划持有观察；没有持仓先不要追入。"
+
+    core_reason = (
+        f"市场目前是{market_regime}，标的基本面属于{fundamental_quality}，"
+        f"系统采用{risk_style}风格；技术面结论为{tech_signal}，环境面结论为{context_signal}。"
+    )
+    if max_position_ratio > 0:
+        core_reason += f" 在这套风格下，建议仓位上限约为 {max_position_ratio:.0%}。"
+
+    watch_points = _build_strategy_watch_points(explainability or {})
+    return {
+        "judgement": judgement,
+        "action_advice": action_advice,
+        "core_reason": core_reason,
+        "watch_points": watch_points,
+    }
+
+
+def _build_strategy_watch_points(explainability: dict) -> str:
+    tech_votes = explainability.get("tech_votes") or []
+    context_votes = explainability.get("context_votes") or []
+    points: list[str] = []
+
+    for vote in tech_votes:
+        factor = str(vote.get("factor") or "")
+        if "MA20" in factor or "均线" in factor:
+            points.append("关注价格能否重新站回 MA20，或继续跌破关键均线。")
+            break
+    for vote in tech_votes:
+        factor = str(vote.get("factor") or "")
+        if "MACD" in factor:
+            points.append("关注 MACD 是否重新转强，避免弱势动能继续放大。")
+            break
+    for vote in tech_votes:
+        factor = str(vote.get("factor") or "")
+        if "RSI" in factor:
+            points.append("关注 RSI 是否回到更健康区间，避免过热或过弱。")
+            break
+    for vote in context_votes:
+        component = str(vote.get("component") or "")
+        if component == "liquidity":
+            points.append("关注量能是否放大，低量能下的信号可靠性通常会下降。")
+            break
+    for vote in context_votes:
+        component = str(vote.get("component") or "")
+        if component == "trend_regime":
+            points.append("关注整体市场是否从震荡转强或转弱，市场环境变化会直接影响风格选择。")
+            break
+
+    if not points:
+        return "先观察价格、动量和市场环境是否继续朝当前方向演化，再决定是否动作。"
+    return " ".join(points[:3])
+
+
+def _clean_reason_sentence(reason: object) -> str:
+    text = str(reason or "").strip()
+    if not text:
+        return "暂无额外补充。"
+    if not text.endswith(("。", "！", "？")):
+        text += "。"
+    return text
+
+
+def _translate_factor_label(factor: str) -> str:
+    mapping = {
+        "价格相对MA20": "价格相对MA20",
+        "盈亏保护": "盈亏保护",
+        "均线结构": "均线结构",
+        "MACD": "MACD",
+        "RSI": "RSI",
+        "RSI12": "RSI",
+        "量比": "量比",
+    }
+    return mapping.get(factor, factor)
+
+
+def _translate_context_component_label(component: str) -> str:
+    mapping = {
+        "source_prior": "来源先验",
+        "trend_regime": "趋势状态",
+        "price_structure": "价格结构",
+        "momentum": "动量状态",
+        "risk_balance": "风险平衡",
+        "liquidity": "流动性",
+        "session": "时间窗口",
+        "fundamental_quality": "基本面质量",
+    }
+    return mapping.get(component, component)
+
+
+def _format_vote_signal_label(signal: str) -> str:
+    mapping = {
+        "BUY": "偏多",
+        "SELL": "偏空",
+        "HOLD": "观望",
+    }
+    return mapping.get(signal.upper(), signal)
+
+
+def _format_context_score_label(score: float) -> str:
+    if score > 0.05:
+        return "偏多"
+    if score < -0.05:
+        return "偏空"
+    return "中性"
+
+
+def _translate_dual_track_rule(rule: str) -> str:
+    mapping = {
+        "resonance_full": "技术面和环境面强共振，允许积极参与",
+        "resonance_heavy": "技术面和环境面较强共振，可偏积极配置",
+        "resonance_moderate": "技术面占优且环境配合，可以顺势参与",
+        "resonance_standard": "技术与环境同步偏多，按标准仓位执行",
+        "divergence_light": "技术偏多但环境一般，适合轻仓试探",
+        "divergence_none": "环境不足以支持开仓，先观望",
+        "sell_divergence": "技术转弱但环境尚未完全转空，优先减仓或观望",
+        "context_veto": "环境明显不利，直接否决开仓",
+        "no_rule": "当前没有命中明确的仓位规则",
+    }
+    return mapping.get(rule, rule)
+
+
+def _translate_resonance_type(resonance_type: str) -> str:
+    mapping = {
+        "full_resonance": "强共振",
+        "heavy_resonance": "较强共振",
+        "moderate_resonance": "中等共振",
+        "light_divergence": "轻度背离",
+        "no_position": "不建议持仓",
+        "sell_divergence": "卖出背离",
+        "legacy_divergence": "历史记录兼容重建",
+    }
+    return mapping.get(resonance_type, resonance_type)
 
 
 def _format_explainability_inline_summary(explainability: dict | None) -> list[str]:

@@ -579,14 +579,21 @@ def test_render_strategy_profile_summary_shows_strategy_basics():
                 "sell_threshold": -0.25,
                 "max_position_ratio": 0.5,
             },
-        }
+        },
+        signal={"action": "BUY", "reasoning": "趋势和环境同步转强。"},
     )
 
-    assert "市场状态" in summary
-    assert "基本面质量" in summary
-    assert "当前风格" in summary
-    assert "时间框架" in summary
-    assert "建议仓位" in summary
+    assert "**当前结论**" in summary
+    assert "当前判断：" in summary
+    assert "操作建议：" in summary
+    assert "核心原因：" in summary
+    assert "风险与观察点：" in summary
+    assert "**策略解释**" in summary
+    assert "市场判断：牛市" in summary
+    assert "基本面判断：强基本面" in summary
+    assert "当前策略风格：激进" in summary
+    assert "时间框架：30m" in summary
+    assert "建议仓位上限：50.0%" in summary
 
 
 def test_build_replay_report_payload_exposes_cash_positions_and_trade_analysis():
@@ -742,6 +749,56 @@ def test_build_replay_signal_detail_summary_exposes_rich_strategy_context():
     assert "推理：趋势共振，量价配合改善。" in summary
 
 
+def test_render_strategy_explainability_summary_translates_evidence_into_human_labels():
+    summary = ui.render_strategy_explainability_summary(
+        {
+            "market_regime": {"label": "震荡"},
+            "fundamental_quality": {"label": "中性"},
+            "risk_style": {"label": "保守", "max_position_ratio": 0.35},
+            "analysis_timeframe": {"key": "30m"},
+            "effective_thresholds": {
+                "buy_threshold": 0.76,
+                "sell_threshold": -0.17,
+                "max_position_ratio": 0.35,
+                "confirmation": "30分钟信号确认",
+            },
+            "explainability": {
+                "tech_votes": [
+                    {"factor": "价格相对MA20", "signal": "SELL", "score": -0.25, "reason": "现价 52.87 低于 MA20 53.22"},
+                    {"factor": "MACD", "signal": "SELL", "score": -0.20, "reason": "MACD -0.289 为负"},
+                ],
+                "context_votes": [
+                    {"component": "source_prior", "score": 0.28, "reason": "来源策略先验 main_force"},
+                    {"component": "trend_regime", "score": 0.0, "reason": "趋势状态 sideways"},
+                    {"component": "session", "score": -0.03, "reason": "时间窗口 20:42"},
+                ],
+                "dual_track": {
+                    "tech_signal": "SELL",
+                    "context_signal": "HOLD",
+                    "resonance_type": "sell_divergence",
+                    "rule_hit": "sell_divergence",
+                    "position_ratio": 1.0,
+                },
+            },
+        },
+        signal={"action": "SELL", "reasoning": "技术面偏弱，但环境未完全转空。"},
+    )
+
+    assert "**量化证据**" in summary
+    assert "**技术证据**" in summary
+    assert "价格相对MA20：偏空" in summary
+    assert "MACD：偏空" in summary
+    assert "**环境证据**" in summary
+    assert "来源先验" in summary
+    assert "趋势状态" in summary
+    assert "时间窗口" in summary
+    assert "source_prior" not in summary
+    assert "**双轨裁决**" in summary
+    assert "技术面结论：偏空" in summary
+    assert "环境面结论：观望" in summary
+    assert "仓位建议：100%" in summary
+
+
 def test_render_strategy_explainability_summary_reconstructs_legacy_signal_votes():
     legacy_signal = {
         "action": "HOLD",
@@ -769,17 +826,26 @@ def test_render_strategy_explainability_summary_reconstructs_legacy_signal_votes
         signal=legacy_signal,
     )
 
-    assert "**技术投票**" in summary
+    assert "**量化证据**" in summary
+    assert "**技术证据**" in summary
     assert "均线结构" in summary
     assert "MACD" in summary
     assert "RSI" in summary
     assert "量比" in summary
-    assert "**环境投票**" in summary
-    assert "source_prior" in summary
-    assert "trend_regime" in summary
-    assert "price_structure" in summary
-    assert "liquidity" in summary
+    assert "**环境证据**" in summary
+    assert "来源先验" in summary
+    assert "趋势状态" in summary
+    assert "价格结构" in summary
+    assert "流动性" in summary
     assert "**双轨裁决**" in summary
-    assert "技术信号" in summary
-    assert "环境信号" in summary
+    assert "技术面结论" in summary
+    assert "环境面结论" in summary
     assert "历史旧记录兼容重建" in summary
+
+
+def test_quant_signal_detail_uses_collapsible_quantitative_evidence_panel():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert 'with st.expander("量化证据", expanded=False):' in ui_source
+    assert 'st.info(_build_replay_signal_detail_summary(signal))' not in ui_source
+    assert 'st.info(_build_replay_signal_detail_summary(selected_signal))' not in ui_source
