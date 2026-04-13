@@ -91,7 +91,11 @@ class PortfolioService:
         if action == "BUY":
             price = self._resolve_signal_price(signal)
             quantity = self._estimate_buy_quantity(signal, price)
-            if price <= 0 or quantity <= 0:
+            if price <= 0:
+                self._record_auto_execute_skip(signal, "自动执行跳过：缺少有效最新价")
+                return False
+            if quantity <= 0:
+                self._record_auto_execute_skip(signal, "自动执行跳过：建议仓位不足买入一手")
                 return False
             self.confirm_buy(
                 int(signal["id"]),
@@ -105,13 +109,18 @@ class PortfolioService:
         if action == "SELL":
             position = self._get_position(stock_code, as_of=executed_at)
             if not position:
+                self._record_auto_execute_skip(signal, "自动执行跳过：当前无可卖持仓")
                 return False
             quantity = min(
                 int(position.get("quantity") or 0),
                 int(position.get("sellable_quantity") or 0),
             )
             price = self._resolve_signal_price(signal, fallback=position)
-            if price <= 0 or quantity <= 0:
+            if price <= 0:
+                self._record_auto_execute_skip(signal, "自动执行跳过：缺少有效最新价")
+                return False
+            if quantity <= 0:
+                self._record_auto_execute_skip(signal, "自动执行跳过：当前无可卖数量")
                 return False
             self.confirm_sell(
                 int(signal["id"]),
@@ -157,3 +166,9 @@ class PortfolioService:
             if position.get("stock_code") == stock_code:
                 return position
         return None
+
+    def _record_auto_execute_skip(self, signal: dict, reason: str) -> None:
+        signal_id = signal.get("id")
+        if signal_id in (None, ""):
+            return
+        self.db.update_signal_state(int(signal_id), execution_note=reason)

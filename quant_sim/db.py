@@ -599,6 +599,7 @@ class QuantSimDB:
         reasoning: Optional[str] = None,
         position_size_pct: Optional[float] = None,
         status: Optional[str] = None,
+        execution_note: Optional[str] = None,
     ) -> None:
         updates = []
         params: list[Any] = []
@@ -615,6 +616,9 @@ class QuantSimDB:
         if status is not None:
             updates.append("status = ?")
             params.append(status)
+        if execution_note is not None:
+            updates.append("execution_note = ?")
+            params.append(execution_note)
 
         if not updates:
             return

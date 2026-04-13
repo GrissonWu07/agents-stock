@@ -671,6 +671,8 @@ def render_quant_sim_signal_detail(signal: dict) -> None:
     if explainability_summary:
         with st.expander("量化证据", expanded=False):
             st.markdown(explainability_summary)
+    if signal.get("execution_note"):
+        st.warning(f"**自动执行提示**：{signal.get('execution_note')}")
     st.markdown(f"**模型推理**：{signal.get('reasoning') or '暂无'}")
     st.caption(
         f"创建时间：{signal.get('created_at') or '刚刚'} | 股票：{signal.get('stock_code') or '未知'} | 状态：{signal.get('status') or 'observed'}"

@@ -186,3 +186,34 @@ def test_auto_execute_sell_clamps_quantity_to_historical_sellable_quantity(tmp_p
     assert lots[0]["remaining_quantity"] == 100
     assert trades[0]["action"] == "sell"
     assert trades[0]["quantity"] == 100
+
+
+def test_scheduler_auto_execute_buy_signal_records_skip_reason_when_under_one_lot(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "quant_sim.db")
+    candidate_service.add_manual_candidate("002463", "沪电股份", "main_force", latest_price=89.99)
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "quant_sim.db")
+    scheduler.update_config(enabled=True, auto_execute=True)
+    PortfolioService(db_file=tmp_path / "quant_sim.db").configure_account(10000.0)
+
+    monkeypatch.setattr(
+        scheduler.engine.adapter,
+        "analyze_candidate",
+        lambda candidate, market_snapshot=None, analysis_timeframe="1d", strategy_mode="auto": {
+            "action": "BUY",
+            "confidence": 81,
+            "reasoning": "共振建仓",
+            "position_size_pct": 50,
+            "price": 89.99,
+        },
+    )
+
+    summary = scheduler.run_once(run_reason="manual_scan")
+    signal_service = SignalCenterService(db_file=tmp_path / "quant_sim.db")
+    pending = signal_service.list_pending_signals()
+
+    assert summary["auto_executed"] == 0
+    assert len(pending) == 1
+    assert pending[0]["action"] == "BUY"
+    assert pending[0]["status"] == "pending"
+    assert "不足买入一手" in str(pending[0].get("execution_note") or "")

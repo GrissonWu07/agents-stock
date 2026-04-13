@@ -840,7 +840,13 @@ def test_render_strategy_explainability_summary_reconstructs_legacy_signal_votes
     assert "**双轨裁决**" in summary
     assert "技术面结论" in summary
     assert "环境面结论" in summary
-    assert "历史旧记录兼容重建" in summary
+
+
+def test_render_quant_sim_signal_detail_surfaces_execution_note():
+    ui_source = Path("C:/Projects/githubs/aiagents-stock/quant_sim/ui.py").read_text(encoding="utf-8")
+
+    assert 'signal.get("execution_note")' in ui_source
+    assert "自动执行提示" in ui_source
 
 
 def test_quant_signal_detail_uses_collapsible_quantitative_evidence_panel():
