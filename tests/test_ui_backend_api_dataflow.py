@@ -1,0 +1,398 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pandas as pd
+from fastapi.testclient import TestClient
+
+import app.gateway_api as gateway_api
+from app.selector_result_store import save_latest_result
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_API_PATH = PROJECT_ROOT / "app" / "gateway.py"
+
+
+def _load_backend_api_module():
+    spec = importlib.util.spec_from_file_location("build_backend_api_flow", BACKEND_API_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _seed_main_force_result(base_dir: Path) -> None:
+    payload = {
+        "result": {
+            "success": True,
+            "total_stocks": 2,
+            "filtered_stocks": 2,
+            "final_recommendations": [
+                {
+                    "rank": 1,
+                    "symbol": "600519.SH",
+                    "name": "贵州茅台",
+                    "reasons": ["资金流入明显", "行业龙头", "基本面稳健"],
+                    "highlights": "高质量核心资产",
+                    "risks": "估值偏高",
+                    "position": "20%",
+                    "investment_period": "中长期",
+                    "stock_data": {
+                        "股票代码": "600519",
+                        "股票简称": "贵州茅台",
+                        "最新价": "1453.96",
+                        "所属同花顺行业": "食品饮料-白酒",
+                        "总市值[20260410]": 18200.0,
+                        "市盈率(pe)[20260410]": 26.1,
+                        "市净率(pb)[20260410]": 9.8,
+                        "区间主力资金流向[20260112-20260410]": 12345678.0,
+                        "code": "600519",
+                    },
+                },
+            ],
+        },
+        "selected_at": "2026-04-13 10:00:00",
+        "analyzer_state": {},
+    }
+    save_latest_result("main_force", payload, base_dir=base_dir)
+
+
+def _seed_research_result(base_dir: Path) -> None:
+    payload = {
+        "modules": [
+            {"name": "智策板块", "note": "板块轮动向上", "output": "600519"},
+            {"name": "新闻流量", "note": "高关注", "output": "000001"},
+        ],
+        "marketView": [
+            {"title": "市场情绪", "body": "震荡偏稳", "tone": "neutral"},
+            {"title": "风险提示", "body": "短线波动仍需控制仓位", "tone": "warning"},
+        ],
+        "outputTable": {
+            "columns": ["代码", "名称", "来源", "理由"],
+            "rows": [
+                {
+                    "id": "600519",
+                    "cells": ["600519", "贵州茅台", "智策板块", "板块轮动向上"],
+                    "actions": [{"label": "加入我的关注", "icon": "⭐", "tone": "accent"}],
+                    "code": "600519",
+                    "name": "贵州茅台",
+                    "source": "智策板块",
+                    "latestPrice": "1453.96",
+                }
+            ],
+            "emptyLabel": "暂无股票输出",
+        },
+        "summary": {
+            "title": "研究结论：关注龙头与情绪共振",
+            "body": "研究模块输出股票后，可以直接加入我的关注，再进入量化候选池。",
+        },
+        "updatedAt": "2026-04-13 10:00:00",
+    }
+    save_latest_result("research", payload, base_dir=base_dir)
+
+
+def _seed_simple_selector_result(base_dir: Path, strategy_key: str, rows: list[dict[str, object]], selected_at: str) -> None:
+    save_latest_result(
+        strategy_key,
+        {
+            "stocks_df": pd.DataFrame(rows),
+            "selected_at": selected_at,
+        },
+        base_dir=base_dir,
+    )
+
+
+def _make_context(tmp_path: Path):
+    return gateway_api.UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=tmp_path / "selector_results",
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio_stocks.db",
+        monitor_db_file=tmp_path / "stock_monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
+        quote_fetcher=lambda code, market=None: {
+            "stock_code": code,
+            "stock_name": {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
+            "latest_price": {"600519": 1453.96, "000001": 10.12, "300750": 198.35}.get(code, 1.0),
+        },
+    )
+
+
+def test_backend_api_dataflow_from_discover_and_research_to_watchlist_and_quant_pool(tmp_path):
+    module = _load_backend_api_module()
+    selector_dir = tmp_path / "selector_results"
+    selector_dir.mkdir(parents=True, exist_ok=True)
+    _seed_main_force_result(selector_dir)
+    _seed_research_result(selector_dir)
+
+    context = module.UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=selector_dir,
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio_stocks.db",
+        monitor_db_file=tmp_path / "stock_monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
+        quote_fetcher=lambda code, market=None: {
+            "stock_code": code,
+            "stock_name": {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
+            "latest_price": {"600519": 1453.96, "000001": 10.12}.get(code, 1.0),
+        },
+    )
+    app = module.create_app(context=context)
+    client = TestClient(app)
+
+    discover = client.get("/api/ui/discover").json()
+    assert discover["candidateTable"]["rows"]
+    assert discover["candidateTable"]["rows"][0]["code"] == "600519"
+
+    research = client.get("/api/ui/research").json()
+    assert research["outputTable"]["rows"]
+    assert research["outputTable"]["rows"][0]["code"] == "600519"
+
+    add_watchlist = client.post("/api/ui/discover/actions/item-watchlist", json={"code": "600519"})
+    assert add_watchlist.status_code == 200
+    workbench = client.get("/api/ui/workbench").json()
+    watchlist_codes = {row["code"] for row in workbench["watchlist"]["rows"]}
+    assert "600519" in watchlist_codes
+
+    add_from_research = client.post("/api/ui/research/actions/item-watchlist", json={"code": "000001"})
+    assert add_from_research.status_code == 200
+    workbench = client.get("/api/ui/workbench").json()
+    watchlist_codes = {row["code"] for row in workbench["watchlist"]["rows"]}
+    assert {"600519", "000001"}.issubset(watchlist_codes)
+
+    batch_quant = client.post("/api/ui/workbench/actions/batch-quant", json={"codes": ["600519", "000001"]})
+    assert batch_quant.status_code == 200
+    live_sim = client.get("/api/ui/quant/live-sim").json()
+    candidate_codes = {row["code"] for row in live_sim["candidatePool"]["rows"]}
+    assert {"600519", "000001"}.issubset(candidate_codes)
+
+    replay = client.get("/api/ui/quant/his-replay").json()
+    assert replay["candidatePool"]["columns"] == ["股票代码", "股票名称", "最新价格"]
+    for row in replay["candidatePool"]["rows"]:
+        assert "actions" not in row or not row["actions"]
+
+
+def test_discover_snapshot_aggregates_multiple_selector_results(tmp_path, monkeypatch):
+    module = _load_backend_api_module()
+    selector_dir = tmp_path / "selector_results"
+    selector_dir.mkdir(parents=True, exist_ok=True)
+
+    _seed_main_force_result(selector_dir)
+    _seed_simple_selector_result(
+        selector_dir,
+        "low_price_bull",
+        [
+            {
+                "股票代码": "000001",
+                "股票简称": "平安银行",
+                "所属行业": "银行",
+                "最新价": 10.12,
+                "总市值": 2000.0,
+                "市盈率": 4.2,
+                "市净率": 0.6,
+                "理由": "低价高弹性",
+            }
+        ],
+        "2026-04-13 15:00:00",
+    )
+    _seed_simple_selector_result(
+        selector_dir,
+        "small_cap",
+        [
+            {
+                "股票代码": "300750",
+                "股票简称": "宁德时代",
+                "所属行业": "电池",
+                "最新价": 198.35,
+                "总市值": 9000.0,
+                "市盈率": 18.2,
+                "市净率": 5.6,
+                "理由": "小而活跃",
+            }
+        ],
+        "2026-04-13 13:30:00",
+    )
+
+    context = _make_context(tmp_path)
+    app = module.create_app(context=context)
+    client = TestClient(app)
+
+    discover = client.get("/api/ui/discover").json()
+    rows = discover["candidateTable"]["rows"]
+    assert [row["code"] for row in rows][:3] == ["000001", "300750", "600519"]
+    assert any(strategy["name"] == "低价擒牛" and "最近推荐 1 只" in strategy["status"] for strategy in discover["strategies"])
+    assert "已汇总 3 个发现策略的最新结果" in discover["summary"]["body"]
+
+    class FakeMainForceSelector:
+        def get_main_force_stocks(self, **kwargs):
+            return True, pd.DataFrame(
+                [
+                    {
+                        "股票代码": "600519",
+                        "股票简称": "贵州茅台",
+                        "所属同花顺行业": "白酒",
+                        "最新价": 1678.0,
+                        "总市值": 21000.0,
+                        "市盈率": 28.4,
+                        "市净率": 8.6,
+                        "理由": "主力持续流入",
+                    }
+                ]
+            ), "ok"
+
+    class FakeLowPriceBullSelector:
+        def get_low_price_stocks(self, top_n=5):
+            return True, pd.DataFrame(
+                [
+                    {
+                        "股票代码": "000001",
+                        "股票简称": "平安银行",
+                        "所属行业": "银行",
+                        "最新价": 10.12,
+                        "总市值": 2000.0,
+                        "市盈率": 4.2,
+                        "市净率": 0.6,
+                        "理由": "低价高弹性",
+                    }
+                ]
+            ), "ok"
+
+    class FakeSmallCapSelector:
+        def get_small_cap_stocks(self, top_n=5):
+            return True, pd.DataFrame(
+                [
+                    {
+                        "股票代码": "300750",
+                        "股票简称": "宁德时代",
+                        "所属行业": "电池",
+                        "最新价": 198.35,
+                        "总市值": 9000.0,
+                        "市盈率": 18.2,
+                        "市净率": 5.6,
+                        "理由": "小而活跃",
+                    }
+                ]
+            ), "ok"
+
+    class FakeProfitGrowthSelector:
+        def get_profit_growth_stocks(self, top_n=5):
+            return False, pd.DataFrame(), "skip"
+
+    class FakeValueStockSelector:
+        def get_value_stocks(self, top_n=10):
+            return False, pd.DataFrame(), "skip"
+
+    monkeypatch.setattr(gateway_api, "MainForceStockSelector", FakeMainForceSelector)
+    monkeypatch.setattr(gateway_api, "LowPriceBullSelector", FakeLowPriceBullSelector)
+    monkeypatch.setattr(gateway_api, "SmallCapSelector", FakeSmallCapSelector)
+    monkeypatch.setattr(gateway_api, "ProfitGrowthSelector", FakeProfitGrowthSelector)
+    monkeypatch.setattr(gateway_api, "ValueStockSelector", FakeValueStockSelector)
+
+    run_strategy = client.post("/api/ui/discover/actions/run-strategy", json={})
+    assert run_strategy.status_code == 200
+    run_rows = run_strategy.json()["candidateTable"]["rows"]
+    assert [row["code"] for row in run_rows][:3] == ["600519", "000001", "300750"]
+
+    add_watchlist_1 = client.post("/api/ui/discover/actions/item-watchlist", json={"code": "600519"})
+    add_watchlist_2 = client.post("/api/ui/discover/actions/item-watchlist", json={"code": "000001"})
+    assert add_watchlist_1.status_code == 200
+    assert add_watchlist_2.status_code == 200
+
+    batch_quant = client.post("/api/ui/workbench/actions/batch-quant", json={"codes": ["600519", "000001"]})
+    assert batch_quant.status_code == 200
+    live_sim = client.get("/api/ui/quant/live-sim").json()
+    candidate_codes = {row["code"] for row in live_sim["candidatePool"]["rows"]}
+    assert {"600519", "000001"}.issubset(candidate_codes)
+
+    replay = client.get("/api/ui/quant/his-replay").json()
+    assert replay["candidatePool"]["columns"] == ["股票代码", "股票名称", "最新价格"]
+    for row in replay["candidatePool"]["rows"]:
+        assert "actions" not in row or not row["actions"]
+
+
+def test_backend_api_research_run_module_persists_real_snapshot(tmp_path, monkeypatch):
+    module = _load_backend_api_module()
+    selector_dir = tmp_path / "selector_results"
+    selector_dir.mkdir(parents=True, exist_ok=True)
+
+    class FakeSectorStrategyDataFetcher:
+        def get_cached_data_with_fallback(self):
+            return {"success": True, "market_overview": {}, "news": [], "sectors": {}, "concepts": {}, "sector_fund_flow": {}, "north_flow": {}}
+
+    class FakeSectorStrategyEngine:
+        def run_comprehensive_analysis(self, data):
+            return {
+                "comprehensive_report": "板块轮动向上",
+                "final_predictions": {"long_short": {"bullish": [{"sector": "AI"}], "bearish": []}},
+                "agents_analysis": {"chief": {"analysis": "板块分析完成"}},
+            }
+
+    class FakeLonghubangEngine:
+        def run_comprehensive_analysis(self, days=1):
+            return {
+                "recommended_stocks": [{"code": "002463", "name": "沪电股份", "reason": "龙虎榜资金集中", "latest_price": "90.40"}],
+                "agents_analysis": {"chief": {"analysis": "龙虎榜结论"}},
+                "final_report": {"summary": "龙虎榜 summary"},
+            }
+
+    class FakeNewsFlowEngine:
+        def run_full_analysis(self, include_ai=True):
+            return {
+                "ai_analysis": {
+                    "stock_recommend": {"recommended_stocks": [{"code": "600519", "name": "贵州茅台", "reason": "新闻热度", "latest_price": "1453.96"}]},
+                    "investment_advice": {"advice": "观望", "confidence": 60, "summary": "情绪偏稳"},
+                },
+                "trading_signals": {"operation_advice": "等待确认"},
+            }
+
+    class FakeMacroAnalysisEngine:
+        def run_full_analysis(self, progress_callback=None):
+            return {
+                "candidate_stocks": [{"code": "300750", "name": "宁德时代", "reason": "宏观映射", "latest_price": "200.00"}],
+                "agents_analysis": {"chief": {"analysis": "宏观分析结论"}},
+                "sector_view": {"market_view": "行业景气回升"},
+            }
+
+    class FakeMacroCycleEngine:
+        def run_full_analysis(self, progress_callback=None):
+            return {"agents_analysis": {"chief": {"analysis": "周期仍在复苏"}}, "formatted_data": "周期数据"}
+
+    monkeypatch.setattr(gateway_api, "SectorStrategyDataFetcher", FakeSectorStrategyDataFetcher)
+    monkeypatch.setattr(gateway_api, "SectorStrategyEngine", FakeSectorStrategyEngine)
+    monkeypatch.setattr(gateway_api, "LonghubangEngine", FakeLonghubangEngine)
+    monkeypatch.setattr(gateway_api, "NewsFlowEngine", FakeNewsFlowEngine)
+    monkeypatch.setattr(gateway_api, "MacroAnalysisEngine", FakeMacroAnalysisEngine)
+    monkeypatch.setattr(gateway_api, "MacroCycleEngine", FakeMacroCycleEngine)
+
+    context = module.UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=selector_dir,
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio_stocks.db",
+        monitor_db_file=tmp_path / "stock_monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_name_resolver=lambda code: {"002463": "沪电股份", "600519": "贵州茅台", "300750": "宁德时代"}.get(code, code),
+    )
+    app = module.create_app(context=context)
+    client = TestClient(app)
+
+    response = client.post("/api/ui/research/actions/run-module", json={})
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["modules"] and len(payload["modules"]) == 5
+    assert payload["modules"][0]["name"] == "智策板块"
+    assert payload["modules"][3]["output"] == "股票输出 1 只"
+    assert [row["code"] for row in payload["outputTable"]["rows"]] == ["002463", "600519", "300750"]
+    assert all(row["source"] in {"智瞰龙虎", "新闻流量", "宏观分析"} for row in payload["outputTable"]["rows"])
+    assert payload["summary"]["body"].startswith("已刷新 5 个研究模块，其中 3 只股票有明确输出")
+
+    snapshot = client.get("/api/ui/research").json()
+    assert snapshot["outputTable"]["rows"] == payload["outputTable"]["rows"]

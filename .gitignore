@@ -22,3 +22,11 @@ quant_sim.db
 /openspec
 TradEnv/
 /.superpowers/
+/tmp_reui_debug/
+/.playwright-cli/
+/ui-dev.out.log
+/ui-dev.err.log
+/node_modules/
+/build/__pycache__/
+ui/node_modules/
+ui/dist/

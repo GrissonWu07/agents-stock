@@ -46,7 +46,9 @@ docker compose -f build/docker-compose.yml logs -f
 
 ### 4️⃣ 访问系统
 
-打开浏览器访问：**http://localhost:8503**
+Docker 方式请访问前端站点：**http://localhost:8080**
+
+后端 API 健康检查地址：**http://localhost:8503/api/health**
 
 ## 🎮 常用命令
 
@@ -120,14 +122,14 @@ docker ps
 docker port agentsstock1
 
 # 尝试从容器内访问
-docker exec agentsstock1 curl http://localhost:8501
+docker exec agentsstock1 curl http://localhost:8503/api/health
 ```
 
 ### 问题3: 端口被占用
 修改 `build/docker-compose.yml` 文件：
 ```yaml
 ports:
-  - "8502:8501"  # 改用8502端口
+  - "8502:8503"  # 改用8502端口
 ```
 
 ### 问题4: 数据库权限错误（Linux/macOS）
@@ -220,7 +222,7 @@ server {
     server_name yourdomain.com;
 
     location / {
-        proxy_pass http://localhost:8501;
+        proxy_pass http://localhost:8503;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

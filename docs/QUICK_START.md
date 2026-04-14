@@ -46,12 +46,24 @@ TDX_ENABLED=true
 ## 3. 启动系统
 
 ```bash
-streamlit run app.py
+python app/gateway.py
 ```
 
-打开：
+然后另开一个终端启动前端：
 
-[http://127.0.0.1:8501](http://127.0.0.1:8501)
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+打开前端：
+
+[http://127.0.0.1:4173](http://127.0.0.1:4173)
+
+后端健康检查：
+
+[http://127.0.0.1:8503/api/health](http://127.0.0.1:8503/api/health)
 
 ---
 
@@ -159,4 +171,3 @@ streamlit run app.py
 ### 为什么量化模拟和历史回放都要求先有量化候选池？
 
 因为它们现在共用同一个输入池，目的是让实时验证和历史验证围绕同一组股票展开。
-

@@ -10,8 +10,9 @@ from typing import Any
 
 import pandas as pd
 
+from app.runtime_paths import DATA_DIR
 
-DEFAULT_SELECTOR_RESULT_DIR = Path(__file__).resolve().parent / "data" / "selector_results"
+DEFAULT_SELECTOR_RESULT_DIR = DATA_DIR / "selector_results"
 
 
 def save_latest_result(strategy_key: str, payload: dict[str, Any], base_dir: str | Path = DEFAULT_SELECTOR_RESULT_DIR) -> Path:

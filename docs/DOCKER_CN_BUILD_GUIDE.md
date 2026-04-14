@@ -219,13 +219,14 @@ cp .env.example .env
 docker build -f "build/Dockerfile国内源版" -t agentsstock1:latest .
 
 # 4. 运行容器
-docker run -d -p 8503:8501 -v $(pwd)/.env:/app/.env --name agentsstock1 agentsstock1:latest
+docker run -d -p 8503:8503 -v $(pwd)/.env:/app/.env --name agentsstock1 agentsstock1:latest
 
 # 5. 查看日志
 docker logs -f agentsstock1
 
 # 6. 访问应用
-# 打开浏览器: http://localhost:8503
+# 前端: http://localhost:8080
+# 后端健康检查: http://localhost:8503/api/health
 ```
 
 ## 🎯 推荐配置
@@ -233,7 +234,7 @@ docker logs -f agentsstock1
 ### 开发环境
 ```bash
 docker build -f "build/Dockerfile国内源版" -t agentsstock1:dev .
-docker run -d -p 8503:8501 \
+docker run -d -p 8503:8503 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd):/app \
   --name agentsstock1-dev \
@@ -243,7 +244,7 @@ docker run -d -p 8503:8501 \
 ### 生产环境
 ```bash
 docker build -f "build/Dockerfile国内源版" -t agentsstock1:prod .
-docker run -d -p 8503:8501 \
+docker run -d -p 8503:8503 \
   -v $(pwd)/.env:/app/.env \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
