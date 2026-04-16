@@ -149,6 +149,8 @@ def test_backend_api_dataflow_from_discover_and_research_to_watchlist_and_quant_
     discover = client.get("/api/ui/discover").json()
     assert discover["candidateTable"]["rows"]
     assert discover["candidateTable"]["rows"][0]["code"] == "600519"
+    assert "贵州茅台" in discover["recommendation"]["body"]
+    assert any("主力选股" in chip for chip in discover["recommendation"]["chips"])
 
     research = client.get("/api/ui/research").json()
     assert research["outputTable"]["rows"]
@@ -355,7 +357,11 @@ def test_backend_api_research_run_module_persists_real_snapshot(tmp_path, monkey
         def run_full_analysis(self, progress_callback=None):
             return {
                 "candidate_stocks": [{"code": "300750", "name": "宁德时代", "reason": "宏观映射", "latest_price": "200.00"}],
-                "agents_analysis": {"chief": {"analysis": "宏观分析结论"}},
+                "agents_analysis": {
+                    "chief": {
+                        "analysis": "# A股后市综合报告\n\n## 当前宏观判断\n\n### 弱复苏中的结构分化\n总量修复偏慢，结构机会更强。\n\n### 出口链景气延续\n外需方向仍有支撑，景气链条仍值得跟踪。"
+                    }
+                },
                 "sector_view": {"market_view": "行业景气回升"},
             }
 
@@ -390,9 +396,13 @@ def test_backend_api_research_run_module_persists_real_snapshot(tmp_path, monkey
     assert payload["modules"] and len(payload["modules"]) == 5
     assert payload["modules"][0]["name"] == "智策板块"
     assert payload["modules"][3]["output"] == "股票输出 1 只"
+    assert "弱复苏中的结构分化" in payload["modules"][3]["note"]
+    assert "出口链景气延续" in payload["modules"][3]["note"]
+    assert not payload["modules"][3]["note"].endswith("…")
     assert [row["code"] for row in payload["outputTable"]["rows"]] == ["002463", "600519", "300750"]
     assert all(row["source"] in {"智瞰龙虎", "新闻流量", "宏观分析"} for row in payload["outputTable"]["rows"])
     assert payload["summary"]["body"].startswith("已刷新 5 个研究模块，其中 3 只股票有明确输出")
 
     snapshot = client.get("/api/ui/research").json()
     assert snapshot["outputTable"]["rows"] == payload["outputTable"]["rows"]
+    assert snapshot["modules"][3]["note"] == payload["modules"][3]["note"]

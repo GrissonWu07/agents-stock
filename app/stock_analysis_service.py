@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
-from typing import Any
+import queue
+import threading
+from typing import Any, Callable
 
 import app.config as config
 from app.ai_agents import StockAnalysisAgents
@@ -16,6 +19,20 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _indicator_value(indicators: dict[str, Any] | None, *aliases: str) -> Any:
+    if not isinstance(indicators, dict) or not indicators:
+        return None
+    for alias in aliases:
+        if alias in indicators:
+            return indicators.get(alias)
+    lowered = {str(key).lower(): value for key, value in indicators.items()}
+    for alias in aliases:
+        lowered_alias = str(alias).lower()
+        if lowered_alias in lowered:
+            return lowered[lowered_alias]
+    return None
 
 
 @lru_cache(maxsize=128)
@@ -56,7 +73,7 @@ def build_indicator_explanations(indicators: dict[str, Any] | None, current_pric
     explanations: dict[str, dict[str, str]] = {}
 
     current_price_value = _coerce_float(current_price)
-    rsi = _coerce_float((indicators or {}).get("rsi"))
+    rsi = _coerce_float(_indicator_value(indicators, "rsi", "RSI"))
     if rsi is None:
         explanations["RSI"] = {"state": "暂无数据", "summary": "当前没有可用的 RSI 数据。"}
     elif rsi > 70:
@@ -66,7 +83,7 @@ def build_indicator_explanations(indicators: dict[str, Any] | None, current_pric
     else:
         explanations["RSI"] = {"state": "中性", "summary": "RSI 位于 30-70 之间，暂未进入极端区间。"}
 
-    ma20 = _coerce_float((indicators or {}).get("ma20"))
+    ma20 = _coerce_float(_indicator_value(indicators, "ma20", "MA20", "Ma20"))
     if ma20 is None or current_price_value is None:
         explanations["MA20"] = {"state": "暂无判断", "summary": "缺少当前价或 MA20，暂时无法判断中期趋势强弱。"}
     elif current_price_value >= ma20:
@@ -74,7 +91,7 @@ def build_indicator_explanations(indicators: dict[str, Any] | None, current_pric
     else:
         explanations["MA20"] = {"state": "弱于中期趋势", "summary": "当前价低于 MA20，中期趋势偏弱，反弹更需要成交量和趋势确认。"}
 
-    volume_ratio = _coerce_float((indicators or {}).get("volume_ratio"))
+    volume_ratio = _coerce_float(_indicator_value(indicators, "volume_ratio", "量比", "volumeRatio", "VolumeRatio"))
     if volume_ratio is None:
         explanations["量比"] = {"state": "暂无数据", "summary": "当前没有可用的量比数据。"}
     elif volume_ratio > 1.5:
@@ -84,7 +101,7 @@ def build_indicator_explanations(indicators: dict[str, Any] | None, current_pric
     else:
         explanations["量比"] = {"state": "正常成交", "summary": "量比接近 1，成交活跃度没有明显异常。"}
 
-    macd = _coerce_float((indicators or {}).get("macd"))
+    macd = _coerce_float(_indicator_value(indicators, "macd", "MACD"))
     if macd is None:
         explanations["MACD"] = {"state": "暂无数据", "summary": "当前没有可用的 MACD 数据。"}
     elif macd > 0:
@@ -108,14 +125,65 @@ def build_indicator_summary(explanations: dict[str, dict[str, str]]) -> str:
     return " ".join(parts)
 
 
+def _run_parallel_enrichment_tasks(
+    tasks: dict[str, Callable[[], Any]],
+    *,
+    timeout_seconds: float,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run enrichment fetches in parallel and cap each task's blocking time."""
+    if not tasks:
+        return {}, {}
+
+    results: dict[str, Any] = {name: None for name in tasks}
+    errors: dict[str, str] = {}
+    handles: list[tuple[str, threading.Thread, queue.Queue[Any], queue.Queue[BaseException]]] = []
+
+    for name, task in tasks.items():
+        result_box: queue.Queue[Any] = queue.Queue(maxsize=1)
+        error_box: queue.Queue[BaseException] = queue.Queue(maxsize=1)
+
+        def runner(task_name: str = name, task_callable: Callable[[], Any] = task) -> None:
+            try:
+                result_box.put(task_callable())
+            except BaseException as exc:  # pragma: no cover - defensive
+                error_box.put(exc)
+
+        worker = threading.Thread(
+            target=runner,
+            name=f"analysis-enrich-{name}",
+            daemon=True,
+        )
+        worker.start()
+        handles.append((name, worker, result_box, error_box))
+
+    per_task_timeout = max(float(timeout_seconds), 0.01)
+    for name, worker, result_box, error_box in handles:
+        worker.join(timeout=per_task_timeout)
+        if worker.is_alive():
+            errors[name] = f"{name} timeout after {per_task_timeout:.2f}s"
+            continue
+        if not error_box.empty():
+            errors[name] = str(error_box.get())
+            continue
+        if not result_box.empty():
+            results[name] = result_box.get()
+
+    return results, errors
+
+
 def analyze_single_stock_for_batch(
     symbol: str,
     period: str,
     enabled_analysts_config: dict[str, bool] | None = None,
     selected_model: str | None = None,
+    progress_callback: Callable[[str, str, int | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run the full multi-agent stock analysis without any UI dependency."""
     try:
+        def report(stage: str, message: str, progress: int | None = None) -> None:
+            if progress_callback:
+                progress_callback(stage, message, progress)
+
         if selected_model is None:
             selected_model = config.DEFAULT_MODEL_NAME
 
@@ -129,6 +197,7 @@ def analyze_single_stock_for_batch(
                 "news": False,
             }
 
+        report("fetch", "正在获取行情与基础信息", 8)
         stock_info, stock_data, indicators = get_stock_data(symbol, period)
         if isinstance(stock_info, dict) and "error" in stock_info:
             return {"symbol": symbol, "error": stock_info["error"], "success": False}
@@ -137,56 +206,71 @@ def analyze_single_stock_for_batch(
             return {"symbol": symbol, "error": data_error or "无法获取股票历史数据", "success": False}
 
         fetcher = StockDataFetcher()
-        financial_data = fetcher.get_financial_data(symbol)
+        report("enrich", "正在补充财务与资金面数据", 18)
+        is_chinese_stock = fetcher._is_chinese_stock(symbol)
+        enrichment_tasks: dict[str, Callable[[], Any]] = {
+            "financial_data": lambda: fetcher.get_financial_data(symbol),
+        }
 
-        quarterly_data = None
-        if enabled_analysts_config.get("fundamental", True) and fetcher._is_chinese_stock(symbol):
-            try:
+        if enabled_analysts_config.get("fundamental", True) and is_chinese_stock:
+            def fetch_quarterly_data() -> Any:
                 from app.quarterly_report_data import QuarterlyReportDataFetcher
 
                 quarterly_fetcher = QuarterlyReportDataFetcher()
-                quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
-            except Exception:
-                quarterly_data = None
+                return quarterly_fetcher.get_quarterly_reports(symbol)
 
-        fund_flow_data = None
-        if enabled_analysts_config.get("fund_flow", True) and fetcher._is_chinese_stock(symbol):
-            try:
+            enrichment_tasks["quarterly_data"] = fetch_quarterly_data
+
+        if enabled_analysts_config.get("fund_flow", True) and is_chinese_stock:
+            def fetch_fund_flow_data() -> Any:
                 from app.fund_flow_akshare import FundFlowAkshareDataFetcher
 
                 fund_flow_fetcher = FundFlowAkshareDataFetcher()
-                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(symbol)
-            except Exception:
-                fund_flow_data = None
+                return fund_flow_fetcher.get_fund_flow_data(symbol)
 
-        sentiment_data = None
-        if enabled_analysts_config.get("sentiment", False) and fetcher._is_chinese_stock(symbol):
-            try:
+            enrichment_tasks["fund_flow_data"] = fetch_fund_flow_data
+
+        if enabled_analysts_config.get("sentiment", False) and is_chinese_stock:
+            def fetch_sentiment_data() -> Any:
                 from app.market_sentiment_data import MarketSentimentDataFetcher
 
                 sentiment_fetcher = MarketSentimentDataFetcher()
-                sentiment_data = sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
-            except Exception:
-                sentiment_data = None
+                return sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
 
-        news_data = None
-        if enabled_analysts_config.get("news", False) and fetcher._is_chinese_stock(symbol):
-            try:
+            enrichment_tasks["sentiment_data"] = fetch_sentiment_data
+
+        if enabled_analysts_config.get("news", False) and is_chinese_stock:
+            def fetch_news_data() -> Any:
                 from app.qstock_news_data import QStockNewsDataFetcher
 
                 news_fetcher = QStockNewsDataFetcher()
-                news_data = news_fetcher.get_stock_news(symbol)
-            except Exception:
-                news_data = None
+                return news_fetcher.get_stock_news(symbol)
 
-        risk_data = None
-        if enabled_analysts_config.get("risk", True) and fetcher._is_chinese_stock(symbol):
-            try:
-                risk_data = fetcher.get_risk_data(symbol)
-            except Exception:
-                risk_data = None
+            enrichment_tasks["news_data"] = fetch_news_data
+
+        if enabled_analysts_config.get("risk", True) and is_chinese_stock:
+            enrichment_tasks["risk_data"] = lambda: fetcher.get_risk_data(symbol)
+
+        enrichment_results, enrichment_errors = _run_parallel_enrichment_tasks(
+            enrichment_tasks,
+            timeout_seconds=config.EXTERNAL_DATA_TASK_TIMEOUT_SECONDS,
+        )
+        financial_data = enrichment_results.get("financial_data")
+        quarterly_data = enrichment_results.get("quarterly_data")
+        fund_flow_data = enrichment_results.get("fund_flow_data")
+        sentiment_data = enrichment_results.get("sentiment_data")
+        news_data = enrichment_results.get("news_data")
+        risk_data = enrichment_results.get("risk_data")
+
+        if enrichment_errors:
+            report(
+                "enrich",
+                "部分补充数据获取较慢，已使用当前可用数据继续分析",
+                24,
+            )
 
         agents = StockAnalysisAgents(model=selected_model)
+        report("analyst", "正在生成分析师观点", 30)
         agents_results = agents.run_multi_agent_analysis(
             stock_info,
             stock_data,
@@ -198,26 +282,13 @@ def analyze_single_stock_for_batch(
             quarterly_data,
             risk_data,
             enabled_analysts=enabled_analysts_config,
+            progress_callback=progress_callback,
         )
 
+        report("discussion", "正在组织团队讨论", 78)
         discussion_result = agents.conduct_team_discussion(agents_results, stock_info)
+        report("decision", "正在生成最终决策", 88)
         final_decision = agents.make_final_decision(discussion_result, stock_info, indicators)
-
-        saved_to_db = False
-        db_error = None
-        try:
-            db.save_analysis(
-                symbol=stock_info.get("symbol", ""),
-                stock_name=stock_info.get("name", ""),
-                period=period,
-                stock_info=stock_info,
-                agents_results=agents_results,
-                discussion_result=discussion_result,
-                final_decision=final_decision,
-            )
-            saved_to_db = True
-        except Exception as exc:
-            db_error = str(exc)
 
         historical_data = None
         try:
@@ -229,9 +300,30 @@ def analyze_single_stock_for_batch(
         except Exception:
             historical_data = None
 
+        saved_to_db = False
+        db_error = None
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            report("persist", "正在保存分析结果", 96)
+            db.save_analysis(
+                symbol=stock_info.get("symbol", ""),
+                stock_name=stock_info.get("name", ""),
+                period=period,
+                stock_info=stock_info,
+                agents_results=agents_results,
+                discussion_result=discussion_result,
+                final_decision=final_decision,
+                indicators=indicators,
+                historical_data=historical_data,
+            )
+            saved_to_db = True
+        except Exception as exc:
+            db_error = str(exc)
+
         return {
             "symbol": symbol,
             "success": True,
+            "generated_at": generated_at,
             "stock_info": stock_info,
             "indicators": indicators,
             "agents_results": agents_results,

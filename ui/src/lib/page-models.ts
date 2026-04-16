@@ -25,6 +25,14 @@ export type Insight = {
   tone?: BadgeTone;
 };
 
+export type ConfigSettingItem = Insight & {
+  key?: string;
+  value?: string;
+  required?: boolean;
+  type?: "text" | "password" | "boolean" | "select" | string;
+  options?: string[];
+};
+
 export type TimelineItem = {
   time: string;
   title: string;
@@ -49,6 +57,7 @@ export type TableRow = {
   source?: string;
   latestPrice?: string;
   reason?: string;
+  selectedAt?: string;
 };
 
 export type TableSection = {
@@ -92,11 +101,25 @@ export type WorkbenchSnapshot = {
     inputHint: string;
     summaryTitle: string;
     summaryBody: string;
+    generatedAt?: string;
     indicators: SummaryMetric[];
     decision: string;
+    finalDecisionText?: string;
     insights: Insight[];
+    analystViews?: Insight[];
     curve: ChartPoint[];
   };
+  analysisJob?: {
+    id: string;
+    status: "idle" | "queued" | "running" | "completed" | "failed";
+    title: string;
+    message: string;
+    stage?: string;
+    progress?: number;
+    symbol?: string;
+    startedAt?: string;
+    updatedAt?: string;
+  } | null;
   nextSteps: ActionTile[];
   activity: TimelineItem[];
 };
@@ -239,12 +262,9 @@ export type HistorySnapshot = {
 };
 
 export type SettingsSnapshot = {
-  updatedAt: string;
-  metrics: SummaryMetric[];
-  modelConfig: Insight[];
-  dataSources: Insight[];
-  runtimeParams: Insight[];
-  paths: string[];
+  dataSources: ConfigSettingItem[];
+  modelConfig: ConfigSettingItem[];
+  runtimeParams: ConfigSettingItem[];
 };
 
 export type PageSnapshotMap = {

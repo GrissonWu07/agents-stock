@@ -9,7 +9,7 @@ import { HisReplayPage } from "../features/quant/his-replay-page";
 import { LiveSimPage } from "../features/quant/live-sim-page";
 import type { ApiClient } from "../lib/api-client";
 import { createApiClient } from "../lib/api-client";
-import { mockPageSnapshot } from "../lib/mock-backend";
+import { mockPageSnapshot } from "./mock-backend";
 import type { HistorySnapshot, LiveSimSnapshot, RealMonitorSnapshot } from "../lib/page-models";
 
 const makeClient = (snapshot: unknown, runAction?: ReturnType<typeof vi.fn>): ApiClient =>
@@ -161,16 +161,15 @@ describe("ui api contracts", () => {
     expect(runAction).toHaveBeenCalledWith("history", "rerun", undefined);
   });
 
-  it("wires settings save to backend action", async () => {
+  it("wires settings refresh button to snapshot reload", async () => {
     const snapshot = mockPageSnapshot("settings");
     const runAction = vi.fn(async () => snapshot);
     render(<SettingsPage client={makeClient(snapshot, runAction)} />);
 
     expect(await screen.findByRole("heading", { name: "环境配置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新配置" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
-
-    expect(runAction).toHaveBeenCalledWith("settings", "save", undefined);
+    fireEvent.click(screen.getByRole("button", { name: "刷新配置" }));
   });
 
   it("uses replay history curve data from snapshots instead of placeholder points", async () => {

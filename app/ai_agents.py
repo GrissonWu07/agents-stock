@@ -1,8 +1,69 @@
 from app.console_utils import safe_print as print
 from app.deepseek_client import DeepSeekClient
-from typing import Dict, Any
+from typing import Dict, Any, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+import re
 import app.config as config
+
+
+def _compact_prompt_text(text: Any, *, limit: int = 220) -> str:
+    """Compress long analyst output into a short, human-readable brief."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    cleaned = raw
+    cleaned = re.sub(r"\*{1,3}", "", cleaned)
+    cleaned = re.sub(r"^#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^[-•]\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"会议纪要（模拟对话）|会议纪要|会议主持人|主持人|第一轮：|第二轮：|第三轮：", "", cleaned)
+    cleaned = re.sub(r"(?:技术分析报告|基本面分析报告|资金面深度分析报告|风险分析报告|风险评估报告|深度分析报告|分析报告)", "", cleaned)
+    cleaned = re.sub(r"(?:技术分析师|基本面分析师|资金面分析师|风险管理师|市场情绪分析师|新闻分析师)\s*", "", cleaned)
+    cleaned = re.sub(r"以下[^。！？!?]{0,120}?(?:报告|分析)(?:如下)?[：:。]?", "", cleaned)
+    cleaned = re.sub(r"仅基于[^。！？!?]{0,120}[。！？!?]?", "", cleaned)
+    cleaned = re.sub(r"先说明[^。！？!?]{0,120}[。！？!?]?", "", cleaned)
+    cleaned = re.sub(r"我会重点围绕[^。！？!?]{0,120}[。！？!?]?", "", cleaned)
+    cleaned = re.sub(r"我会特别围绕[^。！？!?]{0,120}[。！？!?]?", "", cleaned)
+    cleaned = re.sub(r"严格基于[^。！？!?]{0,120}[。！？!?]?", "", cleaned)
+    cleaned = re.sub(r"[一二三四五六七八九十]+、[^。！？!?]{0,40}", "", cleaned)
+    cleaned = re.sub(r"\b\d+\.\s*[^。！？!?]{0,32}", "", cleaned)
+    cleaned = re.sub(r"[\-—–]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    sentences = re.split(r"(?<=[。！？!?])\s*", cleaned)
+    priority_markers = ("结论", "建议", "风险", "持有", "买入", "卖出", "回踩", "趋势", "估值", "资金", "等待", "轻仓", "不建议", "继续跟踪")
+    picked: list[str] = []
+    total = 0
+    for sentence in sentences:
+        sentence = sentence.strip(" ：:-")
+        if not sentence:
+            continue
+        if sentence in picked:
+            continue
+        score_boost = 1 if any(marker in sentence for marker in priority_markers) else 0
+        if score_boost or len(picked) == 0:
+            if total + len(sentence) > limit and picked:
+                break
+            picked.append(sentence)
+            total += len(sentence)
+        if total >= limit:
+            break
+    compact = " ".join(picked).strip() or cleaned[:limit].strip()
+    compact = compact[:limit].rstrip(" ,;；。")
+    if len(cleaned) > len(compact):
+        compact += "…"
+    return compact
+
+
+def _compact_discussion_prompt(text: Any, *, limit: int = 160) -> str:
+    """Further compress long discussion/report text for downstream prompts."""
+    compact = _compact_prompt_text(text, limit=limit)
+    if not compact:
+        return ""
+    compact = re.sub(r"(?:一致性|分歧点|会议共识)[:：]?", "", compact)
+    compact = re.sub(r"\s+", " ", compact).strip(" ：:-")
+    return compact[:limit].rstrip(" ,;；。") + ("…" if len(compact) > limit else "")
 
 class StockAnalysisAgents:
     """股票分析AI智能体集合"""
@@ -10,6 +71,24 @@ class StockAnalysisAgents:
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
         self.deepseek_client = DeepSeekClient(model=self.model)
+        self._patch_call_api_token_budget()
+
+    def _patch_call_api_token_budget(self) -> None:
+        """Keep legacy helper methods intact while capping oversized token budgets."""
+        if not hasattr(self.deepseek_client, "call_api"):
+            return
+        original_call_api = self.deepseek_client.call_api
+
+        def capped_call_api(messages, model=None, temperature=0.7, max_tokens=2000):
+            bounded_tokens = min(max_tokens, config.ANALYSIS_CALL_MAX_TOKENS)
+            return original_call_api(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=bounded_tokens,
+            )
+
+        self.deepseek_client.call_api = capped_call_api
         
     def technical_analyst_agent(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> Dict[str, Any]:
         """技术面分析智能体"""
@@ -200,7 +279,7 @@ class StockAnalysisAgents:
             {"role": "user", "content": risk_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=6000)
+        analysis = self.deepseek_client.call_api(messages, max_tokens=config.RISK_ANALYSIS_MAX_TOKENS)
         
         return {
             "agent_name": "风险管理师",
@@ -286,7 +365,7 @@ class StockAnalysisAgents:
             {"role": "user", "content": sentiment_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(messages, max_tokens=config.MARKET_SENTIMENT_ANALYSIS_MAX_TOKENS)
         
         return {
             "agent_name": "市场情绪分析师",
@@ -384,7 +463,7 @@ class StockAnalysisAgents:
             {"role": "user", "content": news_prompt}
         ]
         
-        analysis = self.deepseek_client.call_api(messages, max_tokens=4000)
+        analysis = self.deepseek_client.call_api(messages, max_tokens=config.NEWS_ANALYSIS_MAX_TOKENS)
         
         return {
             "agent_name": "新闻分析师",
@@ -399,7 +478,8 @@ class StockAnalysisAgents:
                                  financial_data: Dict = None, fund_flow_data: Dict = None, 
                                  sentiment_data: Dict = None, news_data: Dict = None,
                                  quarterly_data: Dict = None, risk_data: Dict = None,
-                                 enabled_analysts: Dict = None) -> Dict[str, Any]:
+                                 enabled_analysts: Dict = None,
+                                 progress_callback: Callable[[str, str, int | None], None] | None = None) -> Dict[str, Any]:
         """运行多智能体分析
         
         Args:
@@ -428,33 +508,53 @@ class StockAnalysisAgents:
         
         # 并行运行各个分析师
         agents_results = {}
-        
-        # 技术面分析
-        if enabled_analysts.get('technical', True):
-            agents_results["technical"] = self.technical_analyst_agent(stock_info, stock_data, indicators)
-        
-        # 基本面分析
-        if enabled_analysts.get('fundamental', True):
-            agents_results["fundamental"] = self.fundamental_analyst_agent(stock_info, financial_data, quarterly_data)
-        
-        # 资金面分析（传入资金流向数据）
-        if enabled_analysts.get('fund_flow', True):
-            agents_results["fund_flow"] = self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)
-        
-        # 风险管理分析（传入风险数据）
-        if enabled_analysts.get('risk', True):
-            agents_results["risk_management"] = self.risk_management_agent(stock_info, indicators, risk_data)
-        
-        # 市场情绪分析（传入市场情绪数据）
-        if enabled_analysts.get('sentiment', False):
-            agents_results["market_sentiment"] = self.market_sentiment_agent(stock_info, sentiment_data)
-        
-        # 新闻分析（传入新闻数据）
-        if enabled_analysts.get('news', False):
-            agents_results["news"] = self.news_analyst_agent(stock_info, news_data)
+        ordered_analysts = [
+            ("technical", "技术分析师", lambda: self.technical_analyst_agent(stock_info, stock_data, indicators)),
+            ("fundamental", "基本面分析师", lambda: self.fundamental_analyst_agent(stock_info, financial_data, quarterly_data)),
+            ("fund_flow", "资金面分析师", lambda: self.fund_flow_analyst_agent(stock_info, indicators, fund_flow_data)),
+            ("risk", "风险管理师", lambda: self.risk_management_agent(stock_info, indicators, risk_data)),
+            ("sentiment", "市场情绪分析师", lambda: self.market_sentiment_agent(stock_info, sentiment_data)),
+            ("news", "新闻分析师", lambda: self.news_analyst_agent(stock_info, news_data)),
+        ]
+        enabled_keys = [key for key, _, _ in ordered_analysts if enabled_analysts.get(key, False)]
+        total_enabled = max(len(enabled_keys), 1)
+        completed = 0
+
+        def report_agent(label: str):
+            if progress_callback:
+                progress = 30 + int((completed / total_enabled) * 42)
+                progress_callback("analyst", f"正在生成{label}观点", progress)
+
+        active_runners = [(key, label, runner) for key, label, runner in ordered_analysts if enabled_analysts.get(key, False)]
+        future_to_key: dict[Any, tuple[str, str]] = {}
+        keyed_results: dict[str, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=max(len(active_runners), 1), thread_name_prefix="stock-agent") as executor:
+            for key, label, runner in active_runners:
+                report_agent(label)
+                future_to_key[executor.submit(runner)] = (key, label)
+            for future in as_completed(future_to_key):
+                key, _label = future_to_key[future]
+                result = future.result()
+                if key == "risk":
+                    keyed_results["risk_management"] = result
+                elif key == "sentiment":
+                    keyed_results["market_sentiment"] = result
+                else:
+                    keyed_results[key] = result
+                completed += 1
+
+        for key, _label, _runner in ordered_analysts:
+            if key == "risk" and "risk_management" in keyed_results:
+                agents_results["risk_management"] = keyed_results["risk_management"]
+            elif key == "sentiment" and "market_sentiment" in keyed_results:
+                agents_results["market_sentiment"] = keyed_results["market_sentiment"]
+            elif key in keyed_results:
+                agents_results[key] = keyed_results[key]
         
         print("✅ 所有已选择的分析师完成分析")
         print("=" * 50)
+        if progress_callback:
+            progress_callback("analyst", "分析师观点已完成", 72)
         
         return agents_results
     
@@ -468,30 +568,42 @@ class StockAnalysisAgents:
         
         if "technical" in agents_results:
             participants.append("技术分析师")
-            reports.append(f"【技术分析师报告】\n{agents_results['technical'].get('analysis', '')}")
+            reports.append(
+                f"【技术分析师】{_compact_discussion_prompt(agents_results['technical'].get('summary') or agents_results['technical'].get('analysis', ''), limit=180)}"
+            )
         
         if "fundamental" in agents_results:
             participants.append("基本面分析师")
-            reports.append(f"【基本面分析师报告】\n{agents_results['fundamental'].get('analysis', '')}")
+            reports.append(
+                f"【基本面分析师】{_compact_discussion_prompt(agents_results['fundamental'].get('summary') or agents_results['fundamental'].get('analysis', ''), limit=180)}"
+            )
         
         if "fund_flow" in agents_results:
             participants.append("资金面分析师")
-            reports.append(f"【资金面分析师报告】\n{agents_results['fund_flow'].get('analysis', '')}")
+            reports.append(
+                f"【资金面分析师】{_compact_discussion_prompt(agents_results['fund_flow'].get('summary') or agents_results['fund_flow'].get('analysis', ''), limit=180)}"
+            )
         
         if "risk_management" in agents_results:
             participants.append("风险管理师")
-            reports.append(f"【风险管理师报告】\n{agents_results['risk_management'].get('analysis', '')}")
+            reports.append(
+                f"【风险管理师】{_compact_discussion_prompt(agents_results['risk_management'].get('summary') or agents_results['risk_management'].get('analysis', ''), limit=180)}"
+            )
         
         if "market_sentiment" in agents_results:
             participants.append("市场情绪分析师")
-            reports.append(f"【市场情绪分析师报告】\n{agents_results['market_sentiment'].get('analysis', '')}")
+            reports.append(
+                f"【市场情绪分析师】{_compact_discussion_prompt(agents_results['market_sentiment'].get('summary') or agents_results['market_sentiment'].get('analysis', ''), limit=180)}"
+            )
         
         if "news" in agents_results:
             participants.append("新闻分析师")
-            reports.append(f"【新闻分析师报告】\n{agents_results['news'].get('analysis', '')}")
+            reports.append(
+                f"【新闻分析师】{_compact_discussion_prompt(agents_results['news'].get('summary') or agents_results['news'].get('analysis', ''), limit=180)}"
+            )
         
         # 组合所有报告
-        all_reports = "\n\n".join(reports)
+        all_reports = "\n".join(reports)
         
         discussion_prompt = f"""
 现在进行投资决策团队会议，参会人员包括：{', '.join(participants)}。
@@ -502,15 +614,12 @@ class StockAnalysisAgents:
 
 {all_reports}
 
-请模拟一场真实的投资决策会议讨论：
-1. 各分析师观点的一致性和分歧
-2. 不同维度分析的权重考量
-3. 风险收益评估
-4. 投资时机判断
-5. 策略制定思路
-6. 达成初步共识
+请模拟一场真实的投资决策会议讨论，输出要简洁、聚焦、适合产品页面展示：
+1. 每位参与分析师只保留 1-2 句核心观点
+2. 先说一致性，再说分歧点
+3. 最后给出一句会议共识
 
-请以对话形式展现讨论过程，体现专业团队的思辨过程。
+请以对话形式展现讨论过程，体现专业团队的思辨过程，但不要输出长篇记录。
 注意：只讨论参与分析的分析师的观点。
 """
         
@@ -519,7 +628,7 @@ class StockAnalysisAgents:
             {"role": "user", "content": discussion_prompt}
         ]
         
-        discussion_result = self.deepseek_client.call_api(messages, max_tokens=6000)
+        discussion_result = self.deepseek_client.call_api(messages, max_tokens=config.TEAM_DISCUSSION_MAX_TOKENS)
         
         print("✅ 团队讨论完成")
         return discussion_result
@@ -528,7 +637,10 @@ class StockAnalysisAgents:
         """制定最终投资决策"""
         print("📋 正在制定最终投资决策...")
         
-        decision = self.deepseek_client.final_decision(discussion_result, stock_info, indicators)
+        compact_discussion = _compact_discussion_prompt(discussion_result, limit=700) or _compact_discussion_prompt(
+            discussion_result, limit=360
+        )
+        decision = self.deepseek_client.final_decision(compact_discussion, stock_info, indicators)
         
         print("✅ 最终投资决策完成")
         return decision

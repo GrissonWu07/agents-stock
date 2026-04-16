@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -216,17 +218,17 @@ def test_workbench_analysis_actions_return_real_analysis(tmp_path, monkeypatch):
     monkeypatch.setattr(
         app_module,
         "analyze_single_stock_for_batch",
-        lambda symbol, period, enabled_analysts_config=None, selected_model=None: {
+        lambda symbol, period, enabled_analysts_config=None, selected_model=None, progress_callback=None: {
             "success": True,
             "symbol": symbol,
             "stock_info": {"name": "贵州茅台", "current_price": 1453.96},
             "indicators": {"RSI": 53.79, "MA20": 1441.86, "量比": 1.13, "MACD": 6.2792},
-            "final_decision": {"decision": "偏多看待，等待回踩再介入", "reasoning": "趋势与资金共振"},
-            "discussion_result": {"summary": "多位分析师认为趋势与资金面偏强，但不建议追高。"},
-            "agents_results": {
-                "technical": {"summary": "趋势向上，均线多头。"},
-                "fundamental": {"summary": "基本面稳定，估值仍可接受。"},
-            },
+            "final_decision": {"decision_text": "偏多看待，等待回踩再介入"},
+                "discussion_result": "多位分析师认为趋势与资金面偏强，但不建议追高。",
+                "agents_results": {
+                    "technical": {"agent_name": "技术分析师", "summary": "趋势向上，均线多头。"},
+                    "fundamental": {"agent_name": "基本面分析师", "summary": "基本面稳定，估值仍可接受。"},
+                },
             "historical_data": [
                 {"date": "2026-04-11", "close": 1430.0},
                 {"date": "2026-04-12", "close": 1453.96},
@@ -245,20 +247,41 @@ def test_workbench_analysis_actions_return_real_analysis(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "技术面偏强，但不宜追高。")
 
-    client = TestClient(create_app(context=context))
-
-    single = client.post(
-        "/api/ui/workbench/actions/analysis",
-        json={"stockCode": "600519", "analysts": ["technical", "fundamental"], "cycle": "1y", "mode": "单个分析"},
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-1",
+        code="600519",
+        selected=["technical", "fundamental"],
+        cycle="1y",
+        mode="单个分析",
     )
-    assert single.status_code == 200
-    analysis = single.json()["analysis"]
+    analysis = context.get_workbench_analysis()
     assert analysis["symbol"] == "600519"
     assert "贵州茅台" in analysis["summaryTitle"]
-    assert "多位分析师" in analysis["summaryBody"]
+    assert "偏多看待" in analysis["summaryBody"]
     assert analysis["indicators"]
     assert "偏多" in analysis["decision"]
+    assert analysis["finalDecisionText"] == analysis["decision"]
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["title"] == "基本面分析师" for item in analysis["analystViews"])
+    insight_titles = {item["title"] for item in analysis["insights"]}
+    assert "操作建议" in insight_titles
+    assert "technical" not in insight_titles
+    assert "fundamental" not in insight_titles
 
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-2",
+        code="600519",
+        selected=[],
+        cycle="1y",
+        mode="单个分析",
+    )
+    fallback_analysis = context.get_workbench_analysis()
+    fallback_selected = [item["value"] for item in fallback_analysis["analysts"] if item.get("selected")]
+    assert fallback_selected == ["technical", "fundamental", "fund_flow", "risk"]
+
+    client = TestClient(create_app(context=context))
     batch = client.post(
         "/api/ui/workbench/actions/analysis-batch",
         json={"stockCodes": ["600519", "600519"], "analysts": ["technical"], "cycle": "1y", "mode": "批量分析"},
@@ -268,6 +291,659 @@ def test_workbench_analysis_actions_return_real_analysis(tmp_path, monkeypatch):
     assert batch_analysis["mode"] == "批量分析"
     assert "批量" in batch_analysis["summaryTitle"]
     assert "2" in batch_analysis["summaryBody"] or "两" in batch_analysis["summaryBody"]
+
+
+def test_workbench_analysis_masks_provider_failure_with_readable_fallback(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_single_stock_for_batch",
+        lambda symbol, period, enabled_analysts_config=None, selected_model=None, progress_callback=None: {
+            "success": True,
+            "symbol": symbol,
+            "stock_info": {"name": "沪电股份", "current_price": 89.99},
+            "indicators": {"RSI": 71.32, "MA20": 82.99, "量比": 1.22, "MACD": 2.118},
+            "final_decision": {"decision_text": "API调用失败: Authentication Fails (governor)"},
+            "discussion_result": "API调用失败: Authentication Fails (governor)",
+            "agents_results": {
+                "technical": {"agent_name": "技术分析师", "analysis": "API调用失败: Authentication Fails (governor)"},
+            },
+            "historical_data": [
+                {"date": "2026-04-11", "close": 87.5},
+                {"date": "2026-04-12", "close": 89.99},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_explanations",
+        lambda indicators, current_price=None: [
+            {"label": "RSI", "value": "71.32"},
+            {"label": "MA20", "value": "82.99"},
+        ],
+    )
+    monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "关键指标显示短线偏强，但需要警惕追高风险。")
+
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-1",
+        code="002463",
+        selected=[],
+        cycle="1y",
+        mode="单个分析",
+    )
+    analysis = context.get_workbench_analysis()
+    assert "Authentication Fails" not in analysis["decision"]
+    assert "API调用失败" not in analysis["decision"]
+    assert "Authentication Fails" not in analysis["summaryBody"]
+    assert any(item["title"] == "模型状态" for item in analysis["insights"])
+    assert any("关键指标" in item["body"] for item in analysis["insights"])
+    assert "团队观点" not in analysis["decision"]
+    assert analysis["finalDecisionText"] == analysis["decision"]
+    analyst_insight = next((item for item in analysis["insights"] if item["title"] == "分析师观点"), None)
+    assert analyst_insight is not None
+    assert "暂不可用" in analyst_insight["body"]
+    assert "技术分析师" in analyst_insight["body"]
+    assert analysis["analystViews"] == []
+    model_state = next((item for item in analysis["insights"] if item["title"] == "模型状态"), None)
+    assert model_state is not None
+    assert "鉴权" in model_state["body"]
+
+
+def test_workbench_analysis_action_returns_job_immediately_and_completes_in_background(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+    context.watchlist().add_manual_stock("002463")
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_analyze(symbol, period, enabled_analysts_config=None, selected_model=None, progress_callback=None):
+        started.set()
+        if progress_callback:
+            progress_callback("fetch", "正在获取行情与财务数据")
+        release.wait(timeout=5)
+        if progress_callback:
+            progress_callback("decision", "正在生成最终决策")
+        return {
+            "success": True,
+            "symbol": symbol,
+            "stock_info": {"name": "沪电股份", "current_price": 89.99},
+            "indicators": {"RSI": 71.32, "MA20": 82.99, "量比": 1.22, "MACD": 2.118},
+            "final_decision": {"decision_text": "建议继续观察，等待更舒适的参与位置。", "reasoning": "趋势仍在，但更适合等待回踩。"},
+            "discussion_result": {"summary": "团队判断趋势仍在，但不建议追高。"},
+            "agents_results": {
+                "technical": {"agent_name": "技术分析师", "summary": "趋势向上，但不适合追高。"},
+            },
+            "historical_data": [
+                {"date": "2026-04-11", "close": 87.5},
+                {"date": "2026-04-12", "close": 89.99},
+            ],
+        }
+
+    monkeypatch.setattr(app_module, "analyze_single_stock_for_batch", fake_analyze)
+    monkeypatch.setattr(app_module, "build_indicator_explanations", lambda indicators, current_price=None: [{"label": "RSI", "value": "71.32"}])
+    monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "关键指标显示趋势仍在，但不适合追高。")
+
+    client = TestClient(create_app(context=context))
+
+    start = time.monotonic()
+    response = client.post("/api/ui/workbench/actions/analysis", json={"stockCode": "002463"})
+    elapsed = time.monotonic() - start
+
+    assert response.status_code == 200
+    snapshot = response.json()
+    assert elapsed < 1.0
+    assert snapshot["analysisJob"]["status"] in {"queued", "running"}
+    assert snapshot["analysisJob"]["stage"] in {"queued", "fetch"}
+    assert snapshot["analysisJob"]["symbol"] == "002463"
+    assert started.wait(timeout=1)
+
+    running = client.get("/api/ui/workbench")
+    assert running.status_code == 200
+    assert running.json()["analysisJob"]["status"] in {"queued", "running"}
+    assert running.json()["analysisJob"]["stage"] in {"fetch", "decision", "running", "queued"}
+
+    release.set()
+    completed_snapshot = None
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        current = client.get("/api/ui/workbench")
+        assert current.status_code == 200
+        payload = current.json()
+        if payload.get("analysisJob", {}).get("status") == "completed":
+            completed_snapshot = payload
+            break
+        time.sleep(0.05)
+
+    assert completed_snapshot is not None
+    assert completed_snapshot["analysis"]["symbol"] == "002463"
+    assert "沪电股份" in completed_snapshot["analysis"]["summaryTitle"]
+    assert completed_snapshot["analysisJob"]["stage"] == "completed"
+    assert completed_snapshot["analysisJob"]["progress"] == 100
+
+
+def test_workbench_analysis_condenses_raw_markdown_into_readable_summaries(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_single_stock_for_batch",
+        lambda symbol, period, enabled_analysts_config=None, selected_model=None, progress_callback=None: {
+            "success": True,
+            "symbol": symbol,
+            "stock_info": {"name": "沪电股份", "current_price": 89.99},
+            "indicators": {"RSI": 71.32, "MA20": 82.99, "量比": 1.22, "MACD": 2.118},
+            "final_decision": {"decision_text": "建议继续观察，等待更舒适的参与位置。"},
+            "discussion_result": (
+                "***投资决策团队会议纪要（模拟对话）***\n"
+                "### 会议主持人\n"
+                "今天围绕 002463 做综合讨论。技术面偏强，但短线略热；资金面显示主力仍在，但也存在高位换手。"
+                "综合来看，不建议追高，更适合等待回踩确认。"
+            ),
+            "agents_results": {
+                "fundamental": {
+                    "agent_name": "基本面分析师",
+                    "analysis": (
+                        "### 基本面分析师\n"
+                        "**公司很好，但价格未必便宜。** 从近 8 期财务数据看，收入和利润持续上行，研发投入持续提升，"
+                        "财务结构健康，ROE 和 ROA 也处于较好水平。问题在于，市场已经提前交易高增长预期，"
+                        "因此更适合把它理解为好公司，而不是低位捡漏标的。"
+                    ),
+                },
+                "fund_flow": {
+                    "agent_name": "资金面分析师",
+                    "analysis": (
+                        "### 资金面分析师\n"
+                        "**主力资金仍在推动，但过程并不舒服。** 近期净流入并非持续匀速，而是大额流入与明显流出交替出现，"
+                        "说明高位分歧较大。若后续继续放量创新高但主力净流出增加，就要提高警惕。"
+                    ),
+                },
+                "risk": {
+                    "agent_name": "风险管理师",
+                    "analysis": (
+                        "如果你愿意，我可以进一步把仓位、止损和分批止盈计划拆给你。"
+                        " 当前核心风险不是公司本身，而是位置偏热、追高容易被动。"
+                    ),
+                },
+            },
+            "historical_data": [
+                {"date": "2026-04-11", "close": 87.5},
+                {"date": "2026-04-12", "close": 89.99},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_explanations",
+        lambda indicators, current_price=None: [
+            {"label": "RSI", "value": "71.32"},
+            {"label": "MA20", "value": "82.99"},
+        ],
+    )
+    monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "关键指标显示短线偏强，但需要警惕追高风险。")
+
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-compact",
+        code="002463",
+        selected=["fundamental", "fund_flow"],
+        cycle="1y",
+        mode="单个分析",
+    )
+    analysis = context.get_workbench_analysis()
+    assert analysis is not None
+    assert "会议纪要" not in analysis["summaryBody"]
+    assert "###" not in analysis["summaryBody"]
+    assert len(analysis["summaryBody"]) < 120
+    fundamental = next((item for item in analysis["analystViews"] if item["title"] == "基本面分析师"), None)
+    assert fundamental is not None
+    assert "###" not in fundamental["body"]
+    assert "报告" not in fundamental["body"]
+    assert "以下分析" not in fundamental["body"]
+    assert "先说明" not in fundamental["body"]
+    assert len(fundamental["body"]) < 180
+    fund_flow = next((item for item in analysis["analystViews"] if item["title"] == "资金面分析师"), None)
+    assert fund_flow is not None
+    assert "###" not in fund_flow["body"]
+    assert "报告" not in fund_flow["body"]
+    assert "核心结论先看" not in fund_flow["body"]
+    assert "以下是基于" not in fund_flow["body"]
+    assert "我会重点围绕" not in fund_flow["body"]
+    assert len(fund_flow["body"]) < 180
+    risk = next((item for item in analysis["analystViews"] if item["title"] == "风险管理师"), None)
+    assert risk is not None
+    assert "如果你愿意" not in risk["body"]
+    assert "仓位" in risk["body"] or "止损" in risk["body"]
+    assert len(risk["body"]) < 180
+
+
+def test_workbench_analysis_maps_structured_final_decision_into_readable_decision(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_single_stock_for_batch",
+        lambda symbol, period, enabled_analysts_config=None, selected_model=None, progress_callback=None: {
+            "success": True,
+            "symbol": symbol,
+            "stock_info": {"name": "沪电股份", "current_price": 97.54},
+            "indicators": {"RSI": 71.32, "MA20": 82.99, "量比": 1.22, "MACD": 2.118},
+            "final_decision": {
+                "rating": "持有",
+                "target_price": "105.00",
+                "operation_advice": "当前位置不建议追高，已有仓位可继续持有，等待回踩后再考虑加仓。",
+                "position_size": "轻仓",
+                "risk_warning": "短线过热，注意高位震荡风险。",
+            },
+            "discussion_result": "技术面偏强，但短线过热，适合持有观察。",
+            "agents_results": {
+                "technical": {"agent_name": "技术分析师", "analysis": "趋势保持偏强，但不适合无条件追高。"},
+                "fundamental": {"agent_name": "基本面分析师", "analysis": "公司质地较好，但当前位置估值不算便宜。"},
+            },
+            "historical_data": [
+                {"date": "2026-04-11", "close": 87.5},
+                {"date": "2026-04-12", "close": 97.54},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_explanations",
+        lambda indicators, current_price=None: [
+            {"label": "RSI", "value": "71.32"},
+            {"label": "MA20", "value": "82.99"},
+        ],
+    )
+    monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "关键指标显示趋势偏强，但短线已经偏热。")
+
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-structured",
+        code="002463",
+        selected=["technical", "fundamental"],
+        cycle="1y",
+        mode="单个分析",
+    )
+    analysis = context.get_workbench_analysis()
+    assert analysis is not None
+    assert "综合决策暂不可用" not in analysis["decision"]
+    assert "持有" in analysis["decision"]
+    assert "轻仓" in analysis["decision"]
+    assert "不建议追高" in analysis["finalDecisionText"]
+    assert any(item["title"] == "操作建议" and "不建议追高" in item["body"] for item in analysis["insights"])
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["title"] == "基本面分析师" for item in analysis["analystViews"])
+
+
+def test_workbench_analysis_failure_preserves_prior_successful_cached_analysis(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="002463",
+        stock_name="沪电股份",
+        period="1y",
+        stock_info={"symbol": "002463", "name": "沪电股份", "current_price": 89.99},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "趋势仍在，但更适合等待回踩。"},
+            "fundamental": {"agent_name": "基本面分析师", "summary": "基本面稳定，估值不算便宜。"},
+        },
+        discussion_result="综合来看，当前更适合持有观察。",
+        final_decision={"decision_text": "建议继续跟踪，等待更舒适的参与位置。"},
+        indicators={"rsi": 71.32, "ma20": 82.99, "volume_ratio": 1.22, "macd": 2.118},
+        historical_data=[
+            {"date": "2026-04-11", "close": 87.5},
+            {"date": "2026-04-12", "close": 89.99},
+        ],
+    )
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_single_stock_for_batch",
+        lambda *args, **kwargs: {"success": False, "error": "API调用失败: Authentication Fails (governor)", "symbol": "002463"},
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_explanations",
+        lambda indicators, current_price=None: [
+            {"label": "RSI", "value": "71.32"},
+            {"label": "MA20", "value": "82.99"},
+            {"label": "量比", "value": "1.22"},
+            {"label": "MACD", "value": "2.118"},
+        ],
+    )
+    monkeypatch.setattr(app_module, "build_indicator_summary", lambda explanations: "关键指标显示短线偏强，但需要警惕追高风险。")
+
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-fail-preserve",
+        code="002463",
+        selected=["technical", "fundamental"],
+        cycle="1y",
+        mode="单个分析",
+    )
+
+    client = TestClient(create_app(context=context))
+    payload = client.get("/api/ui/workbench").json()
+    analysis = payload["analysis"]
+    assert analysis["symbol"] == "002463"
+    assert "综合决策暂不可用" not in analysis["decision"]
+    assert "建议继续跟踪" in analysis["decision"]
+    assert len(analysis["indicators"]) >= 4
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["title"] == "基本面分析师" for item in analysis["analystViews"])
+    assert payload["analysisJob"]["status"] == "failed"
+    assert "刷新失败" in payload["analysisJob"]["title"]
+    assert "已保留上一次成功分析" in payload["analysisJob"]["message"]
+
+
+def test_workbench_analysis_generates_readable_fallback_when_agent_views_exist(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+
+    monkeypatch.setattr(
+        app_module,
+        "analyze_single_stock_for_batch",
+        lambda *args, **kwargs: {
+            "success": True,
+            "symbol": "002463",
+            "stock_info": {"name": "沪电股份", "current_price": 89.99},
+            "indicators": {"RSI": 71.32, "MA20": 82.99, "量比": 1.22, "MACD": 2.118},
+            "final_decision": {},
+            "discussion_result": "",
+            "agents_results": {
+                "technical": {"agent_name": "技术分析师", "summary": "趋势偏强，但当前位置不适合追高，更适合等回踩后再看。"},
+                "fundamental": {"agent_name": "基本面分析师", "summary": "公司基本面稳定，但估值不算便宜，参与时要接受波动。"},
+            },
+            "historical_data": [
+                {"date": "2026-04-11", "close": 87.5},
+                {"date": "2026-04-12", "close": 89.99},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_explanations",
+        lambda indicators, current_price=None: {
+            "RSI": {"state": "偏热", "summary": "RSI 高于 70，短线偏热，继续追高要更谨慎。"},
+            "MA20": {"state": "强于中期趋势", "summary": "当前价高于 MA20，中期趋势仍偏强。"},
+            "量比": {"state": "正常成交", "summary": "量比接近 1，成交活跃度没有明显异常。"},
+            "MACD": {"state": "多头动能", "summary": "MACD 大于 0，价格动能偏强。"},
+        },
+    )
+    monkeypatch.setattr(
+        app_module,
+        "build_indicator_summary",
+        lambda explanations: "技术面偏强，但短线已经偏热，不适合无条件追高。",
+    )
+
+    gateway_api._run_single_workbench_analysis(
+        context,
+        "job-readable-fallback",
+        code="002463",
+        selected=["technical", "fundamental"],
+        cycle="1y",
+        mode="单个分析",
+    )
+
+    analysis = context.get_workbench_analysis()
+    assert analysis is not None
+    assert "综合决策暂不可用" not in analysis["decision"]
+    assert "更适合" in analysis["decision"] or "建议" in analysis["decision"]
+    assert any(item["title"] == "操作建议" for item in analysis["insights"])
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["title"] == "基本面分析师" for item in analysis["analystViews"])
+
+
+def test_workbench_stale_running_job_is_normalized_to_completed_when_analysis_exists(tmp_path):
+    context = _make_context(tmp_path)
+    context.set_workbench_analysis(
+        {
+            "symbol": "002463",
+            "analysts": gateway_api._analysis_options(),
+            "mode": "单个分析",
+            "cycle": "1y",
+            "inputHint": "例如 600519 / 300390 / AAPL",
+            "summaryTitle": "沪电股份 分析摘要",
+            "summaryBody": "当前处于强趋势但高波动阶段，建议先轻仓观察，不宜在当前位置追高。",
+            "indicators": [{"label": "RSI", "value": "71.32"}],
+            "decision": "当前评级：持有；建议仓位：轻仓；目标价：108.00。",
+            "finalDecisionText": "当前评级：持有；建议仓位：轻仓；目标价：108.00。",
+            "insights": [{"title": "操作建议", "body": "已有仓位可继续持有，等待回踩确认。"}],
+            "analystViews": [{"title": "技术分析师", "body": "趋势保持偏强，但当前位置不适合追高。"}],
+            "curve": [{"date": "2026-04-11", "close": 87.5}, {"date": "2026-04-12", "close": 97.54}],
+        }
+    )
+    context.set_workbench_analysis_job(
+        {
+            "id": "stale-job",
+            "status": "running",
+            "title": "分析进行中",
+            "message": "正在保存分析结果",
+            "symbol": "002463",
+            "startedAt": "2026-04-14 23:44:55",
+            "updatedAt": "2026-04-14 23:44:55",
+        }
+    )
+
+    client = TestClient(create_app(context=context))
+    payload = client.get("/api/ui/workbench").json()
+    assert payload["analysisJob"]["status"] == "completed"
+    assert "分析已完成" in payload["analysisJob"]["title"]
+
+    rerun = client.post("/api/ui/workbench/actions/analysis", json={"stockCode": "002463"})
+    assert rerun.status_code == 200
+    assert rerun.json()["analysisJob"]["status"] in {"queued", "running"}
+
+
+def test_hydrate_cached_workbench_analysis_keeps_generated_time_indicators_and_curve(tmp_path):
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="600519",
+        stock_name="贵州茅台",
+        period="1y",
+        stock_info={"symbol": "600519", "name": "贵州茅台", "current_price": 1453.96},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "趋势稳健，回踩后更适合继续跟踪。"},
+            "fundamental": {"agent_name": "基本面分析师", "summary": "盈利质量稳定，但估值不算便宜。"},
+        },
+        discussion_result="综合来看，适合继续跟踪，但当前位置不建议追高。",
+        final_decision={"decision_text": "建议继续跟踪，等待更好的买入时机。"},
+        indicators={"rsi": 53.79, "ma20": 1441.86, "volume_ratio": 1.13, "macd": 6.2792},
+        historical_data=[
+            {"date": "2026-04-11", "close": 1430.0},
+            {"date": "2026-04-12", "close": 1453.96},
+        ],
+    )
+
+    stock_name = gateway_api._hydrate_cached_workbench_analysis(
+        context,
+        code="600519",
+        selected=["technical", "fundamental"],
+        cycle="1y",
+        mode="单个分析",
+    )
+
+    analysis = context.get_workbench_analysis()
+    assert stock_name == "贵州茅台"
+    assert analysis["generatedAt"]
+    assert any(item["label"] == "RSI" and item["value"] != "--" for item in analysis["indicators"])
+    assert len(analysis["curve"]) == 2
+    assert "最近一次有效分析时间" not in analysis["summaryBody"]
+
+
+def test_hydrate_cached_workbench_analysis_backfills_legacy_records(tmp_path, monkeypatch):
+    import app.stock_analysis_service as app_module
+
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="002463",
+        stock_name="沪电股份",
+        period="1y",
+        stock_info={"symbol": "002463", "name": "沪电股份", "current_price": 89.99},
+        agents_results={"technical": {"agent_name": "技术分析师", "summary": "趋势偏强，但不建议追高。"}},
+        discussion_result="趋势偏强，但更适合等回踩。",
+        final_decision={"decision_text": "建议观察。"},
+    )
+
+    stock_data = pd.DataFrame(
+        [{"Close": 87.5}, {"Close": 89.99}],
+        index=pd.to_datetime(["2026-04-11", "2026-04-12"]),
+    )
+    indicators = {"rsi": 71.32, "ma20": 82.99, "volume_ratio": 1.22, "macd": 2.118}
+
+    monkeypatch.setattr(
+        app_module,
+        "get_stock_data",
+        lambda symbol, period: (
+            {"symbol": symbol, "name": "沪电股份", "current_price": 89.99},
+            stock_data,
+            indicators,
+        ),
+    )
+
+    gateway_api._hydrate_cached_workbench_analysis(
+        context,
+        code="002463",
+        selected=["technical"],
+        cycle="1y",
+        mode="单个分析",
+    )
+
+    analysis = context.get_workbench_analysis()
+    assert any(item["label"] == "RSI" and item["value"] != "--" for item in analysis["indicators"])
+    assert len(analysis["curve"]) == 2
+
+
+def test_workbench_snapshot_rebuilds_stale_in_memory_analysis_from_cached_record(tmp_path):
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="002463",
+        stock_name="沪电股份",
+        period="1y",
+        stock_info={"symbol": "002463", "name": "沪电股份", "current_price": 97.54},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "趋势仍偏强，但当前位置不建议追高。"},
+            "fundamental": {"agent_name": "基本面分析师", "summary": "公司基本面扎实，但当前估值不便宜。"},
+        },
+        discussion_result="整体更适合持有观察，不建议在当前位置盲目追高。",
+        final_decision={
+            "rating": "持有",
+            "position_size": "轻仓",
+            "target_price": "108.00",
+            "operation_advice": "当前不建议重仓追高，已有仓位可继续持有，等待回踩后再考虑加仓。",
+        },
+        indicators={"rsi": 71.32, "ma20": 82.99, "volume_ratio": 1.22, "macd": 2.118},
+        historical_data=[
+            {"date": "2026-04-11", "close": 87.5},
+            {"date": "2026-04-12", "close": 97.54},
+        ],
+    )
+    context.set_workbench_analysis(
+        {
+            "symbol": "002463",
+            "analysts": gateway_api._analysis_options(["technical", "fundamental"]),
+            "mode": "单个分析",
+            "cycle": "1y",
+            "inputHint": "例如 600519 / 300390 / AAPL",
+            "summaryTitle": "002463 分析摘要",
+            "summaryBody": "当前价较高，先观察。 最近一次有效分析时间：2026-04-15T07:58:44.770859。",
+            "indicators": [
+                {"label": "RSI", "value": "暂无数据"},
+                {"label": "MA20", "value": "暂无判断"},
+            ],
+            "decision": "暂无明确结论",
+            "finalDecisionText": "",
+            "insights": [{"title": "操作建议", "body": "当前先观察。"}],
+            "analystViews": [],
+            "curve": [],
+        }
+    )
+
+    snapshot = gateway_api._snapshot_workbench(context)
+    analysis = snapshot["analysis"]
+    assert analysis["generatedAt"]
+    assert "最近一次有效分析时间" not in analysis["summaryBody"]
+    assert "不建议重仓追高" in analysis["finalDecisionText"]
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["label"] == "RSI" and item["value"] != "暂无数据" for item in analysis["indicators"])
+    assert len(analysis["curve"]) == 2
+
+
+def test_workbench_snapshot_prefers_latest_complete_cached_record_over_newer_incomplete_one(tmp_path):
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="002463",
+        stock_name="沪电股份",
+        period="1y",
+        stock_info={"symbol": "002463", "name": "沪电股份", "current_price": 97.54},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "趋势仍偏强，但当前位置不建议追高。"},
+            "fundamental": {"agent_name": "基本面分析师", "summary": "公司基本面扎实，但当前估值不便宜。"},
+        },
+        discussion_result="整体更适合持有观察，不建议在当前位置盲目追高。",
+        final_decision={
+            "rating": "持有",
+            "position_size": "轻仓",
+            "target_price": "108.00",
+            "operation_advice": "当前不建议重仓追高，已有仓位可继续持有，等待回踩后再考虑加仓。",
+        },
+        indicators={"rsi": 71.32, "ma20": 82.99, "volume_ratio": 1.22, "macd": 2.118},
+        historical_data=[
+            {"date": "2026-04-11", "close": 87.5},
+            {"date": "2026-04-12", "close": 97.54},
+        ],
+    )
+    context.stock_analysis_db().save_analysis(
+        symbol="002463",
+        stock_name="沪电股份",
+        period="1y",
+        stock_info={"symbol": "002463", "name": "沪电股份", "current_price": 89.99},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "价格冲高后分歧加大。"},
+        },
+        discussion_result="团队讨论未形成完整结论。",
+        final_decision={"decision_text": "建议继续观察。"},
+    )
+    context.set_workbench_analysis(
+        {
+            "symbol": "002463",
+            "analysts": gateway_api._analysis_options(["technical", "fundamental"]),
+            "mode": "单个分析",
+            "cycle": "1y",
+            "inputHint": "例如 600519 / 300390 / AAPL",
+            "summaryTitle": "002463 分析摘要",
+            "summaryBody": "当前价较高，先观察。 最近一次有效分析时间：2026-04-15T08:12:46.151251。",
+            "indicators": [
+                {"label": "RSI", "value": "暂无数据"},
+                {"label": "MA20", "value": "暂无判断"},
+            ],
+            "decision": "暂无明确结论",
+            "finalDecisionText": "",
+            "insights": [{"title": "操作建议", "body": "当前先观察。"}],
+            "analystViews": [],
+            "curve": [],
+        }
+    )
+
+    snapshot = gateway_api._snapshot_workbench(context)
+    analysis = snapshot["analysis"]
+    assert analysis["generatedAt"]
+    assert "最近一次有效分析时间" not in analysis["summaryBody"]
+    assert "不建议重仓追高" in analysis["finalDecisionText"]
+    assert any(item["title"] == "技术分析师" for item in analysis["analystViews"])
+    assert any(item["title"] == "基本面分析师" for item in analysis["analystViews"])
+    assert any(item["label"] == "RSI" and item["value"] != "暂无数据" for item in analysis["indicators"])
+    assert len(analysis["curve"]) == 2
 
 
 def test_discover_snapshot_aggregates_selector_results(tmp_path):

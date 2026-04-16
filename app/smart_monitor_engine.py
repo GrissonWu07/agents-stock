@@ -38,7 +38,7 @@ class SmartMonitorEngine:
         
         # DeepSeek API
         if deepseek_api_key is None:
-            deepseek_api_key = config.get('DEEPSEEK_API_KEY', '')
+            deepseek_api_key = config.get('AI_API_KEY', '')
         
         # MiniQMT配置
         if qmt_account_id is None:
@@ -629,7 +629,7 @@ if __name__ == '__main__':
     
     # 使用模拟模式测试
     engine = SmartMonitorEngine(
-        deepseek_api_key=os.getenv('DEEPSEEK_API_KEY'),
+        deepseek_api_key=os.getenv('AI_API_KEY'),
         use_simulator=True
     )
     

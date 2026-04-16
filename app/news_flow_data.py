@@ -22,6 +22,12 @@ class NewsFlowDataFetcher:
         # self.base_url = "https://newsapi.ws4.cn/api/v1/dailynews/"
         self.base_url = "https://orz.ai/api/v1/dailynews/"
         self.timeout = 10
+        self.max_retries = 3
+        self.retry_delay = 0.8
+        self.request_headers = {
+            "User-Agent": "Mozilla/5.0 xuanwustock-news-flow",
+            "Accept": "application/json",
+        }
         
         # 支持的平台配置 - 扩展到22个平台
         self.platforms = {
@@ -94,60 +100,65 @@ class NewsFlowDataFetcher:
                 'error': str (如果失败)
             }
         """
-        try:
-            url = f"{self.base_url}?platform={platform}"
-            
-            logger.info(f"正在获取 {platform} 平台数据...")
-            response = requests.get(url, timeout=self.timeout)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if data.get('status') == '200':
-                news_list = data.get('data', [])
-                platform_info = self.platforms.get(platform, {})
-                
-                # 为每条新闻添加排名信息
-                for i, news in enumerate(news_list):
-                    news['rank'] = i + 1
-                    news['platform'] = platform
-                
+        url = f"{self.base_url}?platform={platform}"
+        platform_info = self.platforms.get(platform, {})
+        platform_name = platform_info.get("name", platform)
+
+        logger.info(f"正在获取 {platform} 平台数据...")
+        last_error = ""
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = requests.get(
+                    url,
+                    timeout=self.timeout,
+                    headers=self.request_headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("status") == "200":
+                    news_list = data.get("data", [])
+                    # 为每条新闻添加排名信息
+                    for i, news in enumerate(news_list):
+                        news["rank"] = i + 1
+                        news["platform"] = platform
+
+                    return {
+                        "success": True,
+                        "platform": platform,
+                        "platform_name": platform_name,
+                        "category": platform_info.get("category", "other"),
+                        "weight": platform_info.get("weight", 5),
+                        "influence": platform_info.get("influence", "medium"),
+                        "data": news_list,
+                        "count": len(news_list),
+                        "fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+
                 return {
-                    'success': True,
-                    'platform': platform,
-                    'platform_name': platform_info.get('name', platform),
-                    'category': platform_info.get('category', 'other'),
-                    'weight': platform_info.get('weight', 5),
-                    'influence': platform_info.get('influence', 'medium'),
-                    'data': news_list,
-                    'count': len(news_list),
-                    'fetch_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "success": False,
+                    "platform": platform,
+                    "error": f"API返回错误: {data.get('msg', '未知错误')}",
                 }
-            else:
-                return {
-                    'success': False,
-                    'platform': platform,
-                    'error': f"API返回错误: {data.get('msg', '未知错误')}"
-                }
-                
-        except requests.exceptions.Timeout:
-            return {
-                'success': False,
-                'platform': platform,
-                'error': f"请求超时（{self.timeout}秒）"
-            }
-        except requests.exceptions.ConnectionError:
-            return {
-                'success': False,
-                'platform': platform,
-                'error': "网络连接失败"
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'platform': platform,
-                'error': f"获取数据失败: {str(e)}"
-            }
+
+            except requests.exceptions.Timeout as exc:
+                last_error = f"请求超时（{self.timeout}秒），第 {attempt}/{self.max_retries} 次"
+            except requests.exceptions.ConnectionError as exc:
+                last_error = f"网络连接失败（第 {attempt}/{self.max_retries} 次）：{str(exc)}"
+            except requests.exceptions.RequestException as exc:
+                # 包含 status 非200、解析异常、连接等问题
+                last_error = f"请求异常（第 {attempt}/{self.max_retries} 次）：{str(exc)}"
+
+            if attempt < self.max_retries:
+                logger.warning("平台%s获取失败，准备重试：%s", platform, last_error)
+                time.sleep(self.retry_delay * attempt)
+
+        return {
+            "success": False,
+            "platform": platform,
+            "error": last_error or "未知错误",
+        }
     
     def get_multi_platform_news(self, platforms: List[str] = None, 
                                  category: str = None) -> Dict:

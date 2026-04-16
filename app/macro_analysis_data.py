@@ -13,7 +13,7 @@ import urllib3
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-import akshare as ak
+from app.akshare_client import ak
 import pandas as pd
 import requests
 
@@ -287,6 +287,8 @@ class MacroAnalysisDataFetcher:
                 level=logging.INFO,
                 format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
             )
+        self.ak_retry_attempts = 3
+        self.ak_retry_delay = 0.8
 
     def fetch_all_data(self) -> Dict[str, Any]:
         """获取完整宏观分析所需数据"""
@@ -349,6 +351,23 @@ class MacroAnalysisDataFetcher:
         if data.get("returncode") != 200:
             raise ValueError(data.get("returndata", "统计局接口返回异常"))
         return data["returndata"]
+
+    def _call_with_retries(self, label: str, code: str, func, **kwargs):
+        for attempt in range(1, self.ak_retry_attempts + 1):
+            try:
+                return func(**kwargs)
+            except Exception as exc:
+                if attempt >= self.ak_retry_attempts:
+                    raise
+                self.logger.warning(
+                    "%s失败（%s/%s）股票=%s，重试中：%s",
+                    label,
+                    attempt,
+                    self.ak_retry_attempts,
+                    code,
+                    exc,
+                )
+                time.sleep(self.ak_retry_delay * attempt)
 
     def _fetch_nbs_series(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         params = {
@@ -711,7 +730,12 @@ class MacroAnalysisDataFetcher:
     ) -> Optional[Dict[str, Any]]:
         info_map = {}
         try:
-            info_df = ak.stock_individual_info_em(symbol=code)
+            info_df = self._call_with_retries(
+                "获取个股静态信息",
+                code,
+                ak.stock_individual_info_em,
+                symbol=code,
+            )
             if info_df is not None and not info_df.empty:
                 info_map = {
                     str(row["item"]).strip(): str(row["value"]).strip()
@@ -723,7 +747,10 @@ class MacroAnalysisDataFetcher:
         try:
             start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
             end_date = datetime.now().strftime("%Y%m%d")
-            hist_df = ak.stock_zh_a_hist(
+            hist_df = self._call_with_retries(
+                "获取候选股历史数据",
+                code,
+                ak.stock_zh_a_hist,
                 symbol=code,
                 period="daily",
                 start_date=start_date,

@@ -6,7 +6,7 @@
 """
 
 import pandas as pd
-import akshare as ak
+from app.akshare_client import ak
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import logging

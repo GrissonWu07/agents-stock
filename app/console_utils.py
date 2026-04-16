@@ -23,13 +23,22 @@ def safe_print(*args, sep=" ", end="\n", file=None, flush=False):
 
     try:
         ORIGINAL_PRINT(*args, sep=sep, end=end, file=target, flush=flush)
-    except UnicodeEncodeError:
+        return
+    except (UnicodeEncodeError, ValueError, OSError):
         encoding = getattr(target, "encoding", None) or "utf-8"
         text = sep.join(str(arg) for arg in args)
         sanitized = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-        target.write(sanitized + end)
-        if flush and hasattr(target, "flush"):
-            target.flush()
+        fallback_targets = [target, getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None)]
+        for candidate in fallback_targets:
+            if candidate is None:
+                continue
+            try:
+                candidate.write(sanitized + end)
+                if flush and hasattr(candidate, "flush"):
+                    candidate.flush()
+                return
+            except (UnicodeEncodeError, ValueError, OSError):
+                continue
 
 
 def install_safe_print():

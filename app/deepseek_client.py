@@ -5,19 +5,47 @@ import app.config as config
 
 class DeepSeekClient:
     """DeepSeek API客户端"""
-    
+
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
-        self.client = openai.OpenAI(
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL
-        )
-        
+        self.client = None
+        self._init_error: str | None = None
+        if not config.AI_API_KEY:
+            self._init_error = "API调用失败: 模型未配置（请在设置页配置 AI_API_KEY）"
+            return
+        try:
+            self.client = openai.OpenAI(
+                api_key=config.AI_API_KEY,
+                base_url=config.AI_API_BASE_URL,
+                timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
+                max_retries=1,
+            )
+        except Exception as exc:
+            self._init_error = self._format_api_error(str(exc))
+
+    @staticmethod
+    def _format_api_error(message: str) -> str:
+        normalized = message.lower()
+        if "timeout" in normalized or "timed out" in normalized:
+            return f"API调用失败: 模型请求超时（>{config.MODEL_REQUEST_TIMEOUT_SECONDS}s）"
+        if "authentication fails" in normalized or "governor" in normalized or "invalid api key" in normalized or "invalid_api_key" in normalized:
+            return "API调用失败: 模型服务鉴权失败（请检查 API key 与模型权限）"
+        if "quota exceeded" in normalized or "rate limit" in normalized:
+            return "API调用失败: 模型服务额度不足或触发限流"
+        if "model" in normalized and "not found" in normalized:
+            return "API调用失败: 模型名称不可用，请检查 DEFAULT_MODEL_NAME"
+        return f"API调用失败: {message}"
+
     def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
                  temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """调用DeepSeek API"""
+        if self._init_error:
+            return self._init_error
+        if self.client is None:
+            return "API调用失败: 模型客户端未初始化"
         # 使用实例的模型，如果没有传入则使用默认模型
         model_to_use = model or self.model
+        model_to_use = self._normalize_model_name(model_to_use)
         
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
@@ -28,7 +56,8 @@ class DeepSeekClient:
                 model=model_to_use,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
             )
             
             # 处理 reasoner 模型的响应
@@ -49,7 +78,41 @@ class DeepSeekClient:
             return result if result else "API返回空响应"
             
         except Exception as e:
-            return f"API调用失败: {str(e)}"
+            # 兼容 openrouter 某些短模型名返回 "ambiguous" 时的兜底重试
+            if (
+                model_to_use
+                and "ambiguous" in str(e).lower()
+                and "deepseek-chat" in str(e).lower()
+                and ("deepseek/deepseek-chat" not in model_to_use.lower())
+            ):
+                try:
+                    fallback_model = config.normalize_model_name("deepseek-chat")
+                    if fallback_model != model_to_use:
+                        response = self.client.chat.completions.create(
+                            model=fallback_model,
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
+                        )
+                        message = response.choices[0].message
+                        result = ""
+
+                        # 检查是否有推理内容
+                        if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                            result = f"【推理过程】\n{message.reasoning_content}\n\n"
+
+                        # 添加最终内容
+                        if message.content:
+                            result += message.content
+
+                        return result if result else "API返回空响应"
+                except Exception:
+                    pass
+            return self._format_api_error(str(e))
+
+    def _normalize_model_name(self, model_name: str) -> str:
+        return config.normalize_model_name(model_name)
     
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
@@ -441,7 +504,7 @@ class DeepSeekClient:
             {"role": "user", "content": prompt}
         ]
         
-        response = self.call_api(messages, temperature=0.3, max_tokens=4000)
+        response = self.call_api(messages, temperature=0.3, max_tokens=1800)
         
         try:
             # 尝试解析JSON响应

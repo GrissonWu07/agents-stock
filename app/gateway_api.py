@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import re
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -103,6 +105,12 @@ def _txt(value: Any, default: str = "") -> str:
     return text if text else default
 
 
+def _dict_value(obj: Any, key: str, default: Any = None) -> Any:
+    if not isinstance(obj, dict):
+        return default
+    return obj.get(key, default)
+
+
 def _num(value: Any, digits: int = 2, default: str = "0.00") -> str:
     try:
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -163,6 +171,10 @@ def _snippet(value: Any, limit: int = 80, default: str = "") -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip(" ,;；。.") + "…"
+
+
+RESEARCH_MARKDOWN_TEXT_LIMIT = 2000
+RESEARCH_MODULE_TIMEOUT_SECONDS = 90
 
 
 def _looks_like_stock_code(value: Any) -> bool:
@@ -624,7 +636,7 @@ def _research_stock_rows(
 def _research_market_views_from_module(name: str, text: str, tone: str = "neutral") -> list[dict[str, Any]]:
     if not text:
         return []
-    return [_insight(name, _snippet(text, 120), tone)]
+    return [_insight(name, _snippet(text, RESEARCH_MARKDOWN_TEXT_LIMIT), tone)]
 
 
 def _normalize_research_module_selection(payload: dict[str, Any]) -> list[str]:
@@ -684,7 +696,10 @@ def _run_research_module_sector(context: "UIApiContext") -> dict[str, Any]:
     fetcher = _research_cls("SectorStrategyDataFetcher")()
     data = fetcher.get_cached_data_with_fallback()
     if not data.get("success"):
-        note = _snippet(data.get("cache_warning") or data.get("message") or data.get("error") or "板块数据获取失败")
+        note = _snippet(
+            data.get("cache_warning") or data.get("message") or data.get("error") or "板块数据获取失败",
+            RESEARCH_MARKDOWN_TEXT_LIMIT,
+        )
         return {
             "name": "智策板块",
             "note": note,
@@ -698,7 +713,10 @@ def _run_research_module_sector(context: "UIApiContext") -> dict[str, Any]:
     bullish = final_predictions.get("long_short", {}).get("bullish", []) if isinstance(final_predictions, dict) else []
     bearish = final_predictions.get("long_short", {}).get("bearish", []) if isinstance(final_predictions, dict) else []
     chief_text = result.get("agents_analysis", {}).get("chief", {}).get("analysis", "") if isinstance(result, dict) else ""
-    note = _snippet(result.get("comprehensive_report") or final_predictions.get("summary") or chief_text or "板块策略已完成")
+    note = _snippet(
+        result.get("comprehensive_report") or final_predictions.get("summary") or chief_text or "板块策略已完成",
+        RESEARCH_MARKDOWN_TEXT_LIMIT,
+    )
     output = f"看多 {len(bullish)} / 看空 {len(bearish)}"
     market_view = _research_market_views_from_module("智策板块", note, "neutral")
     return {
@@ -714,8 +732,10 @@ def _run_research_module_longhubang(context: "UIApiContext") -> dict[str, Any]:
     result = _research_cls("LonghubangEngine")().run_comprehensive_analysis(days=1)
     stocks = _research_stock_rows(result.get("recommended_stocks", []), "智瞰龙虎", context)
     chief_text = result.get("agents_analysis", {}).get("chief", {}).get("analysis", "") if isinstance(result, dict) else ""
-    note = _snippet(chief_text or result.get("final_report", {}).get("summary", "") or "龙虎榜分析已完成")
-    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 20, "分析完成")
+    note = _snippet(
+        chief_text or result.get("final_report", {}).get("summary", "") or "龙虎榜分析已完成", RESEARCH_MARKDOWN_TEXT_LIMIT
+    )
+    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 120, "分析完成")
     return {
         "name": "智瞰龙虎",
         "note": note,
@@ -735,14 +755,15 @@ def _run_research_module_news(context: "UIApiContext") -> dict[str, Any]:
         advice.get("summary")
         or advice.get("advice")
         or result.get("trading_signals", {}).get("operation_advice")
-        or "新闻流量分析已完成"
+        or "新闻流量分析已完成",
+        RESEARCH_MARKDOWN_TEXT_LIMIT,
     )
     market_view: list[dict[str, Any]] = []
     if advice.get("advice"):
-        market_view.append(_insight("新闻流量", _snippet(advice.get("summary") or advice.get("advice"), 120), "accent"))
+        market_view.append(_insight("新闻流量", _snippet(advice.get("summary") or advice.get("advice"), RESEARCH_MARKDOWN_TEXT_LIMIT), "accent"))
     if result.get("trading_signals", {}).get("operation_advice"):
-        market_view.append(_insight("交易信号", _snippet(result.get("trading_signals", {}).get("operation_advice"), 120), "warning"))
-    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 20, "分析完成")
+        market_view.append(_insight("交易信号", _snippet(result.get("trading_signals", {}).get("operation_advice"), RESEARCH_MARKDOWN_TEXT_LIMIT), "warning"))
+    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 120, "分析完成")
     return {
         "name": "新闻流量",
         "note": note,
@@ -757,13 +778,16 @@ def _run_research_module_macro(context: "UIApiContext") -> dict[str, Any]:
     stocks = _research_stock_rows(result.get("candidate_stocks", []), "宏观分析", context)
     chief = result.get("agents_analysis", {}).get("chief", {}) if isinstance(result, dict) else {}
     sector_view = result.get("sector_view", {}) if isinstance(result, dict) else {}
-    note = _snippet(chief.get("analysis") or sector_view.get("market_view") or "宏观分析已完成")
+    note = _snippet(
+        chief.get("analysis") or sector_view.get("market_view") or "宏观分析已完成",
+        RESEARCH_MARKDOWN_TEXT_LIMIT,
+    )
     market_view: list[dict[str, Any]] = []
     if chief.get("analysis"):
-        market_view.append(_insight("宏观分析", _snippet(chief.get("analysis"), 120), "neutral"))
+        market_view.append(_insight("宏观分析", _snippet(chief.get("analysis"), RESEARCH_MARKDOWN_TEXT_LIMIT), "neutral"))
     if sector_view.get("market_view"):
-        market_view.append(_insight("行业映射", _snippet(sector_view.get("market_view"), 120), "accent"))
-    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 20, "分析完成")
+        market_view.append(_insight("行业映射", _snippet(sector_view.get("market_view"), RESEARCH_MARKDOWN_TEXT_LIMIT), "accent"))
+    output = f"股票输出 {len(stocks)} 只" if stocks else _snippet(note, 120, "分析完成")
     return {
         "name": "宏观分析",
         "note": note,
@@ -776,14 +800,17 @@ def _run_research_module_macro(context: "UIApiContext") -> dict[str, Any]:
 def _run_research_module_cycle(context: "UIApiContext") -> dict[str, Any]:
     result = _research_cls("MacroCycleEngine")().run_full_analysis(progress_callback=None)
     chief = result.get("agents_analysis", {}).get("chief", {}) if isinstance(result, dict) else {}
-    note = _snippet(chief.get("analysis") or result.get("formatted_data") or "宏观周期分析已完成")
+    note = _snippet(
+        chief.get("analysis") or result.get("formatted_data") or "宏观周期分析已完成",
+        RESEARCH_MARKDOWN_TEXT_LIMIT,
+    )
     market_view: list[dict[str, Any]] = []
     if chief.get("analysis"):
-        market_view.append(_insight("宏观周期", _snippet(chief.get("analysis"), 120), "neutral"))
+        market_view.append(_insight("宏观周期", _snippet(chief.get("analysis"), RESEARCH_MARKDOWN_TEXT_LIMIT), "neutral"))
     return {
         "name": "宏观周期",
         "note": note,
-        "output": _snippet(note, 20, "分析完成"),
+        "output": _snippet(note, 120, "分析完成"),
         "rows": [],
         "marketView": market_view,
     }
@@ -805,15 +832,74 @@ def _run_research_modules(context: "UIApiContext", payload: dict[str, Any] | Non
     market_view: list[dict[str, Any]] = []
     failures: list[str] = []
 
-    for module_key, runner in module_runners:
-        if module_key not in selected_modules:
+    selected_runners = [(module_key, runner) for module_key, runner in module_runners if module_key in selected_modules]
+    if not selected_runners:
+        selected_runners = module_runners[:]
+
+    module_results_cache: dict[str, dict[str, Any]] = {}
+    module_errors: dict[str, BaseException] = {}
+    module_threads: dict[str, threading.Thread] = {}
+
+    def worker(module_key: str, runner: Callable[["UIApiContext"], dict[str, Any]]) -> None:
+        try:
+            module_results_cache[module_key] = runner(context)
+        except BaseException as exc:  # pragma: no cover - defensive for plugin exceptions
+            module_errors[module_key] = exc
+
+    for module_key, runner in selected_runners:
+        thread = threading.Thread(target=worker, args=(module_key, runner), name=f"research-module-{module_key}")
+        thread.daemon = True
+        thread.start()
+        module_threads[module_key] = thread
+
+    deadline = time.time() + RESEARCH_MODULE_TIMEOUT_SECONDS
+    for module_key in module_threads:
+        thread = module_threads[module_key]
+        remaining = deadline - time.time()
+        if remaining > 0:
+            thread.join(timeout=remaining)
+
+    for module_key in module_threads:
+        thread = module_threads[module_key]
+        if thread.is_alive():
+            failures.append(f"{module_key}: {module_key} 分析超时（{RESEARCH_MODULE_TIMEOUT_SECONDS} 秒）")
+            module_results.append(
+                {
+                    "name": module_key,
+                    "note": _snippet(f"{module_key} 分析超时（{RESEARCH_MODULE_TIMEOUT_SECONDS} 秒）", 80, "分析失败"),
+                    "output": "分析失败",
+                }
+            )
+            continue
+        if module_key in module_errors:
+            failures.append(f"{module_key}: {module_errors[module_key]}")
+            module_results.append(
+                {
+                    "name": module_key,
+                    "note": _snippet(str(module_errors[module_key]), 80, "分析失败"),
+                    "output": "分析失败",
+                }
+            )
+            continue
+        result = module_results_cache.get(module_key)
+        if not isinstance(result, dict):
+            failures.append(f"{module_key}: 分析返回为空或格式异常")
+            module_results.append(
+                {
+                    "name": module_key,
+                    "note": _snippet("模块结果为空", 80, "分析失败"),
+                    "output": "分析失败",
+                }
+            )
             continue
         try:
-            result = runner(context)
             module_results.append(
                 {
                     "name": _txt(result.get("name"), module_key),
-                    "note": _snippet(result.get("note") or result.get("output") or "分析已完成"),
+                    "note": _snippet(
+                        result.get("note") or result.get("output") or "分析已完成",
+                        RESEARCH_MARKDOWN_TEXT_LIMIT,
+                    ),
                     "output": _snippet(result.get("output") or "分析完成", 24),
                 }
             )
@@ -1029,17 +1115,66 @@ def _analysis_config(selected_values: list[str] | None) -> dict[str, bool]:
     }
 
 
+def _analysis_agent_title(agent_key: str) -> str:
+    mapping = {
+        "technical": "技术分析师",
+        "fundamental": "基本面分析师",
+        "fund_flow": "资金面分析师",
+        "risk_management": "风险管理师",
+        "market_sentiment": "市场情绪分析师",
+        "news": "新闻分析师",
+        "risk": "风险管理师",
+        "sentiment": "市场情绪分析师",
+    }
+    return mapping.get(agent_key, f"{agent_key}分析师")
+
+
+def _indicator_value(indicators: dict[str, Any], aliases: list[str]) -> Any:
+    for alias in aliases:
+        if alias in indicators:
+            return indicators.get(alias)
+    lowered = {str(key).lower(): value for key, value in indicators.items()}
+    for alias in aliases:
+        alias_lower = str(alias).lower()
+        if alias_lower in lowered:
+            return lowered.get(alias_lower)
+    return None
+
+
 def _format_indicator_cards(indicators: dict[str, Any] | None, explanations: Any) -> list[dict[str, str]]:
     if isinstance(explanations, list):
         return [{"label": _txt(item.get("label")), "value": _txt(item.get("value"))} for item in explanations if isinstance(item, dict)]
     cards: list[dict[str, str]] = []
     indicators = indicators or {}
     explanation_map = explanations if isinstance(explanations, dict) else {}
-    for label, source_key in [("RSI", "rsi"), ("MA20", "ma20"), ("量比", "volume_ratio"), ("MACD", "macd")]:
-        value = indicators.get(source_key)
-        if value is None and label in explanation_map:
-            value = explanation_map[label].get("state") or explanation_map[label].get("summary")
-        cards.append({"label": label, "value": _txt(_num(value, 2) if isinstance(value, (int, float)) else value, "--")})
+    specs = [
+        ("现价", ["price", "close", "Close"], "当前最新成交价，用于判断趋势位置与止盈止损空间。"),
+        ("MA5", ["ma5", "MA5"], "5日均线，反映短线节奏。"),
+        ("MA10", ["ma10", "MA10"], "10日均线，反映短中线过渡趋势。"),
+        ("MA20", ["ma20", "MA20"], "20日均线，常用作中期强弱分界。"),
+        ("MA60", ["ma60", "MA60"], "60日均线，反映中长期趋势方向。"),
+        ("RSI", ["rsi", "RSI"], "相对强弱指标，判断是否偏热或偏冷。"),
+        ("MACD", ["macd", "MACD"], "趋势动能指标，正值偏多、负值偏空。"),
+        ("信号线", ["macd_signal", "MACD_signal"], "MACD信号线，用于观察动能拐点。"),
+        ("布林上轨", ["bb_upper", "BB_upper"], "价格波动上沿，靠近上轨通常波动加大。"),
+        ("布林下轨", ["bb_lower", "BB_lower"], "价格波动下沿，跌近下轨需结合成交量判断。"),
+        ("K值", ["k_value", "K"], "KDJ快线，反映短周期价格敏感变化。"),
+        ("D值", ["d_value", "D"], "KDJ慢线，和K值交叉可辅助判断转折。"),
+        ("量比", ["volume_ratio", "Volume_ratio"], "当前成交活跃度，相对历史均量的强弱。"),
+    ]
+    for label, aliases, fallback_hint in specs:
+        value = _indicator_value(indicators, aliases)
+        detail = explanation_map.get(label) if isinstance(explanation_map.get(label), dict) else None
+        if value is None and detail:
+            value = detail.get("state") or detail.get("summary")
+        hint = _txt(detail.get("summary")) if detail else fallback_hint
+        cards.append(
+            {
+                "label": label,
+                "value": _txt(_num(value, 2) if isinstance(value, (int, float)) else value, "--"),
+                "hint": _txt(hint, fallback_hint),
+            }
+        )
     return cards
 
 
@@ -1057,6 +1192,86 @@ def _analysis_curve(points: list[dict[str, Any]] | None) -> list[dict[str, Any]]
     return curve
 
 
+def _build_workbench_analysis_payload(
+    *,
+    code: str,
+    stock_name: str,
+    selected: list[str] | None,
+    mode: str,
+    cycle: str,
+    generated_at: str,
+    stock_info: dict[str, Any],
+    indicators: dict[str, Any],
+    discussion_result: Any,
+    final_decision: dict[str, Any],
+    agents_results: dict[str, Any],
+    historical_data: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    indicator_explanations = stock_analysis_service.build_indicator_explanations(
+        indicators,
+        current_price=stock_info.get("current_price"),
+    )
+    summary_body = _txt(_dict_value(discussion_result, "summary")) or _txt(discussion_result)
+    if not summary_body:
+        summary_body = _txt(stock_analysis_service.build_indicator_summary(indicator_explanations), "分析完成。")
+    summary_body = _snippet(summary_body, 1200, "分析完成。")
+
+    analyst_views: list[dict[str, Any]] = []
+    insights: list[dict[str, Any]] = []
+    decision_rating = _txt(
+        _first_non_empty(final_decision, ["decision", "rating", "verdict"]),
+        "暂无明确结论",
+    )
+    operation_advice = _txt(_dict_value(final_decision, "operation_advice"))
+    final_reasoning = _txt(_dict_value(final_decision, "reasoning")) or operation_advice or _txt(_dict_value(final_decision, "decision_text"))
+    if final_reasoning:
+        insights.append(_insight("操作建议", _snippet(final_reasoning, 500), "accent"))
+    risk_warning = _txt(_dict_value(final_decision, "risk_warning"))
+    if risk_warning:
+        insights.append(_insight("风险提示", _snippet(risk_warning, 400), "warning"))
+    decision_detail_lines = [f"- 投资评级：{decision_rating}"]
+    detail_fields = [
+        ("目标价位", "target_price"),
+        ("进场区间", "entry_range"),
+        ("止盈位置", "take_profit"),
+        ("止损位置", "stop_loss"),
+        ("持有周期", "holding_period"),
+        ("仓位建议", "position_size"),
+        ("信心度", "confidence_level"),
+    ]
+    for label, key in detail_fields:
+        value = _txt(_dict_value(final_decision, key))
+        if value:
+            decision_detail_lines.append(f"- {label}：{value}")
+    final_decision_text = "\n".join(decision_detail_lines)
+
+    for key, agent_result in agents_results.items():
+        if not isinstance(agent_result, dict):
+            continue
+        agent_text = _txt(_first_non_empty(agent_result, ["summary", "analysis", "decision_text", "result"]))
+        if not agent_text:
+            continue
+        agent_name = _txt(agent_result.get("agent_name"), _analysis_agent_title(key))
+        analyst_views.append(_insight(agent_name, _snippet(agent_text, 800)))
+
+    return {
+        "symbol": code,
+        "analysts": _analysis_options(selected),
+        "mode": mode,
+        "cycle": cycle,
+        "inputHint": "例如 600519 / 300390 / AAPL",
+        "summaryTitle": f"{stock_name} 分析摘要",
+        "summaryBody": summary_body,
+        "generatedAt": _txt(generated_at, _now()),
+        "indicators": _format_indicator_cards(indicators, indicator_explanations),
+        "decision": decision_rating,
+        "finalDecisionText": final_decision_text,
+        "insights": insights or [_insight("当前结论", "分析完成，但当前没有更多结构化解读。")],
+        "analystViews": analyst_views,
+        "curve": _analysis_curve(historical_data),
+    }
+
+
 def _build_workbench_snapshot(
     context: UIApiContext,
     *,
@@ -1066,6 +1281,38 @@ def _build_workbench_snapshot(
     summary = context.portfolio().get_account_summary()
     watchlist = _watchlist_rows(context)
     quant_count = sum(1 for row in watchlist if row["cells"][5] == "已入量化")
+    active_symbol = _txt(analysis.get("symbol")) if isinstance(analysis, dict) else _txt(watchlist[0]["code"]) if watchlist else ""
+    cached_analysis = analysis
+    if not cached_analysis:
+        latest_record = context.stock_analysis_db().get_latest_record_by_symbol(active_symbol) if active_symbol else None
+        if not latest_record:
+            records = context.stock_analysis_db().get_all_records()
+            latest_id = _int(records[0].get("id")) if records else None
+            latest_record = context.stock_analysis_db().get_record_by_id(latest_id) if latest_id else None
+        if latest_record:
+            resolved_symbol = normalize_stock_code(_txt(latest_record.get("symbol"), active_symbol))
+            if not active_symbol:
+                active_symbol = resolved_symbol
+            record_stock_info = latest_record.get("stock_info") if isinstance(latest_record.get("stock_info"), dict) else {}
+            record_indicators = latest_record.get("indicators") if isinstance(latest_record.get("indicators"), dict) else {}
+            record_discussion = latest_record.get("discussion_result")
+            record_final_decision = latest_record.get("final_decision") if isinstance(latest_record.get("final_decision"), dict) else {}
+            record_agents = latest_record.get("agents_results") if isinstance(latest_record.get("agents_results"), dict) else {}
+            record_historical = latest_record.get("historical_data") if isinstance(latest_record.get("historical_data"), list) else []
+            cached_analysis = _build_workbench_analysis_payload(
+                code=resolved_symbol,
+                stock_name=_txt(latest_record.get("stock_name"), resolved_symbol),
+                selected=None,
+                mode="单个分析",
+                cycle=_txt(latest_record.get("period"), "1y"),
+                generated_at=_txt(latest_record.get("analysis_date") or latest_record.get("created_at"), _now()),
+                stock_info=record_stock_info,
+                indicators=record_indicators,
+                discussion_result=record_discussion,
+                final_decision=record_final_decision,
+                agents_results=record_agents,
+                historical_data=record_historical,
+            )
     return {
         "updatedAt": _now(),
         "metrics": [
@@ -1080,9 +1327,9 @@ def _build_workbench_snapshot(
             "quantCount": quant_count,
             "refreshHint": "报价支持手动刷新，量化调度运行时也会把最新价格和信号回写到这里。",
         },
-        "analysis": analysis
+        "analysis": cached_analysis
         or {
-            "symbol": watchlist[0]["code"] if watchlist else "",
+            "symbol": active_symbol,
             "analysts": _analysis_options(),
             "mode": "单个分析",
             "cycle": "1y",
@@ -1257,18 +1504,43 @@ def _snapshot_history(context: UIApiContext) -> dict[str, Any]:
 def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
     info = context.config_manager.get_config_info()
     def pick(keys: list[str]) -> list[dict[str, Any]]:
-        return [_insight(key, f"{info.get(key, {}).get('description', '')} 当前值: {_txt(info.get(key, {}).get('value'), '--')}", "warning" if info.get(key, {}).get("required") else "neutral") for key in keys]
-    model_keys = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEFAULT_MODEL_NAME"]
+        items: list[dict[str, Any]] = []
+        for key in keys:
+            meta = info.get(key, {})
+            raw_value = _txt(meta.get("value"))
+            display_value = raw_value
+            if _txt(meta.get("type")) == "password":
+                if raw_value:
+                    display_value = f"{raw_value[:4]}***{raw_value[-4:]}" if len(raw_value) > 8 else "***"
+                else:
+                    display_value = "--"
+            item = _insight(
+                key,
+                f"{meta.get('description', '')} 当前值: {_txt(display_value, '--')}",
+                "warning" if meta.get("required") else "neutral",
+            )
+            item["key"] = key
+            item["value"] = raw_value
+            item["required"] = bool(meta.get("required"))
+            item["type"] = _txt(meta.get("type"), "text")
+            options = meta.get("options")
+            if isinstance(options, list):
+                item["options"] = [str(option) for option in options]
+            items.append(item)
+        return items
+    model_keys = ["AI_API_KEY", "AI_API_BASE_URL", "DEFAULT_MODEL_NAME"]
     source_keys = ["TUSHARE_TOKEN", "MINIQMT_ENABLED", "MINIQMT_ACCOUNT_ID", "MINIQMT_HOST", "MINIQMT_PORT"]
     runtime_keys = ["EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO", "WEBHOOK_ENABLED", "WEBHOOK_TYPE", "WEBHOOK_URL", "WEBHOOK_KEYWORD"]
     return {"updatedAt": _now(), "metrics": [_metric("模型配置", len(model_keys)), _metric("数据源", len(source_keys)), _metric("运行参数", len(runtime_keys)), _metric("通知通道", 2)], "modelConfig": pick(model_keys), "dataSources": pick(source_keys), "runtimeParams": pick(runtime_keys), "paths": [str(context.data_dir / "watchlist.db"), str(context.quant_sim_db_file), str(context.portfolio_db_file), str(context.monitor_db_file), str(context.smart_monitor_db_file), str(context.stock_analysis_db_file), str(context.main_force_batch_db_file), str(context.selector_result_dir), str(LOGS_DIR)]}
 
 
 def _action_settings_save(context: UIApiContext, payload: dict[str, Any]) -> dict[str, Any]:
-    try:
-        context.config_manager.write_env({str(key): "" if value is None else str(value) for key, value in payload.items()})
-    except Exception:
-        pass
+    persisted = context.config_manager.write_env(
+        {str(key): "" if value is None else str(value) for key, value in payload.items()}
+    )
+    if not persisted:
+        raise HTTPException(status_code=500, detail="保存配置失败")
+    context.config_manager.reload_config()
     return _snapshot_settings(context)
 
 
@@ -1490,35 +1762,44 @@ def _action_workbench_analysis(context: UIApiContext, payload: Any) -> dict[str,
     if not result or not result.get("success"):
         raise HTTPException(status_code=502, detail=f"分析失败: {code}")
 
-    stock_info = result.get("stock_info") or {}
+    stock_info = result.get("stock_info") if isinstance(result.get("stock_info"), dict) else {}
     stock_name = _txt(stock_info.get("name"), code)
-    indicators = result.get("indicators") or {}
-    indicator_explanations = stock_analysis_service.build_indicator_explanations(indicators, current_price=stock_info.get("current_price"))
-    summary_body = _txt((result.get("discussion_result") or {}).get("summary")) or _txt(stock_analysis_service.build_indicator_summary(indicator_explanations), "分析完成。")
-    final_decision = result.get("final_decision") or {}
-    insights = []
-    if _txt(final_decision.get("reasoning")):
-        insights.append(_insight("操作建议", _txt(final_decision.get("reasoning")), "accent"))
-    for key, agent_result in (result.get("agents_results") or {}).items():
-        if isinstance(agent_result, dict) and _txt(agent_result.get("summary")):
-            insights.append(_insight(_txt(agent_result.get("agent_name") or key), _txt(agent_result.get("summary"))))
-    analysis = {
-        "symbol": code,
-        "analysts": _analysis_options(selected),
-        "mode": mode,
-        "cycle": cycle,
-        "inputHint": "例如 600519 / 300390 / AAPL",
-        "summaryTitle": f"{stock_name} 分析摘要",
-        "summaryBody": summary_body,
-        "indicators": _format_indicator_cards(indicators, indicator_explanations),
-        "decision": _txt(final_decision.get("decision"), "暂无明确结论"),
-        "insights": insights or [_insight("当前结论", "分析完成，但当前没有更多结构化解读。")],
-        "curve": _analysis_curve(result.get("historical_data")),
-    }
+    indicators = result.get("indicators") if isinstance(result.get("indicators"), dict) else {}
+    discussion_result = result.get("discussion_result")
+    final_decision = _dict_value(result, "final_decision", {})
+    agents_results = result.get("agents_results") if isinstance(result.get("agents_results"), dict) else {}
+    historical_data = result.get("historical_data") if isinstance(result.get("historical_data"), list) else []
+
+    context.stock_analysis_db().save_analysis(
+        symbol=code,
+        stock_name=stock_name,
+        period=cycle,
+        stock_info=stock_info,
+        agents_results=agents_results,
+        discussion_result=discussion_result,
+        final_decision=final_decision,
+        indicators=indicators,
+        historical_data=historical_data,
+    )
+
+    analysis = _build_workbench_analysis_payload(
+        code=code,
+        stock_name=stock_name,
+        selected=selected,
+        mode=mode,
+        cycle=cycle,
+        generated_at=_txt(result.get("generated_at"), _now()),
+        stock_info=stock_info,
+        indicators=indicators,
+        discussion_result=discussion_result,
+        final_decision=final_decision,
+        agents_results=agents_results,
+        historical_data=historical_data,
+    )
     return _build_workbench_snapshot(
         context,
         analysis=analysis,
-        activity=[_timeline(_now(), f"{stock_name} 分析完成", summary_body)],
+        activity=[_timeline(_now(), f"{stock_name} 分析完成", _snippet(_txt(_dict_value(discussion_result, "summary")) or _txt(discussion_result), 160, "分析完成。"))],
     )
 
 
@@ -1543,9 +1824,14 @@ def _action_workbench_analysis_batch(context: UIApiContext, payload: Any) -> dic
         )
         if not result or not result.get("success"):
             continue
-        stock_name = _txt((result.get("stock_info") or {}).get("name"), code)
-        decision = _txt((result.get("final_decision") or {}).get("decision"), "暂无结论")
-        reasoning = _txt((result.get("final_decision") or {}).get("reasoning")) or _txt((result.get("discussion_result") or {}).get("summary"), "已完成批量分析。")
+        stock_info_batch = result.get("stock_info") if isinstance(result.get("stock_info"), dict) else {}
+        stock_name = _txt(stock_info_batch.get("name"), code)
+        final_decision = _dict_value(result, "final_decision", {})
+        decision = _txt(_first_non_empty(final_decision, ["decision", "rating", "verdict"]), "暂无结论")
+        reasoning = _txt(_first_non_empty(final_decision, ["reasoning", "operation_advice", "decision_text"]))
+        if not reasoning:
+            discussion_result = result.get("discussion_result")
+            reasoning = _txt(_dict_value(discussion_result, "summary")) or _txt(discussion_result, "已完成批量分析。")
         insights.append(_insight(stock_name, f"{decision} · {reasoning}"))
         if not curve:
             curve = _analysis_curve(result.get("historical_data"))

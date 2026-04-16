@@ -61,7 +61,7 @@ def test_backend_api_serves_spa_entry_for_root_and_client_routes():
         ("/api/ui/monitor/ai", {"updatedAt", "metrics", "queue", "signals", "timeline"}),
         ("/api/ui/monitor/real", {"updatedAt", "metrics", "rules", "triggers", "notificationStatus"}),
         ("/api/ui/history", {"updatedAt", "metrics", "records", "recentReplay", "timeline"}),
-        ("/api/ui/settings", {"updatedAt", "metrics", "modelConfig", "dataSources", "runtimeParams", "paths"}),
+        ("/api/ui/settings", {"dataSources", "runtimeParams"}),
     ],
 )
 def test_backend_api_exposes_page_snapshots(page_path: str, expected_keys: set[str]):
@@ -73,4 +73,17 @@ def test_backend_api_exposes_page_snapshots(page_path: str, expected_keys: set[s
     assert response.status_code == 200
     payload = response.json()
     assert expected_keys.issubset(payload.keys())
-    assert isinstance(payload["updatedAt"], str) and payload["updatedAt"].strip()
+    if "updatedAt" in expected_keys:
+        assert isinstance(payload["updatedAt"], str) and payload["updatedAt"].strip()
+
+
+def test_workbench_analysis_contract_includes_decision_and_analyst_sections():
+    module = _load_backend_api_module()
+    app = module.create_app()
+    client = TestClient(app)
+
+    response = client.get("/api/ui/workbench")
+    assert response.status_code == 200
+    analysis = response.json()["analysis"]
+    assert "finalDecisionText" in analysis
+    assert "analystViews" in analysis

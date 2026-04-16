@@ -3,11 +3,10 @@
 使用pywencai获取股票的最新新闻和公告信息
 """
 
-from app.console_utils import safe_print as print
+from app.console_utils import configure_standard_streams, safe_print as print
 import pandas as pd
 import pywencai
 import sys
-import io
 import warnings
 from datetime import datetime
 
@@ -16,12 +15,8 @@ warnings.filterwarnings('ignore')
 # 设置标准输出编码为UTF-8（仅在命令行环境）
 def _setup_stdout_encoding():
     """仅在命令行环境设置标准输出编码"""
-    if sys.platform == 'win32' and not hasattr(sys.stdout, '_original_stream'):
-        try:
-            if hasattr(sys.stdout, "buffer"):
-                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
-        except Exception:
-            pass
+    if sys.platform == 'win32':
+        configure_standard_streams()
 
 _setup_stdout_encoding()
 

@@ -14,7 +14,7 @@ export function AppSidebar() {
     <aside className="app-sidebar">
       <div className="app-sidebar__brand">
         <div className="app-sidebar__brand-title">玄武AI智能体股票团队分析系统</div>
-        <div className="app-sidebar__brand-note">单页面工作台入口，统一承接发现、研究、关注与量化流程。</div>
+        <div className="app-sidebar__brand-note">工作台入口，统一承接发现、研究、关注与量化流程。</div>
       </div>
       {groups.map((group) => (
         <section className="app-sidebar__group" key={group.title}>

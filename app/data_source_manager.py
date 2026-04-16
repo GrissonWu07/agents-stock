@@ -100,7 +100,7 @@ class DataSourceManager:
         
         # 优先使用akshare
         try:
-            import akshare as ak
+            from app.akshare_client import ak
             _safe_print(f"[Akshare] 正在获取 {symbol} 的历史数据...")
             
             with _without_proxy_env():
@@ -200,7 +200,7 @@ class DataSourceManager:
         
         # 优先使用akshare
         try:
-            import akshare as ak
+            from app.akshare_client import ak
             _safe_print(f"[Akshare] 正在获取 {symbol} 的基本信息...")
             
             stock_info = ak.stock_individual_info_em(symbol=symbol)
@@ -263,7 +263,7 @@ class DataSourceManager:
         
         # 优先使用akshare
         try:
-            import akshare as ak
+            from app.akshare_client import ak
             _safe_print(f"[Akshare] 正在获取 {symbol} 的实时行情...")
             
             df = ak.stock_zh_a_spot_em()
@@ -334,7 +334,7 @@ class DataSourceManager:
         """
         # 优先使用akshare
         try:
-            import akshare as ak
+            from app.akshare_client import ak
             _safe_print(f"[Akshare] 正在获取 {symbol} 的财务数据...")
             
             if report_type == 'income':

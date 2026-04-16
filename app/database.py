@@ -36,14 +36,36 @@ class StockAnalysisDatabase:
                 agents_results TEXT,
                 discussion_result TEXT,
                 final_decision TEXT,
+                indicators TEXT,
+                historical_data TEXT,
                 created_at TEXT NOT NULL
             )
         ''')
+        self._ensure_column(cursor, "analysis_records", "indicators", "TEXT")
+        self._ensure_column(cursor, "analysis_records", "historical_data", "TEXT")
         
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _ensure_column(cursor: sqlite3.Cursor, table_name: str, column_name: str, column_type: str) -> None:
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = {row[1] for row in cursor.fetchall()}
+        if column_name not in columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
     
-    def save_analysis(self, symbol, stock_name, period, stock_info, agents_results, discussion_result, final_decision):
+    def save_analysis(
+        self,
+        symbol,
+        stock_name,
+        period,
+        stock_info,
+        agents_results,
+        discussion_result,
+        final_decision,
+        indicators=None,
+        historical_data=None,
+    ):
         """保存分析记录到数据库"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -57,12 +79,26 @@ class StockAnalysisDatabase:
         agents_results_json = json.dumps(agents_results, ensure_ascii=False, default=str)
         discussion_result_json = json.dumps(discussion_result, ensure_ascii=False, default=str)
         final_decision_json = json.dumps(final_decision, ensure_ascii=False, default=str)
+        indicators_json = json.dumps(indicators or {}, ensure_ascii=False, default=str)
+        historical_data_json = json.dumps(historical_data or [], ensure_ascii=False, default=str)
         
         cursor.execute('''
             INSERT INTO analysis_records 
-            (symbol, stock_name, analysis_date, period, stock_info, agents_results, discussion_result, final_decision, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, stock_name, analysis_date, period, stock_info_json, agents_results_json, discussion_result_json, final_decision_json, created_at))
+            (symbol, stock_name, analysis_date, period, stock_info, agents_results, discussion_result, final_decision, indicators, historical_data, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            symbol,
+            stock_name,
+            analysis_date,
+            period,
+            stock_info_json,
+            agents_results_json,
+            discussion_result_json,
+            final_decision_json,
+            indicators_json,
+            historical_data_json,
+            created_at,
+        ))
         
         conn.commit()
         conn.close()
@@ -115,30 +151,84 @@ class StockAnalysisDatabase:
     def get_record_by_id(self, record_id):
         """根据ID获取详细分析记录"""
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
-        cursor.execute('''
+
+        cursor.execute(
+            '''
             SELECT * FROM analysis_records WHERE id = ?
-        ''', (record_id,))
-        
+            ''',
+            (record_id,),
+        )
+
         record = cursor.fetchone()
         conn.close()
-        
+
         if not record:
             return None
-        
-        # 解析JSON数据
+
+        return self._parse_analysis_row(record)
+
+    def get_latest_record_by_symbol(self, symbol: str):
+        """根据股票代码获取最近一次分析记录"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute(
+            '''
+            SELECT * FROM analysis_records
+            WHERE symbol = ?
+            ORDER BY id DESC
+            LIMIT 1
+            ''',
+            (symbol,),
+        )
+
+        record = cursor.fetchone()
+        conn.close()
+
+        if not record:
+            return None
+
+        return self._parse_analysis_row(record)
+
+    def get_recent_records_by_symbol(self, symbol: str, limit: int = 5) -> list[dict]:
+        """根据股票代码获取最近几次分析记录"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute(
+            '''
+            SELECT * FROM analysis_records
+            WHERE symbol = ?
+            ORDER BY id DESC
+            LIMIT ?
+            ''',
+            (symbol, limit),
+        )
+
+        records = cursor.fetchall()
+        conn.close()
+
+        return [self._parse_analysis_row(record) for record in records]
+
+    @staticmethod
+    def _parse_analysis_row(record: sqlite3.Row) -> dict:
         return {
-            'id': record[0],
-            'symbol': record[1],
-            'stock_name': record[2],
-            'analysis_date': record[3],
-            'period': record[4],
-            'stock_info': json.loads(record[5]) if record[5] else {},
-            'agents_results': json.loads(record[6]) if record[6] else {},
-            'discussion_result': json.loads(record[7]) if record[7] else {},
-            'final_decision': json.loads(record[8]) if record[8] else {},
-            'created_at': record[9]
+            'id': record['id'],
+            'symbol': record['symbol'],
+            'stock_name': record['stock_name'],
+            'analysis_date': record['analysis_date'],
+            'period': record['period'],
+            'stock_info': json.loads(record['stock_info']) if record['stock_info'] else {},
+            'agents_results': json.loads(record['agents_results']) if record['agents_results'] else {},
+            'discussion_result': json.loads(record['discussion_result']) if record['discussion_result'] else {},
+            'final_decision': json.loads(record['final_decision']) if record['final_decision'] else {},
+            'indicators': json.loads(record['indicators']) if 'indicators' in record.keys() and record['indicators'] else {},
+            'historical_data': json.loads(record['historical_data']) if 'historical_data' in record.keys() and record['historical_data'] else [],
+            'created_at': record['created_at'],
         }
     
     def delete_record(self, record_id):

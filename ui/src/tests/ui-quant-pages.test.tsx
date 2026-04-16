@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HisReplayPage } from "../features/quant/his-replay-page";
 import { LiveSimPage } from "../features/quant/live-sim-page";
 import type { ApiClient } from "../lib/api-client";
-import { mockPageSnapshot } from "../lib/mock-backend";
+import { mockPageSnapshot } from "./mock-backend";
 import type { PageKey, PageSnapshotMap, TableRow } from "../lib/page-models";
 
 const clone = <T,>(value: T): T => {

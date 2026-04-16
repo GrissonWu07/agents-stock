@@ -1,6 +1,6 @@
 from app.console_utils import safe_print as print
 import yfinance as yf
-import akshare as ak
+from app.akshare_client import ak
 import pandas as pd
 import numpy as np
 import ta

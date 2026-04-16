@@ -1,9 +1,17 @@
+import { forwardRef } from "react";
 import type { PropsWithChildren } from "react";
 
 type WorkbenchCardProps = PropsWithChildren<{
   className?: string;
 }>;
 
-export function WorkbenchCard({ className = "", children }: WorkbenchCardProps) {
-  return <section className={`card section-card ${className}`.trim()}>{children}</section>;
-}
+export const WorkbenchCard = forwardRef<HTMLElement, WorkbenchCardProps>(function WorkbenchCard(
+  { className = "", children },
+  ref,
+) {
+  return (
+    <section ref={ref} className={`card section-card ${className}`.trim()}>
+      {children}
+    </section>
+  );
+});

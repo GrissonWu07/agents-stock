@@ -2,8 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { isValidElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../lib/api-client";
-import { createApiClient } from "../lib/api-client";
-import { mockPageSnapshot, mockRunPageAction } from "../lib/mock-backend";
+import { mockPageSnapshot, mockRunPageAction } from "./mock-backend";
 import type { PageKey, PageSnapshotMap } from "../lib/page-models";
 import { APP_ROUTE_ITEMS } from "../routes/manifest";
 import { RoutePlaceholderPage } from "../components/ui/route-placeholder";
@@ -13,7 +12,16 @@ import { RealMonitorPage } from "../features/monitor/real-monitor-page";
 import { HistoryPage } from "../features/history/history-page";
 import { SettingsPage } from "../features/settings/settings-page";
 
-const client = createApiClient({ mode: "mock" });
+const client: ApiClient = {
+  baseUrl: "/api",
+  mode: "mock",
+  getPageSnapshot: async (page: PageKey) => {
+    return mockPageSnapshot(page as PageKey);
+  },
+  runPageAction: async (page: PageKey, action: string, payload?: unknown) => {
+    return mockRunPageAction(page as PageKey, action, payload);
+  },
+};
 
 const makeErrorClient = (message: string): ApiClient =>
   ({
@@ -256,14 +264,8 @@ describe("ui page coverage", () => {
     render(<SettingsPage client={client} />);
 
     expect(await screen.findByRole("heading", { name: "环境配置" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "快照概览" })).toBeInTheDocument();
-    expect(screen.getByText("快照更新时间")).toBeInTheDocument();
-    expect(screen.getByText("2026-04-13 10:35")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "模型配置" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "数据源" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "运行参数" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "路径清单" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存配置" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "刷新配置" })).toBeInTheDocument();
   });
 
@@ -273,19 +275,15 @@ describe("ui page coverage", () => {
       <SettingsPage
         client={makeSnapshotClient("settings", {
           ...snapshot,
-          modelConfig: [],
           dataSources: [],
           runtimeParams: [],
-          paths: [],
         })}
       />,
     );
 
     expect(await screen.findByRole("heading", { name: "环境配置" })).toBeInTheDocument();
-    expect(screen.getByText("模型配置暂无数据")).toBeInTheDocument();
     expect(screen.getByText("数据源暂无数据")).toBeInTheDocument();
     expect(screen.getByText("运行参数暂无数据")).toBeInTheDocument();
-    expect(screen.getByText("路径清单暂无数据")).toBeInTheDocument();
   });
 
   it("shows the portfolio empty state", async () => {

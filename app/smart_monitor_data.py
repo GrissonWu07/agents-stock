@@ -7,7 +7,7 @@
 from app.console_utils import safe_print as print
 import logging
 import os
-import akshare as ak
+from app.akshare_client import ak
 import pandas as pd
 from typing import Dict, Optional
 from datetime import datetime, timedelta

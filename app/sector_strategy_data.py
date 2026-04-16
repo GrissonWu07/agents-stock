@@ -4,7 +4,7 @@
 """
 
 from app.console_utils import safe_print as print
-import akshare as ak
+from app.akshare_client import ak
 import pandas as pd
 from datetime import datetime, timedelta
 import warnings

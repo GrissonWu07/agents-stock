@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: build/Dockerfile
-    container_name: agentsstock-backend
+    container_name: xuanwustock-service
     ports:
       - "8501:8501"
     volumes:
@@ -27,7 +27,7 @@ services:
     build:
       context: ..
       dockerfile: build/Dockerfile.ui
-    container_name: agentsstock-frontend
+    container_name: xuanwustock-ui
     ports:
       - "8080:80"
     depends_on:

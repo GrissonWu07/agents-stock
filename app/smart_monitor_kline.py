@@ -344,7 +344,7 @@ class SmartMonitorKline:
             
             # 方法2: 尝试使用AKShare获取（只尝试1次，避免IP封禁）
             try:
-                import akshare as ak
+                from app.akshare_client import ak
                 df = ak.stock_zh_a_hist(
                     symbol=stock_code,
                     period='daily',

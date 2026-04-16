@@ -21,7 +21,7 @@ class SmartMonitorDeepSeek:
             api_key: DeepSeek API密钥
         """
         self.api_key = api_key
-        self.base_url = config.DEEPSEEK_BASE_URL
+        self.base_url = config.AI_API_BASE_URL
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -156,6 +156,7 @@ class SmartMonitorDeepSeek:
         import requests
         
         model = model or config.DEFAULT_MODEL_NAME
+        model = config.normalize_model_name(model)
         
         payload = {
             "model": model,

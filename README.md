@@ -125,14 +125,12 @@ copy .env.example .env
 
 ```env
 DEEPSEEK_API_KEY=your_api_key
-DEFAULT_MODEL_NAME=deepseek-chat
 TDX_ENABLED=true
 ```
 
 说明：
 
 - `DEEPSEEK_API_KEY`：必填，用于调用 OpenAI 兼容模型接口
-- `DEFAULT_MODEL_NAME`：当前全局默认模型
 - `TDX_ENABLED`：建议开启，用于 A 股行情和量化候选池刷新
 
 更多配置请看：
@@ -146,9 +144,9 @@ TDX_ENABLED=true
 python app.py
 ```
 
-`python app.py` 会启动当前的 Python gateway（网关），并同时提供 SPA 页面与 API：
+`python app.py` 会启动当前的 Python gateway（网关）与 API：
 
-- 工作台：[http://127.0.0.1:8501/main](http://127.0.0.1:8501/main)
+- 工作台主页面建议通过前端服务访问（见下）
 - 健康检查：[http://127.0.0.1:8501/api/health](http://127.0.0.1:8501/api/health)
 
 ### 当前前端壳
@@ -166,9 +164,9 @@ python app.py
 - `/ai-monitor` AI盯盘
 - `/real-monitor` 实时监控
 
-本地联调方式：
+本地联调方式（开发推荐）：
 
-1. 在仓库根目录启动 Python gateway：`python app.py`
+1. 在仓库根目录启动网关服务：`python app.py`
 2. 进入 [ui](/C:/Projects/githubs/aiagents-stock/ui) 后执行：
 
 ```bash
@@ -179,6 +177,8 @@ npm run dev
 前端默认地址：
 
 [http://127.0.0.1:4173](http://127.0.0.1:4173)
+
+> 提示：网关保持在 8501，前端会通过代理访问网关 API。该方式与容器部署（nginx + 独立 backend）一致。
 
 Docker 部署则通过 [build/docker-compose.yml](/C:/Projects/githubs/aiagents-stock/build/docker-compose.yml) 以 `nginx` 前端 + Python API 分离方式运行。前端静态站点由 [build/Dockerfile.ui](/C:/Projects/githubs/aiagents-stock/build/Dockerfile.ui) 构建并由 [build/nginx.conf](/C:/Projects/githubs/aiagents-stock/build/nginx.conf) 提供 SPA 历史路由回退和 `/api/` 代理。后端健康检查路径统一为 `/api/health`，容器内后端监听端口为 `8501`。
 

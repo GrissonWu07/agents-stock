@@ -35,3 +35,24 @@ def test_build_indicator_summary_concatenates_indicator_takeaways():
     assert "RSI：中性" in summary
     assert "MA20：强于中期趋势" in summary
     assert "MACD：多头动能" in summary
+
+
+def test_build_indicator_explanations_accepts_uppercase_and_chinese_aliases():
+    explanations = app_module.build_indicator_explanations(
+        {
+            "RSI": 39.41,
+            "MA20": 53.22,
+            "量比": 1.2,
+            "MACD": -0.289,
+        },
+        current_price=52.87,
+    )
+
+    assert explanations["RSI"]["state"] == "中性"
+    assert "30-70" in explanations["RSI"]["summary"]
+    assert explanations["MA20"]["state"] == "弱于中期趋势"
+    assert "低于 MA20" in explanations["MA20"]["summary"]
+    assert explanations["量比"]["state"] == "正常成交"
+    assert "接近 1" in explanations["量比"]["summary"]
+    assert explanations["MACD"]["state"] == "空头动能"
+    assert "小于 0" in explanations["MACD"]["summary"]

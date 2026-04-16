@@ -7,6 +7,7 @@
 """
 
 from app.console_utils import safe_print as print
+import app.config as config
 import pywencai
 import pandas as pd
 from typing import Dict, Any
@@ -58,7 +59,7 @@ class RiskDataFetcher:
             else:
                 print(f"   暂无限售解禁数据")
             
-            time.sleep(1)  # 避免请求过快
+            time.sleep(max(config.RISK_QUERY_DELAY_SECONDS, 0.0))  # 避免请求过快
             
             # 2. 获取大股东减持公告
             print("   查询大股东减持公告...")
@@ -69,7 +70,7 @@ class RiskDataFetcher:
             else:
                 print(f"   暂无大股东减持数据")
             
-            time.sleep(1)  # 避免请求过快
+            time.sleep(max(config.RISK_QUERY_DELAY_SECONDS, 0.0))  # 避免请求过快
             
             # 3. 获取近期重要事件
             print("   查询近期重要事件...")

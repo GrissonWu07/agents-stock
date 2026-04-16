@@ -18,6 +18,16 @@ class GbkStdout:
         return None
 
 
+class ClosedStdout:
+    encoding = "utf-8"
+
+    def write(self, text):
+        raise ValueError("I/O operation on closed file.")
+
+    def flush(self):
+        raise ValueError("I/O operation on closed file.")
+
+
 def test_safe_print_handles_gbk_stdout(monkeypatch):
     fake_stdout = GbkStdout()
     monkeypatch.setattr("sys.stdout", fake_stdout)
@@ -37,3 +47,9 @@ def test_install_safe_print_replaces_builtin_print(monkeypatch):
 
     assert builtins.print is console_utils.safe_print
     assert fake_stdout.buffer
+
+
+def test_safe_print_ignores_closed_stdout(monkeypatch):
+    monkeypatch.setattr("sys.stdout", ClosedStdout())
+
+    console_utils.safe_print("这条日志即使 stdout 已关闭也不该抛异常")

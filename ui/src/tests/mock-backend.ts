@@ -13,7 +13,8 @@ import type {
   TableRow,
   TableSection,
   WorkbenchSnapshot,
-} from "./page-models";
+} from "../lib/page-models";
+
 
 type MutableSnapshotMap = {
   [K in PageKey]: PageSnapshotMap[K];
@@ -57,6 +58,7 @@ const makeCandidateRow = (
   pe: string,
   pb: string,
   reason: string,
+  selectedAt: string,
 ): TableRow => ({
   id: code,
   cells: [code, name, industry, source, price, total, pe, pb],
@@ -68,6 +70,7 @@ const makeCandidateRow = (
   source,
   latestPrice: price,
   reason,
+  selectedAt,
 });
 
 const makeTable = (columns: string[], rows: TableRow[], emptyLabel?: string): TableSection => ({ columns, rows, emptyLabel });
@@ -237,9 +240,15 @@ const initialState: MutableSnapshotMap = {
         { label: "MACD", value: "6.2792", tone: "positive" },
       ],
       decision: "当前建议为轻仓观察，等待趋势和资金配合后再推进量化候选池。",
+      finalDecisionText: "当前建议为轻仓观察，等待趋势和资金配合后再推进量化候选池。",
       insights: [
-        { title: "当前风格", body: "单股分析会把团队观点、指标和最终决策聚合到一个结果面板里。", tone: "accent" },
-        { title: "重点关注", body: "若价格重新站稳 MA20 且量能放大，可再考虑进入量化候选池。", tone: "warning" },
+        { title: "操作建议", body: "若价格重新站稳 MA20 且量能放大，可再考虑进入量化候选池。", tone: "accent" },
+        { title: "模型状态", body: "当前结果来自工作台聚合分析，适合先看团队观点，再决定是否推进。", tone: "warning" },
+      ],
+      analystViews: [
+        { title: "技术分析师", body: "趋势处于震荡偏强区间，短线更适合等确认而不是追高。", tone: "neutral" },
+        { title: "基本面分析师", body: "公司基本面稳定，但当前位置更适合观察，不是明显低估。", tone: "neutral" },
+        { title: "资金面分析师", body: "资金跟随度一般，暂未形成特别强的增量推动。", tone: "neutral" },
       ],
       curve: [
         { label: "周一", value: 4 },
@@ -249,6 +258,7 @@ const initialState: MutableSnapshotMap = {
         { label: "周五", value: 9 },
       ],
     },
+    analysisJob: null,
     nextSteps: [
       { label: "持仓分析", hint: "查看当前持仓、收益归因和仓位动作", href: "/portfolio" },
       { label: "实时监控", hint: "看价格规则、触发记录和通知状态", href: "/real-monitor" },
@@ -284,10 +294,10 @@ const initialState: MutableSnapshotMap = {
       body: "先运行选股策略，再把真正需要跟踪的股票加入我的关注；结果区会同时保留候选、推荐和历史信息。",
     },
     candidateTable: makeTable(candidateColumns, [
-      makeCandidateRow("301291", "明阳电气", "电气设备", "主力选股", "52.87", "128.6", "31.2", "4.1", "资金流向和趋势确认都较强，适合继续关注。"),
-      makeCandidateRow("002824", "和胜股份", "工业金属", "主力选股", "22.97", "78.6", "58.8", "3.5", "震荡环境下估值和弹性兼顾，适合候选跟踪。"),
-      makeCandidateRow("300857", "协创数据", "消费电子", "低价擒牛", "208.25", "624.6", "24.5", "5.9", "低价高弹性方向，适合进入关注池观察。"),
-      makeCandidateRow("002463", "沪电股份", "电子元件", "研究情报", "90.40", "142.3", "28.4", "3.8", "研究情报已经给出明确股票输出，可纳入关注池。"),
+      makeCandidateRow("301291", "明阳电气", "电气设备", "主力选股", "52.87", "128.6", "31.2", "4.1", "资金流向和趋势确认都较强，适合继续关注。", "2026-04-13 09:42:13"),
+      makeCandidateRow("002824", "和胜股份", "工业金属", "主力选股", "22.97", "78.6", "58.8", "3.5", "震荡环境下估值和弹性兼顾，适合候选跟踪。", "2026-04-13 09:40:08"),
+      makeCandidateRow("300857", "协创数据", "消费电子", "低价擒牛", "208.25", "624.6", "24.5", "5.9", "低价高弹性方向，适合进入关注池观察。", "2026-04-13 09:39:21"),
+      makeCandidateRow("002463", "沪电股份", "电子元件", "研究情报", "90.40", "142.3", "28.4", "3.8", "研究情报已经给出明确股票输出，可纳入关注池。", "2026-04-13 09:33:14"),
     ]),
     recommendation: {
       title: "精选推荐",
@@ -522,27 +532,195 @@ const initialState: MutableSnapshotMap = {
     ],
   },
   settings: {
-    updatedAt: "2026-04-13 10:35",
-    metrics: [
-      { label: "模型配置", value: "1" },
-      { label: "数据源", value: "3" },
-      { label: "运行参数", value: "3" },
-      { label: "通知通道", value: "2" },
+    dataSources: [
+      {
+        key: "TUSHARE_TOKEN",
+        title: "行情源",
+        body: "优先展示 pytdx / Tushare / 本地数据的可用状态。",
+        tone: "success",
+        value: "",
+        required: false,
+        type: "password",
+      },
+      {
+        key: "MINIQMT_ENABLED",
+        title: "启用MiniQMT",
+        body: "关注池、量化候选池和历史回放共用同一层报价信息。",
+        tone: "accent",
+        value: "false",
+        required: false,
+        type: "boolean",
+      },
+      {
+        key: "MINIQMT_ACCOUNT_ID",
+        title: "MiniQMT 账户ID",
+        body: "用于连接 MiniQMT 的账户标识。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "MINIQMT_HOST",
+        title: "MiniQMT 主机",
+        body: "MiniQMT 服务主机地址。",
+        tone: "neutral",
+        value: "127.0.0.1",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "MINIQMT_PORT",
+        title: "MiniQMT 端口",
+        body: "MiniQMT 服务端口。",
+        tone: "neutral",
+        value: "58610",
+        required: false,
+        type: "text",
+      },
     ],
     modelConfig: [
-      { title: "默认模型", body: "统一使用后端环境变量中的默认模型配置，前端只承接可视化设置入口。", tone: "accent" },
-      { title: "密钥状态", body: "后续会显示 API 连接状态，但不在前端暴露敏感值。", tone: "warning" },
-    ],
-    dataSources: [
-      { title: "行情源", body: "优先展示 pytdx / Tushare / 本地数据的可用状态。", tone: "success" },
-      { title: "关注池报价", body: "关注池、量化候选池和历史回放共用同一层报价信息。", tone: "accent" },
+      {
+        key: "AI_API_KEY",
+        title: "AI 模型密钥",
+        body: "用于调用模型服务的密钥，当前值来自环境配置。",
+        tone: "neutral",
+        value: "",
+        required: true,
+        type: "password",
+      },
+      {
+        key: "AI_API_BASE_URL",
+        title: "AI API 地址",
+        body: "当前值：AI API 的请求地址。",
+        tone: "neutral",
+        value: "https://openrouter.ai/api/v1",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "DEFAULT_MODEL_NAME",
+        title: "模型名称",
+        body: "AI 分析默认使用的模型名称。",
+        tone: "neutral",
+        value: "deepseek/deepseek-v3.2",
+        required: false,
+        type: "select",
+        options: [
+          "deepseek/deepseek-v3.2",
+          "deepseek/deepseek-chat",
+          "deepseek/deepseek-reasoner",
+          "qwen-plus",
+          "qwen-plus-latest",
+          "qwen-flash",
+          "qwen-turbo",
+          "qwen3-max",
+          "qwen-long",
+          "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+          "Qwen/Qwen2.5-7B-Instruct",
+          "Pro/deepseek-ai/DeepSeek-V3.1-Terminus",
+          "deepseek-ai/DeepSeek-R1",
+          "Qwen/Qwen3-235B-A22B-Thinking-2507",
+          "zai-org/GLM-4.6",
+          "moonshotai/Kimi-K2-Instruct-0905",
+          "Ring-1T",
+          "step3",
+        ],
+      },
     ],
     runtimeParams: [
-      { title: "日志目录", body: "所有日志统一落到 logs/。", tone: "neutral" },
-      { title: "数据库目录", body: "所有数据库统一落到 data/。", tone: "neutral" },
-      { title: "Docker 构建目录", body: "Docker 相关配置统一放在 build/。", tone: "neutral" },
+      {
+        key: "EMAIL_ENABLED",
+        title: "启用邮件发送",
+        body: "是否启用邮件告警。",
+        tone: "neutral",
+        value: "false",
+        required: false,
+        type: "boolean",
+      },
+      {
+        key: "SMTP_SERVER",
+        title: "邮件服务器",
+        body: "SMTP 主机地址。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "SMTP_PORT",
+        title: "邮件服务器端口",
+        body: "默认使用 TLS 通道，失败后会回退并记录错误。",
+        tone: "neutral",
+        value: "587",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "EMAIL_FROM",
+        title: "邮件发件人",
+        body: "邮件发送的发件人邮箱。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "EMAIL_PASSWORD",
+        title: "邮箱授权码",
+        body: "用于 SMTP 登录的授权码。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "password",
+      },
+      {
+        key: "EMAIL_TO",
+        title: "邮件接收人",
+        body: "支持多个接收邮箱，逗号分隔。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "WEBHOOK_ENABLED",
+        title: "启用 Webhook",
+        body: "是否启用 Webhook 通知。",
+        tone: "neutral",
+        value: "false",
+        required: false,
+        type: "boolean",
+      },
+      {
+        key: "WEBHOOK_TYPE",
+        title: "Webhook 类型",
+        body: "dingtalk / feishu",
+        tone: "neutral",
+        value: "dingtalk",
+        required: false,
+        type: "select",
+        options: ["dingtalk", "feishu"],
+      },
+      {
+        key: "WEBHOOK_URL",
+        title: "Webhook 地址",
+        body: "未配置时默认降级到只写入本地事件记录。",
+        tone: "neutral",
+        value: "",
+        required: false,
+        type: "text",
+      },
+      {
+        key: "WEBHOOK_KEYWORD",
+        title: "Webhook 关键词",
+        body: "可用于企业群通知的内容过滤与签名校验。",
+        tone: "neutral",
+        value: "aiagents通知",
+        required: false,
+        type: "text",
+      },
     ],
-    paths: ["logs/app.log", "data/watchlist.db", "build/nginx.conf"],
   },
 };
 
@@ -818,9 +996,35 @@ export function mockRunPageAction(page: PageKey, action: string, payload?: unkno
         );
       }
       return mockPageSnapshot("history");
-    case "settings":
+  case "settings":
       if (action === "save") {
-        initialState.settings.updatedAt = "2026-04-13 10:38";
+        const next = typeof payload === "object" && payload ? (payload as Record<string, string>) : undefined;
+        const updateItems = (items: typeof initialState.settings.dataSources) => {
+          if (!items || !next) return;
+          for (const item of items) {
+            const key = item.key;
+            const value = key ? next[key] : undefined;
+            if (value === undefined) continue;
+            item.value = String(value);
+            if (typeof item.body === "string") {
+              if (item.body.includes("当前值:")) {
+                const [prefix] = item.body.split("当前值:");
+                item.body = `${prefix.trim()} 当前值: ${item.value}`;
+              } else if (item.body.includes("：")) {
+                const [prefix] = item.body.split("：");
+                item.body = `${prefix.trim()}：当前值: ${item.value}`;
+              } else {
+                item.body = `${item.body} 当前值: ${item.value}`;
+              }
+            } else {
+              item.body = `当前值: ${item.value}`;
+            }
+          }
+        };
+
+        updateItems(initialState.settings.dataSources);
+        updateItems(initialState.settings.modelConfig);
+        updateItems(initialState.settings.runtimeParams);
       }
       return mockPageSnapshot("settings");
     default:

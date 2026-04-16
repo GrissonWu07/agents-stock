@@ -7,8 +7,8 @@ import app.config as config
 
 # 预置模型列表（用户可以在UI中选择）
 _preset_models = {
-    "deepseek-chat": "DeepSeek Chat",
-    "deepseek-reasoner": "DeepSeek Reasoner (推理增强)",
+    "deepseek/deepseek-chat": "DeepSeek Chat",
+    "deepseek/deepseek-reasoner": "DeepSeek Reasoner (推理增强)",
     "qwen-plus": "qwen-plus (阿里百炼)",
     "qwen-plus-latest": "qwen-plus-latest (阿里百炼)",
     "qwen-flash": "qwen-flash (阿里百炼)",

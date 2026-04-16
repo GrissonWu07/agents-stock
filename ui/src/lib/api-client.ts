@@ -1,6 +1,4 @@
 import type { PageKey, PageSnapshotMap } from "./page-models";
-import { mockPageSnapshot, mockRunPageAction } from "./mock-backend";
-
 export type ApiMode = "live" | "hybrid" | "mock";
 
 export type ApiClientOptions = {
@@ -150,28 +148,25 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return await parseResponseJson<T>(response, path);
   };
 
-  const requestMock = async <T,>(page: PageKey, action?: string, payload?: unknown): Promise<T> =>
-    (action ? mockRunPageAction(page, action, payload) : mockPageSnapshot(page)) as T;
-
   const requestPage = async <T,>(page: PageKey): Promise<T> => {
+    if (mode === "mock") {
+      throw new ApiError("Mock mode 仅在测试环境提供模拟数据，请使用 mock 后端测试桩", 501, PAGE_ENDPOINTS[page]);
+    }
     try {
-      if (mode === "mock") {
-        return await requestMock<T>(page);
-      }
       return await requestLive<T>(PAGE_ENDPOINTS[page]);
     } catch (error) {
       if (mode === "hybrid") {
-        return await requestMock<T>(page);
+        throw error;
       }
       throw error;
     }
   };
 
   const requestAction = async <T,>(page: PageKey, action: string, payload?: unknown): Promise<T> => {
+    if (mode === "mock") {
+      throw new ApiError("Mock mode 仅在测试环境提供模拟数据，请使用 mock 后端测试桩", 501, PAGE_ACTION_ENDPOINTS[page][action] ?? `${PAGE_ENDPOINTS[page]}/actions/${action}`);
+    }
     try {
-      if (mode === "mock") {
-        return await requestMock<T>(page, action, payload);
-      }
       const endpoint = PAGE_ACTION_ENDPOINTS[page][action] ?? `${PAGE_ENDPOINTS[page]}/actions/${action}`;
       return await requestLive<T>(endpoint, {
         method: "POST",
@@ -179,7 +174,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
       });
     } catch (error) {
       if (mode === "hybrid") {
-        return await requestMock<T>(page, action, payload);
+        throw error;
       }
       throw error;
     }

@@ -8,7 +8,7 @@ export type PageResourceState<T> = {
   data: T | null;
   error: string | null;
   refresh: () => Promise<void>;
-  runAction: (action: string, payload?: unknown) => Promise<void>;
+  runAction: (action: string, payload?: unknown) => Promise<T | null>;
 };
 
 const toMessage = (error: unknown) => {
@@ -48,9 +48,11 @@ export function usePageData<K extends PageKey>(
         setData(snapshot);
         setStatus("ready");
         setError(null);
+        return snapshot;
       } catch (err) {
         setError(toMessage(err));
         setStatus("error");
+        return null;
       }
     },
     [client, page],

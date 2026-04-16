@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createApiClient, type ApiClient } from "../lib/api-client";
-import { mockPageSnapshot } from "../lib/mock-backend";
+import { mockPageSnapshot } from "./mock-backend";
 
 describe("api client endpoints", () => {
   it("uses canonical page and action endpoints for quant and monitor pages", async () => {
