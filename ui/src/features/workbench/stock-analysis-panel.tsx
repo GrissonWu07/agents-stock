@@ -123,13 +123,15 @@ const StageBadge = ({ state }: { state: StageState }) => {
   return <span className="analysis-stage__badge analysis-stage__badge--waiting">{t("Waiting previous stage")}</span>;
 };
 
+const replaceLiteralAll = (value: string, search: string, next: string) => value.split(search).join(next);
+
 const escapeHtml = (value: string) =>
   value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 const formatMarkdownInline = (value: string) =>
   value
@@ -139,7 +141,7 @@ const formatMarkdownInline = (value: string) =>
     .replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
 const markdownToHtml = (markdown: string) => {
-  const source = escapeHtml(markdown || "").replaceAll("\r\n", "\n");
+  const source = replaceLiteralAll(escapeHtml(markdown || ""), "\r\n", "\n");
   const lines = source.split("\n");
   const html: string[] = [];
   const paragraphBuffer: string[] = [];

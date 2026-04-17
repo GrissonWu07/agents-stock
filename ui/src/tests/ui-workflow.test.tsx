@@ -8,6 +8,8 @@ import { ResearchPage } from "../features/research/research-page";
 import { mockPageSnapshot } from "./mock-backend";
 import type { PageKey, PageSnapshotMap } from "../lib/page-models";
 
+const createTaskStatusMock = () => vi.fn(async () => null) as unknown as ApiClient["getTaskStatus"];
+
 const clone = <T,>(value: T): T => {
   if (typeof structuredClone === "function") {
     return structuredClone(value);
@@ -25,6 +27,7 @@ function createClient(page: PageKey) {
     mode: "mock",
     getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
     runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
+    getTaskStatus: createTaskStatusMock(),
   };
 
   return { client, runPageAction };
@@ -38,6 +41,7 @@ function createDiscoverClient(snapshot: PageSnapshotMap["discover"], runPageActi
     getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
     runPageAction: (runPageAction ??
       (vi.fn(async () => clone(snapshot)) as unknown as ApiClient["runPageAction"])) as ApiClient["runPageAction"],
+    getTaskStatus: createTaskStatusMock(),
   };
 
   return { client };
@@ -307,6 +311,7 @@ describe("ui workflow pages", () => {
       mode: "mock",
       getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => clone(snapshot)) as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(<ResearchPage client={client} />);

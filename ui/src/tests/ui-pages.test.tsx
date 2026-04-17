@@ -15,12 +15,13 @@ import { SettingsPage } from "../features/settings/settings-page";
 const client: ApiClient = {
   baseUrl: "/api",
   mode: "mock",
-  getPageSnapshot: async (page: PageKey) => {
+  getPageSnapshot: (async (page: PageKey) => {
     return mockPageSnapshot(page as PageKey);
-  },
-  runPageAction: async (page: PageKey, action: string, payload?: unknown) => {
+  }) as unknown as ApiClient["getPageSnapshot"],
+  runPageAction: (async (page: PageKey, action: string, payload?: unknown) => {
     return mockRunPageAction(page as PageKey, action, payload);
-  },
+  }) as unknown as ApiClient["runPageAction"],
+  getTaskStatus: (async () => null) as unknown as ApiClient["getTaskStatus"],
 };
 
 const makeErrorClient = (message: string): ApiClient =>
@@ -33,6 +34,9 @@ const makeErrorClient = (message: string): ApiClient =>
     runPageAction: async () => {
       throw new Error(message);
     },
+    getTaskStatus: async () => {
+      throw new Error(message);
+    },
   }) as unknown as ApiClient;
 
 const makeEmptyClient = (): ApiClient =>
@@ -41,6 +45,7 @@ const makeEmptyClient = (): ApiClient =>
     mode: "mock",
     getPageSnapshot: async () => null,
     runPageAction: async () => null,
+    getTaskStatus: async () => null,
   }) as unknown as ApiClient;
 
 const makeSnapshotClient = <K extends PageKey>(page: K, snapshot: PageSnapshotMap[K]): ApiClient =>
@@ -49,6 +54,7 @@ const makeSnapshotClient = <K extends PageKey>(page: K, snapshot: PageSnapshotMa
     mode: "mock",
     getPageSnapshot: async () => snapshot,
     runPageAction: async () => snapshot,
+    getTaskStatus: async () => null,
   }) as unknown as ApiClient;
 
 const makePageClient = <K extends PageKey>(page: K) => {
@@ -65,6 +71,7 @@ const makePageClient = <K extends PageKey>(page: K) => {
       mode: "mock",
       getPageSnapshot,
       runPageAction,
+      getTaskStatus: vi.fn(async () => null) as unknown as ApiClient["getTaskStatus"],
     } as unknown as ApiClient,
     getPageSnapshot,
     runPageAction,

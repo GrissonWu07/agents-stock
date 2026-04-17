@@ -5,6 +5,8 @@ import { WorkbenchPage } from "../features/workbench/workbench-page";
 import type { ApiClient } from "../lib/api-client";
 import { mockPageSnapshot } from "./mock-backend";
 
+const createTaskStatusMock = () => vi.fn(async () => null) as unknown as ApiClient["getTaskStatus"];
+
 const createClient = () => {
   const snapshot = mockPageSnapshot("workbench");
   const runPageAction = vi.fn(async () => snapshot);
@@ -14,6 +16,7 @@ const createClient = () => {
     mode: "mock",
     getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
     runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
+    getTaskStatus: createTaskStatusMock(),
   };
 
   return { client, runPageAction };
@@ -153,6 +156,7 @@ describe("workbench page", () => {
         }
         return snapshot;
       }) as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(
@@ -195,6 +199,7 @@ describe("workbench page", () => {
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => queued) as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(
@@ -234,6 +239,7 @@ describe("workbench page", () => {
       mode: "mock",
       getPageSnapshot: vi.fn(async () => failed) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => failed) as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(
@@ -273,6 +279,7 @@ describe("workbench page", () => {
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => queued) as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(
@@ -329,6 +336,7 @@ describe("workbench page", () => {
       mode: "mock",
       getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
       runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(
@@ -419,6 +427,7 @@ describe("workbench page", () => {
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
+      getTaskStatus: createTaskStatusMock(),
     };
 
     render(

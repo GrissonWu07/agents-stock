@@ -65,7 +65,7 @@ const normalizeText = (value: string) =>
     .replace(/[#*`]/g, "")
     .toLowerCase();
 
-const isCompositeInsight = () => false;
+const isCompositeInsight = (_item: { title: string; body: string }) => false;
 
 const hasStructuredText = (output: string) => {
   const trimmed = output.trim();
@@ -217,7 +217,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
   }, [snapshot]);
   const modulesWithInsights = useMemo<ResearchModuleWithInsights[]>(() => {
     if (!snapshot) return [];
-    const outputInsights = snapshot.marketView ?? [];
+    const outputInsights: ResearchSnapshot["marketView"] = Array.isArray(snapshot.marketView) ? snapshot.marketView : [];
     const moduleNames = snapshot.modules.map((module) => module.name);
     const seenInsight = new Set<string>();
     const insightBuckets = new Map<string, ResearchModuleWithInsights["insights"]>();
@@ -226,7 +226,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
       insightBuckets.set(name, []);
     });
 
-    outputInsights.forEach((insight) => {
+    outputInsights.forEach((insight: ResearchSnapshot["marketView"][number]) => {
       if (isAggregateInsight(insight) || isCompositeInsight(insight)) {
         return;
       }
