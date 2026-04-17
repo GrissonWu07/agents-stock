@@ -387,7 +387,7 @@ a {
 }
 
 .section-grid--sidebar {
-  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
 }
 
 .toolbar {
