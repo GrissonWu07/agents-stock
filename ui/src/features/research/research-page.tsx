@@ -98,24 +98,24 @@ const extractStructuredSections = (note: string) => {
     current = null;
   };
 
-  validLines.forEach((line) => {
+  for (const line of validLines) {
     const headingMatch = line.match(/^#{1,6}\s*(.+)$/);
     if (headingMatch) {
-    if (sections.length === 0 && intro.length > 0) {
+      if (sections.length === 0 && intro.length > 0) {
         sections.push({ title: t("Market highlights"), body: cleanStructuredText(intro.join("\n")) });
         intro.length = 0;
       }
       finalizeSection();
       current = { title: cleanStructuredText(headingMatch[1]), body: "" };
-      return;
+      continue;
     }
 
     if (!current) {
       intro.push(line);
-      return;
+      continue;
     }
     current.body = current.body ? `${current.body}\n${line}` : line;
-  });
+  }
 
   if (sections.length === 0 && intro.length > 0) {
     sections.push({ title: t("Market highlights"), body: cleanStructuredText(intro.join("\n")) });
