@@ -10,6 +10,7 @@ on:
 
 env:
   IMAGE_NAME: grissonwu07/xuanwustock
+  DOCKER_CONFIG: /tmp/.docker-xuanwustock
 
 jobs:
   build-and-push:
@@ -23,6 +24,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Prepare Docker config
+        run: |
+          set -euo pipefail
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
