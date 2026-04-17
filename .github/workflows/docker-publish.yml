@@ -24,9 +24,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -44,13 +41,18 @@ jobs:
             type=ref,event=tag
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: build/Dockerfile
-          push: true
-          tags: ${{ steps.backend_meta.outputs.tags }}
-          labels: ${{ steps.backend_meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          TAG_FILE="$(mktemp)"
+          printf '%s\n' "${{ steps.backend_meta.outputs.tags }}" | sed '/^\s*$/d' > "$TAG_FILE"
+          BUILD_TAG_ARGS=""
+          while IFS= read -r tag; do
+            BUILD_TAG_ARGS="$BUILD_TAG_ARGS -t $tag"
+          done < "$TAG_FILE"
+          docker build -f build/Dockerfile $BUILD_TAG_ARGS .
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done < "$TAG_FILE"
 
       - name: Frontend image metadata
         id: frontend_meta
@@ -63,10 +65,15 @@ jobs:
             type=ref,event=tag,prefix=ui-
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: build/Dockerfile.ui
-          push: true
-          tags: ${{ steps.frontend_meta.outputs.tags }}
-          labels: ${{ steps.frontend_meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          TAG_FILE="$(mktemp)"
+          printf '%s\n' "${{ steps.frontend_meta.outputs.tags }}" | sed '/^\s*$/d' > "$TAG_FILE"
+          BUILD_TAG_ARGS=""
+          while IFS= read -r tag; do
+            BUILD_TAG_ARGS="$BUILD_TAG_ARGS -t $tag"
+          done < "$TAG_FILE"
+          docker build -f build/Dockerfile.ui $BUILD_TAG_ARGS .
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done < "$TAG_FILE"
