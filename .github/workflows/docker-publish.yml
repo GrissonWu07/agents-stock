@@ -51,6 +51,24 @@ jobs:
       - name: Build and push backend image
         run: |
           set -euo pipefail
+          retry_push() {
+            local image="$1"
+            local max_attempts=5
+            local attempt=1
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if docker --config "$DOCKER_CONFIG" push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Push failed for $image after ${max_attempts} attempts"
+                return 1
+              fi
+              local sleep_s=$((attempt * 5))
+              echo "Push failed for $image (attempt ${attempt}/${max_attempts}), retrying in ${sleep_s}s..."
+              sleep "$sleep_s"
+              attempt=$((attempt + 1))
+            done
+          }
           SHORT_SHA="${GITHUB_SHA::7}"
           TAGS=("${IMAGE_NAME}:sha-${SHORT_SHA}")
           if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ "${GITHUB_REF_NAME}" = "main" ]; then
@@ -65,12 +83,30 @@ jobs:
           done
           docker --config "$DOCKER_CONFIG" build -f build/Dockerfile $BUILD_TAG_ARGS .
           for tag in "${TAGS[@]}"; do
-            docker --config "$DOCKER_CONFIG" push "$tag"
+            retry_push "$tag"
           done
 
       - name: Build and push frontend image
         run: |
           set -euo pipefail
+          retry_push() {
+            local image="$1"
+            local max_attempts=5
+            local attempt=1
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if docker --config "$DOCKER_CONFIG" push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Push failed for $image after ${max_attempts} attempts"
+                return 1
+              fi
+              local sleep_s=$((attempt * 5))
+              echo "Push failed for $image (attempt ${attempt}/${max_attempts}), retrying in ${sleep_s}s..."
+              sleep "$sleep_s"
+              attempt=$((attempt + 1))
+            done
+          }
           SHORT_SHA="${GITHUB_SHA::7}"
           TAGS=("${IMAGE_NAME}:ui-sha-${SHORT_SHA}")
           if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ "${GITHUB_REF_NAME}" = "main" ]; then
@@ -85,5 +121,5 @@ jobs:
           done
           docker --config "$DOCKER_CONFIG" build -f build/Dockerfile.ui $BUILD_TAG_ARGS .
           for tag in "${TAGS[@]}"; do
-            docker --config "$DOCKER_CONFIG" push "$tag"
+            retry_push "$tag"
           done
