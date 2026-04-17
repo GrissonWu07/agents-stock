@@ -185,6 +185,30 @@ const resolveModuleOwner = (insight: { title: string; body: string }, moduleName
   return moduleNames.find((name) => moduleMatchesInsight(name, insight));
 };
 
+const RESEARCH_TEXT_ALIASES: Record<string, string> = {
+  sector: "Sector strategy",
+  longhubang: "Dragon tiger list",
+  "dragon tiger list": "Dragon tiger list",
+  news: "News flow",
+  macro: "Macro analysis",
+  cycle: "Macro cycle",
+};
+
+const localizeResearchText = (value: string | undefined) => {
+  const source = (value ?? "").trim();
+  if (!source) return "";
+  const normalized = source.toLowerCase();
+  if (normalized.startsWith("dragon tiger analysis c")) {
+    return t("Dragon tiger analysis completed");
+  }
+  const alias = RESEARCH_TEXT_ALIASES[source] ?? RESEARCH_TEXT_ALIASES[normalized] ?? source;
+  const localizedAlias = t(alias);
+  if (localizedAlias !== alias || alias !== source) {
+    return localizedAlias;
+  }
+  return t(source);
+};
+
 export function ResearchPage({ client }: ResearchPageProps) {
   const taskClient = client ?? apiClient;
   const resource = usePageData("research", client);
@@ -274,11 +298,11 @@ export function ResearchPage({ client }: ResearchPageProps) {
       : t("Select stock outputs first, then batch add to watchlist.");
   const outputEmptyLabel = normalizedSearch
     ? t('No stock output matches "{keyword}"', { keyword: searchTerm })
-    : snapshot?.outputTable.emptyLabel ?? t("No stock output");
+    : localizeResearchText(snapshot?.outputTable.emptyLabel) || t("No stock output");
   const outputEmptyMessage =
     normalizedSearch && snapshot
       ? t("Try filtering by code, name, source module, or next action.")
-      : snapshot?.outputTable.emptyMessage;
+      : localizeResearchText(snapshot?.outputTable.emptyMessage);
 
   const derivedMetrics = snapshot
     ? [
@@ -334,16 +358,20 @@ export function ResearchPage({ client }: ResearchPageProps) {
       if (taskId) {
         const finished = await pollTask(taskId);
         if (finished?.status === "completed") {
-          setRunFeedback(finished.message || t("Research refreshed."));
+          setRunFeedback(localizeResearchText(finished.message) || t("Research refreshed."));
         } else if (finished?.status === "failed") {
-          setRunFeedback(t("Research task failed: {message}", { message: finished.message || t("Please check task logs") }));
+          setRunFeedback(
+            t("Research task failed: {message}", {
+              message: localizeResearchText(finished.message) || t("Please check task logs"),
+            }),
+          );
         } else {
           setRunFeedback(t("Research task submitted and running in background."));
         }
         return;
       }
       if (moduleName) {
-        setRunFeedback(t("Module {name} refreshed.", { name: moduleName }));
+        setRunFeedback(t("Module {name} refreshed.", { name: localizeResearchText(moduleName) }));
       } else {
         setRunFeedback(t("Research refreshed."));
       }
@@ -384,9 +412,9 @@ export function ResearchPage({ client }: ResearchPageProps) {
   return (
     <div>
       <PageHeader
-        eyebrow="Research"
+        eyebrow={t("Research")}
         title={t("Research")}
-        description={t("Aggregate sector strategy, dragon-tiger list, news flow, macro analysis, and macro cycle in one page.")}
+        description={localizeResearchText("Aggregate sector strategy, dragon-tiger list, news flow, macro analysis, and macro cycle in one page.")}
         actions={
           <>
           <button className="button button--secondary" type="button" onClick={() => void handleRunModule()} disabled={isRegenerating || researchBusy}>
@@ -410,7 +438,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
 
         <WorkbenchCard>
           <h2 className="section-card__title">{t("Module analysis")}</h2>
-          <p className="section-card__description">{snapshot.summary.title}</p>
+          <p className="section-card__description">{localizeResearchText(snapshot.summary.title)}</p>
           {runFeedback ? <div className="discover-candidate-toolbar__feedback">{runFeedback}</div> : null}
           <div className="research-module-layout">
             <aside className="research-module-list" aria-label={t("Research module list")}>
@@ -423,8 +451,8 @@ export function ResearchPage({ client }: ResearchPageProps) {
                     type="button"
                     onClick={() => setSelectedModuleName(module.name)}
                   >
-                    <div className="research-module-list__title">{module.name}</div>
-                    <div className="research-module-list__output">{module.output}</div>
+                    <div className="research-module-list__title">{localizeResearchText(module.name)}</div>
+                    <div className="research-module-list__output">{localizeResearchText(module.output)}</div>
                   </button>
                 );
               })}
@@ -435,7 +463,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
                   <div className="research-module-card__output">
                     <div className="research-module-card__output-meta">
                       <span>{t("Output visualization")}</span>
-                      <span>{selectedModule.output}</span>
+                      <span>{localizeResearchText(selectedModule.output)}</span>
                     </div>
                     <div className="research-module-card__meter-track">
                       {(() => {
@@ -476,12 +504,12 @@ export function ResearchPage({ client }: ResearchPageProps) {
                   <div className="research-module-card__divider" />
                   <div className="research-module-card__header">
                     <div>
-                      <h3 className="research-module-card__name">{selectedModule.name}</h3>
+                      <h3 className="research-module-card__name">{localizeResearchText(selectedModule.name)}</h3>
                       <div className="research-module-card__note">
-                        {selectedModule.sections.length > 0 ? t("Full analysis expanded. See thematic details below.") : selectedModule.note}
+                        {selectedModule.sections.length > 0 ? t("Full analysis expanded. See thematic details below.") : localizeResearchText(selectedModule.note)}
                       </div>
                     </div>
-                    <span className={`badge badge--${getOutputTone(selectedModule.output)}`}>{selectedModule.output}</span>
+                    <span className={`badge badge--${getOutputTone(selectedModule.output)}`}>{localizeResearchText(selectedModule.output)}</span>
                   </div>
                   <div className="research-module-card__divider" />
                   <div className="research-module-card__insight-title">{t("Top-level result")}</div>
@@ -489,17 +517,17 @@ export function ResearchPage({ client }: ResearchPageProps) {
                     <div className="research-module-card__insight-list">
                       {selectedModule.sections.map((section, index) => (
                         <div className="research-module-card__insight-item" key={`${section.title}-${index}`}>
-                          <div className="research-module-card__insight-item-title">{section.title}</div>
+                          <div className="research-module-card__insight-item-title">{localizeResearchText(section.title)}</div>
                           <div className="research-module-card__insight-item-body">{section.body}</div>
                         </div>
                       ))}
                     </div>
                   ) : selectedModule.note && hasStructuredText(selectedModule.note) ? (
-                    <div className="research-module-card__detail-body">{selectedModule.note}</div>
+                    <div className="research-module-card__detail-body">{localizeResearchText(selectedModule.note)}</div>
                   ) : selectedModule.note ? (
-                    <p className="research-module-card__empty-note">{selectedModule.note}</p>
+                    <p className="research-module-card__empty-note">{localizeResearchText(selectedModule.note)}</p>
                   ) : selectedModule.outputDetail ? (
-                    <p className="research-module-card__empty-note">{selectedModule.outputDetail}</p>
+                    <p className="research-module-card__empty-note">{localizeResearchText(selectedModule.outputDetail)}</p>
                   ) : (
                     <p className="research-module-card__empty-note">{t("No structured detail for this module yet.")}</p>
                   )}
@@ -510,8 +538,8 @@ export function ResearchPage({ client }: ResearchPageProps) {
                       <div className="research-module-card__insight-list">
                         {selectedModule.insights.map((insight, index) => (
                           <div className="research-module-card__insight-item" key={`${insight.title}-${index}`}>
-                            <div className="research-module-card__insight-item-title">{insight.title}</div>
-                            <div className="research-module-card__insight-item-body">{insight.body}</div>
+                            <div className="research-module-card__insight-item-title">{localizeResearchText(insight.title)}</div>
+                            <div className="research-module-card__insight-item-body">{localizeResearchText(insight.body)}</div>
                           </div>
                         ))}
                       </div>
@@ -525,11 +553,11 @@ export function ResearchPage({ client }: ResearchPageProps) {
 
         <WorkbenchCard>
           <h2 className="section-card__title">{t("Research summary")}</h2>
-          <p className="section-card__description">{snapshot.summary.body}</p>
+          <p className="section-card__description">{localizeResearchText(snapshot.summary.body)}</p>
           <div className="summary-list">
             <div className="summary-item">
               <div className="summary-item__title">{t("Summary")}</div>
-              <div className="summary-item__body">{snapshot.summary.title}</div>
+              <div className="summary-item__body">{localizeResearchText(snapshot.summary.title)}</div>
             </div>
           </div>
         </WorkbenchCard>
@@ -587,9 +615,9 @@ export function ResearchPage({ client }: ResearchPageProps) {
                       checked={selection.allSelected}
                       onChange={selection.toggleAll}
                     />
-                  </th>
+                </th>
                   {snapshot.outputTable.columns.map((column) => (
-                    <th key={column}>{column}</th>
+                    <th key={column}>{localizeResearchText(column)}</th>
                   ))}
                   <th className="table__actions-head">{t("Actions")}</th>
                 </tr>
@@ -617,14 +645,14 @@ export function ResearchPage({ client }: ResearchPageProps) {
                       </td>
                       {row.cells.map((cell, index) => (
                         <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {cell}
+                          {typeof cell === "string" ? localizeResearchText(cell) : cell}
                         </td>
                       ))}
                       <td>
                         <div className="table__actions">
                           <button className="button button--secondary" type="button" onClick={() => handleSingleWatchlist(row.id)}>
                             <span aria-hidden="true">{row.actions?.[0]?.icon ?? "⭐"}</span>
-                            <span>{row.actions?.[0]?.label ?? t("Add to watchlist")}</span>
+                            <span>{localizeResearchText(row.actions?.[0]?.label) || t("Add to watchlist")}</span>
                           </button>
                         </div>
                       </td>
@@ -638,17 +666,17 @@ export function ResearchPage({ client }: ResearchPageProps) {
 
         <WorkbenchCard>
           <h2 className="section-card__title">{t("Latest result summary")}</h2>
-          <p className="section-card__description">{snapshot.summary.body}</p>
+          <p className="section-card__description">{localizeResearchText(snapshot.summary.body)}</p>
           <div className="summary-list">
             <div className="summary-item">
-              <div className="summary-item__title">{snapshot.summary.title}</div>
+              <div className="summary-item__title">{localizeResearchText(snapshot.summary.title)}</div>
               <div className="summary-item__body">{t("Snapshot updated at: {time}", { time: snapshot.updatedAt })}</div>
             </div>
           </div>
           <div className="chip-row">
             {snapshot.modules.map((module) => (
               <span className="badge badge--neutral" key={module.name}>
-                {module.name} · {module.output}
+                {localizeResearchText(module.name)} · {localizeResearchText(module.output)}
               </span>
             ))}
           </div>
@@ -663,7 +691,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
                 <div className="chip-row" style={{ marginTop: "10px" }}>
                   {selectedPreview.map((row) => (
                     <span className="badge badge--neutral" key={row.id}>
-                      {row.cells[1] ?? row.id} · {row.cells[2] ?? row.source ?? t("Source not marked")}
+                      {localizeResearchText(String(row.cells[1] ?? row.id))} · {localizeResearchText(String(row.cells[2] ?? row.source ?? t("Source not marked")))}
                     </span>
                   ))}
                 </div>

@@ -54,7 +54,7 @@ const DECISION_FIELD_LABELS = [
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const localizeDecisionText = (value: string) => {
-  let output = value ?? "";
+  let output = t(value ?? "");
   for (const label of DECISION_FIELD_LABELS) {
     const pattern = new RegExp(`${escapeRegExp(label)}\\s*[:：]`, "gi");
     output = output.replace(pattern, `${t(label)}：`);
@@ -371,7 +371,7 @@ export function StockAnalysisPanel({
 
   const hasBatchCodes = splitSymbols(symbol).length > 0;
   const canAnalyze = hasBatchCodes && selectedAnalysts.length > 0;
-  const operationAdvice = operationInsights.map((item) => item.body).filter(Boolean).join("\n\n");
+  const operationAdvice = operationInsights.map((item) => t(item.body)).filter(Boolean).join("\n\n");
 
   return (
     <WorkbenchCard className={busy ? "analysis-panel analysis-panel--busy" : "analysis-panel"}>
@@ -535,7 +535,7 @@ export function StockAnalysisPanel({
           <div className="summary-list" style={{ marginTop: "12px" }}>
             <div className="summary-item summary-item--accent">
               <div className="summary-item__title">{localizeSummaryTitle(displayAnalysis.summaryTitle)}</div>
-              <MarkdownBlock className="summary-item__body markdown-body" content={displayAnalysis.summaryBody} />
+              <MarkdownBlock className="summary-item__body markdown-body" content={t(displayAnalysis.summaryBody)} />
               {displayAnalysis.generatedAt ? (
                 <div className="summary-item__meta">{t("Generate time: {time}", { time: displayAnalysis.generatedAt })}</div>
               ) : null}
@@ -618,7 +618,7 @@ export function StockAnalysisPanel({
               {otherDecisionInsights.map((insight, index) => (
                 <div className="summary-item" key={`${insight.title}-${index}`}>
                   <div className="summary-item__title">{t(insight.title)}</div>
-                  <MarkdownBlock className="summary-item__body markdown-body" content={insight.body} />
+                  <MarkdownBlock className="summary-item__body markdown-body" content={t(insight.body)} />
                 </div>
               ))}
             </div>
