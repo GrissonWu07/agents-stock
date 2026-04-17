@@ -48,50 +48,42 @@ jobs:
           }
           EOF
 
-      - name: Backend image metadata
-        id: backend_meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
-            type=ref,event=tag
-
       - name: Build and push backend image
         run: |
           set -euo pipefail
-          TAG_FILE="$(mktemp)"
-          printf '%s\n' "${{ steps.backend_meta.outputs.tags }}" | sed '/^\s*$/d' > "$TAG_FILE"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAGS=("${IMAGE_NAME}:sha-${SHORT_SHA}")
+          if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ "${GITHUB_REF_NAME}" = "main" ]; then
+            TAGS+=("${IMAGE_NAME}:latest")
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAGS+=("${IMAGE_NAME}:${GITHUB_REF_NAME}")
+          fi
           BUILD_TAG_ARGS=""
-          while IFS= read -r tag; do
+          for tag in "${TAGS[@]}"; do
             BUILD_TAG_ARGS="$BUILD_TAG_ARGS -t $tag"
-          done < "$TAG_FILE"
+          done
           docker --config "$DOCKER_CONFIG" build -f build/Dockerfile $BUILD_TAG_ARGS .
-          while IFS= read -r tag; do
+          for tag in "${TAGS[@]}"; do
             docker --config "$DOCKER_CONFIG" push "$tag"
-          done < "$TAG_FILE"
-
-      - name: Frontend image metadata
-        id: frontend_meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=ui-latest,enable={{is_default_branch}}
-            type=sha,prefix=ui-
-            type=ref,event=tag,prefix=ui-
+          done
 
       - name: Build and push frontend image
         run: |
           set -euo pipefail
-          TAG_FILE="$(mktemp)"
-          printf '%s\n' "${{ steps.frontend_meta.outputs.tags }}" | sed '/^\s*$/d' > "$TAG_FILE"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAGS=("${IMAGE_NAME}:ui-sha-${SHORT_SHA}")
+          if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ "${GITHUB_REF_NAME}" = "main" ]; then
+            TAGS+=("${IMAGE_NAME}:ui-latest")
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAGS+=("${IMAGE_NAME}:ui-${GITHUB_REF_NAME}")
+          fi
           BUILD_TAG_ARGS=""
-          while IFS= read -r tag; do
+          for tag in "${TAGS[@]}"; do
             BUILD_TAG_ARGS="$BUILD_TAG_ARGS -t $tag"
-          done < "$TAG_FILE"
+          done
           docker --config "$DOCKER_CONFIG" build -f build/Dockerfile.ui $BUILD_TAG_ARGS .
-          while IFS= read -r tag; do
+          for tag in "${TAGS[@]}"; do
             docker --config "$DOCKER_CONFIG" push "$tag"
-          done < "$TAG_FILE"
+          done
