@@ -30,16 +30,26 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装Node.js（从淘宝镜像下载二进制包，最稳定快速的方案）
+# 安装 Node.js（多源回退 + 重试，降低网络抖动导致的构建失败）
 RUN NODE_VERSION=18.20.4 && \
     ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; \
     elif [ "$ARCH" = "arm64" ]; then NODE_ARCH="arm64"; \
     else NODE_ARCH="$ARCH"; fi && \
-    curl -fsSL https://registry.npmmirror.com/-/binary/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz -o /tmp/node.tar.gz && \
+    NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" && \
+    NODE_URLS="https://registry.npmmirror.com/-/binary/node/v${NODE_VERSION}/${NODE_TARBALL} https://npmmirror.com/mirrors/node/v${NODE_VERSION}/${NODE_TARBALL} https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" && \
+    DOWNLOAD_OK=0 && \
+    for url in $NODE_URLS; do \
+      echo "Downloading Node.js from ${url}"; \
+      if curl --fail --location --silent --show-error --retry 5 --retry-delay 2 --retry-max-time 180 --retry-all-errors --http1.1 "${url}" -o /tmp/node.tar.gz; then \
+        DOWNLOAD_OK=1; \
+        break; \
+      fi; \
+    done && \
+    if [ "$DOWNLOAD_OK" -ne 1 ]; then echo "Failed to download Node.js from all mirrors"; exit 1; fi && \
     tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 && \
     rm /tmp/node.tar.gz && \
-    ln -s /usr/local/bin/node /usr/local/bin/nodejs
+    ln -sf /usr/local/bin/node /usr/local/bin/nodejs
 
 # 验证安装
 RUN node --version && npm --version
