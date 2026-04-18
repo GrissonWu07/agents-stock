@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: grissonwu07/xuanwustock:${SERVICE_IMAGE_TAG:-latest}
+    image: uhub.service.ucloud.cn/xuanwu/xuanwustock:${SERVICE_IMAGE_TAG:-latest}
     container_name: xuanwustock-service
     ports:
       - "8501:8501"
@@ -21,7 +21,7 @@ services:
       start_period: 60s
 
   frontend:
-    image: grissonwu07/xuanwustock:${UI_IMAGE_TAG:-ui-latest}
+    image: uhub.service.ucloud.cn/xuanwu/xuanwustock:${UI_IMAGE_TAG:-ui-latest}
     container_name: xuanwustock-ui
     ports:
       - "12080:80"
