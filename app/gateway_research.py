@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any, Callable
 
 from fastapi import HTTPException
@@ -9,6 +8,7 @@ from fastapi import HTTPException
 from app.async_task_base import AsyncTaskManagerBase
 from app.gateway_common import (
     RESEARCH_MARKDOWN_TEXT_LIMIT,
+    RESEARCH_MODULE_MAX_PARALLEL,
     RESEARCH_MODULE_TIMEOUT_SECONDS,
     code_from_payload as _code_from_payload,
     insight as _insight,
@@ -348,7 +348,6 @@ def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -
 
     module_results_cache: dict[str, dict[str, Any]] = {}
     module_errors: dict[str, BaseException] = {}
-    module_threads: dict[str, threading.Thread] = {}
 
     def worker(module_key: str, runner: Callable[[Any], dict[str, Any]]) -> None:
         try:
@@ -356,78 +355,79 @@ def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -
         except BaseException as exc:
             module_errors[module_key] = exc
 
-    for module_key, runner in selected_runners:
-        thread = threading.Thread(target=worker, args=(module_key, runner), name=f"research-module-{module_key}")
-        thread.daemon = True
-        thread.start()
-        module_threads[module_key] = thread
+    for offset in range(0, len(selected_runners), RESEARCH_MODULE_MAX_PARALLEL):
+        chunk = selected_runners[offset : offset + RESEARCH_MODULE_MAX_PARALLEL]
+        chunk_threads: dict[str, threading.Thread] = {}
 
-    deadline = time.time() + RESEARCH_MODULE_TIMEOUT_SECONDS
-    for module_key in module_threads:
-        thread = module_threads[module_key]
-        remaining = deadline - time.time()
-        if remaining > 0:
-            thread.join(timeout=remaining)
+        for module_key, runner in chunk:
+            thread = threading.Thread(target=worker, args=(module_key, runner), name=f"research-module-{module_key}")
+            thread.daemon = True
+            thread.start()
+            chunk_threads[module_key] = thread
 
-    for module_key in module_threads:
-        thread = module_threads[module_key]
-        if thread.is_alive():
-            failures.append(t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS))
-            module_results.append(
-                {
-                    "name": module_key,
-                    "note": _snippet(
-                        t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS),
-                        80,
-                        t("Analysis failed"),
-                    ),
-                    "output": t("Analysis failed"),
-                }
-            )
-            continue
-        if module_key in module_errors:
-            failures.append(f"{module_key}: {module_errors[module_key]}")
-            module_results.append(
-                {
-                    "name": module_key,
-                    "note": _snippet(str(module_errors[module_key]), 80, t("Analysis failed")),
-                    "output": t("Analysis failed"),
-                }
-            )
-            continue
-        result = module_results_cache.get(module_key)
-        if not isinstance(result, dict):
-            failures.append(t("{module}: empty result or invalid format", module=module_key))
-            module_results.append(
-                {
-                    "name": module_key,
-                    "note": _snippet(t("Module result is empty"), 80, t("Analysis failed")),
-                    "output": t("Analysis failed"),
-                }
-            )
-            continue
-        try:
-            module_results.append(
-                {
-                    "name": _txt(result.get("name"), module_key),
-                    "note": _snippet(
-                        result.get("note") or result.get("output") or t("Analysis completed"),
-                        RESEARCH_MARKDOWN_TEXT_LIMIT,
-                    ),
-                    "output": _snippet(result.get("output") or t("Analysis completed"), 24),
-                }
-            )
-            stock_rows.extend(result.get("rows") or [])
-            market_view.extend(result.get("marketView") or [])
-        except Exception as exc:
-            failures.append(f"{module_key}: {exc}")
-            module_results.append(
-                {
-                    "name": module_key,
-                    "note": _snippet(str(exc), 80, t("Analysis failed")),
-                    "output": t("Analysis failed"),
-                }
-            )
+        for module_key, _ in chunk:
+            thread = chunk_threads[module_key]
+            thread.join(timeout=RESEARCH_MODULE_TIMEOUT_SECONDS)
+
+        for module_key, _ in chunk:
+            thread = chunk_threads[module_key]
+            if thread.is_alive():
+                failures.append(t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS))
+                module_results.append(
+                    {
+                        "name": module_key,
+                        "note": _snippet(
+                            t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS),
+                            80,
+                            t("Analysis failed"),
+                        ),
+                        "output": t("Analysis failed"),
+                    }
+                )
+                continue
+            if module_key in module_errors:
+                failures.append(f"{module_key}: {module_errors[module_key]}")
+                module_results.append(
+                    {
+                        "name": module_key,
+                        "note": _snippet(str(module_errors[module_key]), 80, t("Analysis failed")),
+                        "output": t("Analysis failed"),
+                    }
+                )
+                continue
+            result = module_results_cache.get(module_key)
+            if not isinstance(result, dict):
+                failures.append(t("{module}: empty result or invalid format", module=module_key))
+                module_results.append(
+                    {
+                        "name": module_key,
+                        "note": _snippet(t("Module result is empty"), 80, t("Analysis failed")),
+                        "output": t("Analysis failed"),
+                    }
+                )
+                continue
+            try:
+                module_results.append(
+                    {
+                        "name": _txt(result.get("name"), module_key),
+                        "note": _snippet(
+                            result.get("note") or result.get("output") or t("Analysis completed"),
+                            RESEARCH_MARKDOWN_TEXT_LIMIT,
+                        ),
+                        "output": _snippet(result.get("output") or t("Analysis completed"), 24),
+                    }
+                )
+                stock_rows.extend(result.get("rows") or [])
+                market_view.extend(result.get("marketView") or [])
+            except Exception as exc:
+                failures.append(f"{module_key}: {exc}")
+                module_results.append(
+                    {
+                        "name": module_key,
+                        "note": _snippet(str(exc), 80, t("Analysis failed")),
+                        "output": t("Analysis failed"),
+                    }
+                )
 
     summary_title = t("Research updated") if not failures else t("Research partially completed")
     summary_body = (

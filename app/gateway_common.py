@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -9,7 +10,8 @@ from app.watchlist_selector_integration import normalize_stock_code
 
 
 RESEARCH_MARKDOWN_TEXT_LIMIT = 2000
-RESEARCH_MODULE_TIMEOUT_SECONDS = 90
+RESEARCH_MODULE_TIMEOUT_SECONDS = int(os.getenv("RESEARCH_MODULE_TIMEOUT_SECONDS", "240"))
+RESEARCH_MODULE_MAX_PARALLEL = max(1, int(os.getenv("RESEARCH_MODULE_MAX_PARALLEL", "2")))
 
 
 def now() -> str:
