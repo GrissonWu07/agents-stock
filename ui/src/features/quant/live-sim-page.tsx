@@ -68,6 +68,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   const [market, setMarket] = useState<(typeof MARKET_OPTIONS)[number]>("CN");
   const [autoExecute, setAutoExecute] = useState(true);
   const [initialCash, setInitialCash] = useState(100000);
+  const [actionPending, setActionPending] = useState<"save" | "reset" | "start" | "stop" | null>(null);
 
   useEffect(() => {
     if (!snapshot) {
@@ -104,6 +105,8 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   const candidateCodes = snapshot.candidatePool.rows.map((row) => row.id);
   const candidateCount = toDisplayCount(snapshot.status.candidateCount, snapshot.candidatePool.rows.length);
   const runningState = toDisplayText(snapshot.status.running, "未知");
+  const runningNormalized = String(snapshot.status.running ?? "").trim().toLowerCase();
+  const isRunning = runningNormalized.includes("运行中") || runningNormalized.includes("running");
 
   return (
     <div>
@@ -211,39 +214,75 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
               <button
                 className="button button--secondary"
                 type="button"
-                onClick={() =>
-                  void resource.runAction("save", {
-                    intervalMinutes,
-                    analysisTimeframe,
-                    strategyMode,
-                    market,
-                    autoExecute,
-                  })
-                }
+                disabled={actionPending !== null}
+                onClick={async () => {
+                  setActionPending("save");
+                  try {
+                    await resource.runAction("save", {
+                      intervalMinutes,
+                      analysisTimeframe,
+                      strategyMode,
+                      market,
+                      autoExecute,
+                    });
+                  } finally {
+                    setActionPending(null);
+                  }
+                }}
               >
-                保存
+                {actionPending === "save" ? "保存中..." : "保存"}
               </button>
-              <button className="button button--secondary" type="button" onClick={() => void resource.runAction("reset", { initialCash })}>
-                重置
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={actionPending !== null}
+                onClick={async () => {
+                  setActionPending("reset");
+                  try {
+                    await resource.runAction("reset", { initialCash });
+                  } finally {
+                    setActionPending(null);
+                  }
+                }}
+              >
+                {actionPending === "reset" ? "重置中..." : "重置"}
               </button>
               <span className="toolbar__spacer" />
-              <button className="button button--secondary" type="button" onClick={() => void resource.runAction("stop")}>
-                停止模拟
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={actionPending !== null || !isRunning}
+                onClick={async () => {
+                  setActionPending("stop");
+                  try {
+                    await resource.runAction("stop");
+                  } finally {
+                    setActionPending(null);
+                  }
+                }}
+              >
+                {actionPending === "stop" ? "停止中..." : "停止模拟"}
               </button>
               <button
                 className="button button--primary button--hero"
                 type="button"
-                onClick={() =>
-                  void resource.runAction("start", {
-                    intervalMinutes,
-                    analysisTimeframe,
-                    strategyMode,
-                    market,
-                    autoExecute,
-                  })
-                }
+                disabled={actionPending !== null || isRunning}
+                onClick={async () => {
+                  setActionPending("start");
+                  try {
+                    await resource.runAction("start", {
+                      intervalMinutes,
+                      analysisTimeframe,
+                      strategyMode,
+                      market,
+                      autoExecute,
+                    });
+                  } finally {
+                    setActionPending(null);
+                  }
+                }}
               >
-                启动模拟
+                {actionPending === "start" ? "启动中..." : isRunning ? "运行中" : "启动模拟"}
               </button>
             </div>
           </WorkbenchCard>
