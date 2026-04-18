@@ -204,5 +204,6 @@ jobs:
           export SERVICE_IMAGE_TAG UI_IMAGE_TAG XUANWUSTOCK_DATA_DIR
           retry_pull "${IMAGE_NAME}:${SERVICE_IMAGE_TAG}"
           retry_pull "${IMAGE_NAME}:${UI_IMAGE_TAG}"
-          docker compose -f "$APP_HOME/config/docker-compose.deploy.yml" up -d --remove-orphans
+          docker rm -f xuanwustock-ui xuanwustock-service >/dev/null 2>&1 || true
+          docker compose -p xuanwustock -f "$APP_HOME/config/docker-compose.deploy.yml" up -d --remove-orphans
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
