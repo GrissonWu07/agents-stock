@@ -242,6 +242,19 @@ class SectorStrategyAgents:
         - 判断资金进攻或撤离的方向
         """
         print("💰 资金流向分析师正在分析...")
+
+        def to_float(value: Any, default: float = 0.0) -> float:
+            try:
+                if value is None:
+                    return default
+                if isinstance(value, str):
+                    text = value.strip().replace(",", "")
+                    if not text or text == "-":
+                        return default
+                    return float(text)
+                return float(value)
+            except Exception:
+                return default
         
         # 构建资金流向数据
         fund_flow_summary = ""
@@ -249,22 +262,29 @@ class SectorStrategyAgents:
             flow_list = fund_flow_data["today"]
             
             # 净流入前15
-            sorted_inflow = sorted(flow_list, key=lambda x: x["main_net_inflow"], reverse=True)
+            sorted_inflow = sorted(flow_list, key=lambda x: to_float(x.get("main_net_inflow")), reverse=True)
             fund_flow_summary = f"""
 【板块资金流向】(更新时间: {fund_flow_data.get('update_time', 'N/A')})
 
 主力资金净流入 TOP15:
 """
             for idx, item in enumerate(sorted_inflow[:15], 1):
-                fund_flow_summary += f"{idx}. {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}% | 超大单: {item['super_large_net_inflow']:.2f}万\n"
+                fund_flow_summary += (
+                    f"{idx}. {item.get('sector', 'N/A')}: {to_float(item.get('main_net_inflow')):.2f}万 "
+                    f"({to_float(item.get('main_net_inflow_pct')):+.2f}%) | 涨跌: {to_float(item.get('change_pct')):+.2f}% "
+                    f"| 超大单: {to_float(item.get('super_large_net_inflow')):.2f}万\n"
+                )
             
             # 净流出前10
-            sorted_outflow = sorted(flow_list, key=lambda x: x["main_net_inflow"])
+            sorted_outflow = sorted(flow_list, key=lambda x: to_float(x.get("main_net_inflow")))
             fund_flow_summary += f"""
 主力资金净流出 TOP10:
 """
             for idx, item in enumerate(sorted_outflow[:10], 1):
-                fund_flow_summary += f"{idx}. {item['sector']}: {item['main_net_inflow']:.2f}万 ({item['main_net_inflow_pct']:+.2f}%) | 涨跌: {item['change_pct']:+.2f}%\n"
+                fund_flow_summary += (
+                    f"{idx}. {item.get('sector', 'N/A')}: {to_float(item.get('main_net_inflow')):.2f}万 "
+                    f"({to_float(item.get('main_net_inflow_pct')):+.2f}%) | 涨跌: {to_float(item.get('change_pct')):+.2f}%\n"
+                )
         
         # 构建北向资金数据
         north_summary = ""
@@ -272,14 +292,14 @@ class SectorStrategyAgents:
             north_summary = f"""
 【北向资金】
 日期: {north_flow_data.get('date', 'N/A')}
-今日北向资金净流入: {north_flow_data.get('north_net_inflow', 0):.2f} 万元
-  沪股通净流入: {north_flow_data.get('hgt_net_inflow', 0):.2f} 万元
-  深股通净流入: {north_flow_data.get('sgt_net_inflow', 0):.2f} 万元
+今日北向资金净流入: {to_float(north_flow_data.get('north_net_inflow')):.2f} 万元
+  沪股通净流入: {to_float(north_flow_data.get('hgt_net_inflow')):.2f} 万元
+  深股通净流入: {to_float(north_flow_data.get('sgt_net_inflow')):.2f} 万元
 """
             if north_flow_data.get('history'):
                 north_summary += "\n近10日北向资金流向:\n"
                 for item in north_flow_data['history'][:10]:
-                    north_summary += f"  {item['date']}: {item['net_inflow']:.2f}万\n"
+                    north_summary += f"  {item.get('date', 'N/A')}: {to_float(item.get('net_inflow')):.2f}万\n"
         
         prompt = f"""
 你是一名资深的资金流向分析师，拥有15年的市场资金研究经验，擅长从资金流向中洞察主力意图和市场趋势。

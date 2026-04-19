@@ -100,6 +100,11 @@ export type TaskJob = {
   resultCount?: number;
   startedAt?: string;
   updatedAt?: string;
+  logs?: {
+    time: string;
+    stage: string;
+    message: string;
+  }[];
 };
 
 export type WorkbenchAnalysisResult = {

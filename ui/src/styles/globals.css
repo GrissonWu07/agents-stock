@@ -1206,6 +1206,12 @@ a {
   font-size: 0.9rem;
 }
 
+.content-scroll {
+  max-height: min(520px, 68vh);
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .summary-item__meta {
   margin-top: 8px;
   color: var(--text-muted);

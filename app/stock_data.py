@@ -648,10 +648,14 @@ class StockDataFetcher:
                 "rsi": latest['RSI'],
                 "macd": latest['MACD'],
                 "macd_signal": latest['MACD_signal'],
+                "macd_histogram": latest.get('MACD_histogram'),
                 "bb_upper": latest['BB_upper'],
+                "bb_middle": latest.get('BB_middle'),
                 "bb_lower": latest['BB_lower'],
                 "k_value": latest['K'],
                 "d_value": latest['D'],
+                "volume": latest.get('Volume'),
+                "volume_ma5": latest.get('Volume_MA5'),
                 "volume_ratio": latest['Volume_ratio']
             }
         except Exception as e:

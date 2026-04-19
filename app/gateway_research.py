@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable
 
 from fastapi import HTTPException
 
 from app.async_task_base import AsyncTaskManagerBase
 from app.gateway_common import (
-    RESEARCH_MARKDOWN_TEXT_LIMIT,
     RESEARCH_MODULE_MAX_PARALLEL,
-    RESEARCH_MODULE_TIMEOUT_SECONDS,
     code_from_payload as _code_from_payload,
     insight as _insight,
     int_value as _int,
@@ -19,7 +18,6 @@ from app.gateway_common import (
     now as _now,
     num as _num,
     payload_dict as _payload_dict,
-    snippet as _snippet,
     table as _table,
     txt as _txt,
 )
@@ -172,7 +170,7 @@ def _research_stock_rows(stocks: Any, source: str, context: Any) -> list[dict[st
 def _research_market_views_from_module(name: str, text: str, tone: str = "neutral") -> list[dict[str, Any]]:
     if not text:
         return []
-    return [_insight(name, _snippet(text, RESEARCH_MARKDOWN_TEXT_LIMIT), tone)]
+    return [_insight(name, _txt(text), tone)]
 
 
 def _normalize_research_module_selection(payload: dict[str, Any]) -> list[str]:
@@ -206,10 +204,7 @@ def _run_research_module_sector(context: Any) -> dict[str, Any]:
     fetcher = _research_cls("SectorStrategyDataFetcher")()
     data = fetcher.get_cached_data_with_fallback()
     if not data.get("success"):
-        note = _snippet(
-            data.get("cache_warning") or data.get("message") or data.get("error") or t("Failed to fetch sector data"),
-            RESEARCH_MARKDOWN_TEXT_LIMIT,
-        )
+        note = _txt(data.get("cache_warning") or data.get("message") or data.get("error") or t("Failed to fetch sector data"))
         return {
             "name": t("Sector strategy"),
             "note": note,
@@ -223,9 +218,8 @@ def _run_research_module_sector(context: Any) -> dict[str, Any]:
     bullish = final_predictions.get("long_short", {}).get("bullish", []) if isinstance(final_predictions, dict) else []
     bearish = final_predictions.get("long_short", {}).get("bearish", []) if isinstance(final_predictions, dict) else []
     chief_text = result.get("agents_analysis", {}).get("chief", {}).get("analysis", "") if isinstance(result, dict) else ""
-    note = _snippet(
+    note = _txt(
         result.get("comprehensive_report") or final_predictions.get("summary") or chief_text or t("Sector strategy completed"),
-        RESEARCH_MARKDOWN_TEXT_LIMIT,
     )
     output = t("Bullish {bullish} / Bearish {bearish}", bullish=len(bullish), bearish=len(bearish))
     market_view = _research_market_views_from_module(t("Sector strategy"), note, "neutral")
@@ -242,10 +236,8 @@ def _run_research_module_longhubang(context: Any) -> dict[str, Any]:
     result = _research_cls("LonghubangEngine")().run_comprehensive_analysis(days=1)
     stocks = _research_stock_rows(result.get("recommended_stocks", []), t("Dragon tiger list"), context)
     chief_text = result.get("agents_analysis", {}).get("chief", {}).get("analysis", "") if isinstance(result, dict) else ""
-    note = _snippet(
-        chief_text or result.get("final_report", {}).get("summary", "") or t("Dragon tiger analysis completed"), RESEARCH_MARKDOWN_TEXT_LIMIT
-    )
-    output = t("Stock output: {count}", count=len(stocks)) if stocks else _snippet(note, 120, t("Analysis completed"))
+    note = _txt(chief_text or result.get("final_report", {}).get("summary", "") or t("Dragon tiger analysis completed"))
+    output = t("Stock output: {count}", count=len(stocks)) if stocks else _txt(note, t("Analysis completed"))
     return {
         "name": t("Dragon tiger list"),
         "note": note,
@@ -261,19 +253,18 @@ def _run_research_module_news(context: Any) -> dict[str, Any]:
     stock_recommend = ai_analysis.get("stock_recommend", {}) if isinstance(ai_analysis, dict) else {}
     stocks = _research_stock_rows(stock_recommend.get("recommended_stocks", []), t("News flow"), context)
     advice = ai_analysis.get("investment_advice", {}) if isinstance(ai_analysis, dict) else {}
-    note = _snippet(
+    note = _txt(
         advice.get("summary")
         or advice.get("advice")
         or result.get("trading_signals", {}).get("operation_advice")
         or t("News flow analysis completed"),
-        RESEARCH_MARKDOWN_TEXT_LIMIT,
     )
     market_view: list[dict[str, Any]] = []
     if advice.get("advice"):
-        market_view.append(_insight(t("News flow"), _snippet(advice.get("summary") or advice.get("advice"), RESEARCH_MARKDOWN_TEXT_LIMIT), "accent"))
+        market_view.append(_insight(t("News flow"), _txt(advice.get("summary") or advice.get("advice")), "accent"))
     if result.get("trading_signals", {}).get("operation_advice"):
-        market_view.append(_insight(t("Trading signal"), _snippet(result.get("trading_signals", {}).get("operation_advice"), RESEARCH_MARKDOWN_TEXT_LIMIT), "warning"))
-    output = t("Stock output: {count}", count=len(stocks)) if stocks else _snippet(note, 120, t("Analysis completed"))
+        market_view.append(_insight(t("Trading signal"), _txt(result.get("trading_signals", {}).get("operation_advice")), "warning"))
+    output = t("Stock output: {count}", count=len(stocks)) if stocks else _txt(note, t("Analysis completed"))
     return {
         "name": t("News flow"),
         "note": note,
@@ -288,16 +279,15 @@ def _run_research_module_macro(context: Any) -> dict[str, Any]:
     stocks = _research_stock_rows(result.get("candidate_stocks", []), t("Macro analysis"), context)
     chief = result.get("agents_analysis", {}).get("chief", {}) if isinstance(result, dict) else {}
     sector_view = result.get("sector_view", {}) if isinstance(result, dict) else {}
-    note = _snippet(
+    note = _txt(
         chief.get("analysis") or sector_view.get("market_view") or t("Macro analysis completed"),
-        RESEARCH_MARKDOWN_TEXT_LIMIT,
     )
     market_view: list[dict[str, Any]] = []
     if chief.get("analysis"):
-        market_view.append(_insight(t("Macro analysis"), _snippet(chief.get("analysis"), RESEARCH_MARKDOWN_TEXT_LIMIT), "neutral"))
+        market_view.append(_insight(t("Macro analysis"), _txt(chief.get("analysis")), "neutral"))
     if sector_view.get("market_view"):
-        market_view.append(_insight(t("Sector mapping"), _snippet(sector_view.get("market_view"), RESEARCH_MARKDOWN_TEXT_LIMIT), "accent"))
-    output = t("Stock output: {count}", count=len(stocks)) if stocks else _snippet(note, 120, t("Analysis completed"))
+        market_view.append(_insight(t("Sector mapping"), _txt(sector_view.get("market_view")), "accent"))
+    output = t("Stock output: {count}", count=len(stocks)) if stocks else _txt(note, t("Analysis completed"))
     return {
         "name": t("Macro analysis"),
         "note": note,
@@ -310,23 +300,26 @@ def _run_research_module_macro(context: Any) -> dict[str, Any]:
 def _run_research_module_cycle(context: Any) -> dict[str, Any]:
     result = _research_cls("MacroCycleEngine")().run_full_analysis(progress_callback=None)
     chief = result.get("agents_analysis", {}).get("chief", {}) if isinstance(result, dict) else {}
-    note = _snippet(
+    note = _txt(
         chief.get("analysis") or result.get("formatted_data") or t("Macro cycle analysis completed"),
-        RESEARCH_MARKDOWN_TEXT_LIMIT,
     )
     market_view: list[dict[str, Any]] = []
     if chief.get("analysis"):
-        market_view.append(_insight(t("Macro cycle"), _snippet(chief.get("analysis"), RESEARCH_MARKDOWN_TEXT_LIMIT), "neutral"))
+        market_view.append(_insight(t("Macro cycle"), _txt(chief.get("analysis")), "neutral"))
     return {
         "name": t("Macro cycle"),
         "note": note,
-        "output": _snippet(note, 120, t("Analysis completed")),
+        "output": _txt(note, t("Analysis completed")),
         "rows": [],
         "marketView": market_view,
     }
 
 
-def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _run_research_modules(
+    context: Any,
+    payload: dict[str, Any] | None = None,
+    progress_callback: Callable[[str, str, int | None], None] | None = None,
+) -> dict[str, Any]:
     body = payload if isinstance(payload, dict) else {}
     selected_modules = set(_normalize_research_module_selection(body))
     module_runners: list[tuple[str, Callable[[Any], dict[str, Any]]]] = [
@@ -345,6 +338,8 @@ def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -
     selected_runners = [(module_key, runner) for module_key, runner in module_runners if module_key in selected_modules]
     if not selected_runners:
         selected_runners = module_runners[:]
+    total_modules = max(len(selected_runners), 1)
+    completed_modules = 0
 
     module_results_cache: dict[str, dict[str, Any]] = {}
     module_errors: dict[str, BaseException] = {}
@@ -358,75 +353,102 @@ def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -
     for offset in range(0, len(selected_runners), RESEARCH_MODULE_MAX_PARALLEL):
         chunk = selected_runners[offset : offset + RESEARCH_MODULE_MAX_PARALLEL]
         chunk_threads: dict[str, threading.Thread] = {}
+        chunk_started_at: dict[str, float] = {}
 
         for module_key, runner in chunk:
+            if progress_callback:
+                progress_callback("run-module", t("Module {module} started", module=module_key), None)
             thread = threading.Thread(target=worker, args=(module_key, runner), name=f"research-module-{module_key}")
             thread.daemon = True
             thread.start()
             chunk_threads[module_key] = thread
+            chunk_started_at[module_key] = time.monotonic()
 
-        for module_key, _ in chunk:
-            thread = chunk_threads[module_key]
-            thread.join(timeout=RESEARCH_MODULE_TIMEOUT_SECONDS)
+        last_heartbeat = 0.0
+        while True:
+            running_modules: list[str] = []
+            for module_key, _ in chunk:
+                thread = chunk_threads[module_key]
+                thread.join(timeout=0.5)
+                if thread.is_alive():
+                    running_modules.append(module_key)
 
-        for module_key, _ in chunk:
-            thread = chunk_threads[module_key]
-            if thread.is_alive():
-                failures.append(t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS))
-                module_results.append(
-                    {
-                        "name": module_key,
-                        "note": _snippet(
-                            t("{module}: analysis timeout ({seconds}s)", module=module_key, seconds=RESEARCH_MODULE_TIMEOUT_SECONDS),
-                            80,
-                            t("Analysis failed"),
-                        ),
-                        "output": t("Analysis failed"),
-                    }
+            if not running_modules:
+                break
+
+            now_tick = time.monotonic()
+            if progress_callback and now_tick - last_heartbeat >= 8.0:
+                running_text = ", ".join(
+                    f"{name}({int(max(0.0, now_tick - chunk_started_at.get(name, now_tick)))}s)"
+                    for name in running_modules
                 )
-                continue
+                progress_callback(
+                    "run-module",
+                    t("Running modules: {modules}", modules=running_text),
+                    min(94, 10 + int((completed_modules / total_modules) * 80)),
+                )
+                last_heartbeat = now_tick
+
+        for module_key, _ in chunk:
+            progress_message: str
             if module_key in module_errors:
                 failures.append(f"{module_key}: {module_errors[module_key]}")
                 module_results.append(
                     {
                         "name": module_key,
-                        "note": _snippet(str(module_errors[module_key]), 80, t("Analysis failed")),
+                        "note": _txt(str(module_errors[module_key]), t("Analysis failed")),
                         "output": t("Analysis failed"),
                     }
                 )
-                continue
-            result = module_results_cache.get(module_key)
-            if not isinstance(result, dict):
-                failures.append(t("{module}: empty result or invalid format", module=module_key))
-                module_results.append(
-                    {
-                        "name": module_key,
-                        "note": _snippet(t("Module result is empty"), 80, t("Analysis failed")),
-                        "output": t("Analysis failed"),
-                    }
-                )
-                continue
-            try:
-                module_results.append(
-                    {
-                        "name": _txt(result.get("name"), module_key),
-                        "note": _snippet(
-                            result.get("note") or result.get("output") or t("Analysis completed"),
-                            RESEARCH_MARKDOWN_TEXT_LIMIT,
-                        ),
-                        "output": _snippet(result.get("output") or t("Analysis completed"), 24),
-                    }
-                )
-                stock_rows.extend(result.get("rows") or [])
-                market_view.extend(result.get("marketView") or [])
-            except Exception as exc:
-                failures.append(f"{module_key}: {exc}")
-                module_results.append(
-                    {
-                        "name": module_key,
-                        "note": _snippet(str(exc), 80, t("Analysis failed")),
-                        "output": t("Analysis failed"),
-                    }
+                progress_message = t("Module {module} failed: {reason}", module=module_key, reason=str(module_errors[module_key]))
+            else:
+                result = module_results_cache.get(module_key)
+                if not isinstance(result, dict):
+                    failures.append(t("{module}: empty result or invalid format", module=module_key))
+                    module_results.append(
+                        {
+                            "name": module_key,
+                            "note": t("Module result is empty"),
+                            "output": t("Analysis failed"),
+                        }
+                    )
+                    progress_message = t("Module {module} returned empty result", module=module_key)
+                    completed_modules += 1
+                    if progress_callback:
+                        progress_callback(
+                            "run-module",
+                            progress_message,
+                            min(95, 10 + int((completed_modules / total_modules) * 80)),
+                        )
+                    continue
+                try:
+                    module_results.append(
+                        {
+                            "name": _txt(result.get("name"), module_key),
+                            "note": _txt(result.get("note") or result.get("output") or t("Analysis completed")),
+                            "output": _txt(result.get("output") or t("Analysis completed")),
+                        }
+                    )
+                    stock_rows.extend(result.get("rows") or [])
+                    market_view.extend(result.get("marketView") or [])
+                    progress_message = t("Module {module} completed", module=module_key)
+                except Exception as exc:
+                    failures.append(f"{module_key}: {exc}")
+                    module_results.append(
+                        {
+                            "name": module_key,
+                            "note": _txt(str(exc), t("Analysis failed")),
+                            "output": t("Analysis failed"),
+                        }
+                    )
+                    progress_message = t("Module {module} failed: {reason}", module=module_key, reason=str(exc))
+
+            completed_modules += 1
+            if progress_callback:
+                progress_callback(
+                    "run-module",
+                    progress_message,
+                    min(95, 10 + int((completed_modules / total_modules) * 80)),
                 )
 
     summary_title = t("Research updated") if not failures else t("Research partially completed")
@@ -438,17 +460,119 @@ def _run_research_modules(context: Any, payload: dict[str, Any] | None = None) -
         )
     )
     if failures:
-        summary_body = t("{base} Failed modules: {items}.", base=summary_body, items="; ".join(failures[:3]))
+        summary_body = t("{base} Failed modules: {items}.", base=summary_body, items="; ".join(failures))
 
     payload_result = {
         "updatedAt": _now(),
         "modules": module_results,
-        "marketView": market_view[:6],
+        "marketView": market_view,
         "outputTable": _table([t("Code"), t("Name"), t("Source module"), t("Next action")], stock_rows, t("No stock output")),
         "summary": {"title": summary_title, "body": summary_body},
     }
     save_latest_result(context.research_result_key, payload_result, base_dir=context.selector_result_dir)
     return payload_result
+
+
+def _append_research_task_log(
+    task_id: str,
+    *,
+    stage: str,
+    message: str,
+    progress: int | None = None,
+    status: str = "running",
+) -> None:
+    existing = research_task_manager.get_task(task_id) or {}
+    logs = existing.get("logs") if isinstance(existing.get("logs"), list) else []
+    merged_logs = [*logs, {"time": _now(), "stage": stage, "message": _txt(message)}]
+    merged_logs = merged_logs[-80:]
+    research_task_manager.update_task(
+        task_id,
+        now=_now,
+        status=status,
+        stage=stage,
+        progress=progress if progress is not None else _int(existing.get("progress"), 0) or 0,
+        message=_txt(message),
+        logs=merged_logs,
+    )
+
+
+def _run_research_task(context: Any, task_id: str, payload: dict[str, Any]) -> None:
+    try:
+        if getattr(context, "config_manager", None):
+            context.config_manager.reload_config()
+    except Exception:
+        # 配置热加载失败时保持任务继续，避免影响非模型模块。
+        pass
+    selected = _normalize_research_module_selection(payload)
+    research_task_manager.update_task(
+        task_id,
+        now=_now,
+        status="running",
+        stage="run-module",
+        progress=5,
+        started_at=_now(),
+        message=t("Running research modules. Total: {count}.", count=len(selected)),
+    )
+    _append_research_task_log(
+        task_id,
+        stage="run-module",
+        message=t("Running research modules. Total: {count}.", count=len(selected)),
+        progress=5,
+    )
+    try:
+        result = _run_research_modules(
+            context,
+            payload,
+            progress_callback=lambda stage, message, progress: _append_research_task_log(
+                task_id,
+                stage=stage,
+                message=message,
+                progress=progress,
+                status="running",
+            ),
+        )
+        output_rows = ((result.get("outputTable") or {}).get("rows") or []) if isinstance(result, dict) else []
+        final_message = t("Research task completed. Stock outputs: {count}.", count=len(output_rows))
+        _append_research_task_log(
+            task_id,
+            stage="completed",
+            message=final_message,
+            progress=100,
+            status="completed",
+        )
+        research_task_manager.update_task(
+            task_id,
+            now=_now,
+            status="completed",
+            stage="completed",
+            progress=100,
+            message=final_message,
+            finished_at=_now(),
+            result={
+                "moduleCount": len(selected),
+                "outputCount": len(output_rows),
+                "updatedAt": _now(),
+            },
+        )
+    except Exception as exc:
+        fail_message = t("Research task failed: {reason}", reason=exc)
+        _append_research_task_log(
+            task_id,
+            stage="failed",
+            message=fail_message,
+            progress=100,
+            status="failed",
+        )
+        research_task_manager.update_task(
+            task_id,
+            now=_now,
+            status="failed",
+            stage="failed",
+            progress=100,
+            message=fail_message,
+            finished_at=_now(),
+            errors=[{"message": str(exc)}],
+        )
 
 
 class ResearchTaskManager(AsyncTaskManagerBase):
@@ -459,45 +583,6 @@ class ResearchTaskManager(AsyncTaskManagerBase):
 research_task_manager = ResearchTaskManager()
 
 
-def _run_research_task(context: Any, task_id: str, payload: dict[str, Any]) -> None:
-    selected = _normalize_research_module_selection(payload)
-    research_task_manager.update_task(
-        task_id,
-        now=_now,
-        status="running",
-        stage="run-module",
-        progress=10,
-        started_at=_now(),
-        message=t("Running research modules. Total: {count}.", count=len(selected)),
-    )
-    try:
-        result = _run_research_modules(context, payload)
-        output_rows = ((result.get("outputTable") or {}).get("rows") or []) if isinstance(result, dict) else []
-        research_task_manager.update_task(
-            task_id,
-            now=_now,
-            status="completed",
-            stage="completed",
-            progress=100,
-            message=t("Research task completed. Stock outputs: {count}.", count=len(output_rows)),
-            finished_at=_now(),
-            result={
-                "moduleCount": len(selected),
-                "outputCount": len(output_rows),
-                "updatedAt": _now(),
-            },
-        )
-    except Exception as exc:
-        research_task_manager.update_task(
-            task_id,
-            now=_now,
-            status="failed",
-            stage="failed",
-            progress=100,
-            message=t("Research task failed: {reason}", reason=exc),
-            finished_at=_now(),
-            errors=[{"message": str(exc)}],
-        )
 
 
 def _snapshot_research(context: Any, *, task_job: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -558,16 +643,18 @@ def _action_research_batch(context: Any, payload: dict[str, Any]) -> dict[str, A
 def _action_research_run_module(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
     body = _payload_dict(payload)
     selected = _normalize_research_module_selection(body)
+    queued_message = t("Task submitted. {count} research modules will run.", count=len(selected))
     task_id = research_task_manager.create_task(
         now=_now,
         symbol="research",
-        message=t("Task submitted. {count} research modules will run.", count=len(selected)),
+        message=queued_message,
         stage="queued",
         progress=0,
         selected=selected,
         payload=body,
         results=[],
         errors=[],
+        logs=[{"time": _now(), "stage": "queued", "message": queued_message}],
     )
     research_task_manager.start_background(
         task_id=task_id,

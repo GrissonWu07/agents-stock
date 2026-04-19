@@ -181,6 +181,8 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
             }}
             onBatchQuant={(codes) => resource.runAction("batch-quant", { codes })}
             onBatchAnalyze={handleBatchAnalyzeFromWatchlist}
+            analysisBusy={showAnalysisBusy}
+            analysisBusyMessage={analysisBusyMessage}
             onClearSelection={() => resource.runAction("clear-selection")}
             onRemoveWatchlist={(code) => resource.runAction("delete-watchlist", { code })}
           />

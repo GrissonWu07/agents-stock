@@ -1,33 +1,102 @@
-import openai
 import json
-from typing import Dict, List, Any, Optional
+import os
+from typing import Any, Dict, List, Optional
+
+import openai
+
 import app.config as config
+from app.config_manager import config_manager
+
+
+def _safe_str(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
 
 class DeepSeekClient:
     """DeepSeek API客户端"""
 
     def __init__(self, model=None):
-        self.model = model or config.DEFAULT_MODEL_NAME
+        raw_model = _safe_str(model)
+        # 大多数调用方会传入 config.DEFAULT_MODEL_NAME，这里将其视为“未覆盖”，
+        # 以便统一从 settings.db 动态读取最新模型配置。
+        self._model_override = raw_model if raw_model and raw_model != config.DEFAULT_MODEL_NAME else None
+        self.model = ""
         self.client = None
         self._init_error: str | None = None
-        if not config.AI_API_KEY:
+        self._api_key: str = ""
+        self._base_url: str = ""
+        self._timeout_seconds: int = config.MODEL_REQUEST_TIMEOUT_SECONDS
+        self._sync_runtime_settings()
+
+    @staticmethod
+    def _normalize_model_name(model_name: str, base_url: str) -> str:
+        normalized = _safe_str(model_name)
+        if not normalized:
+            return normalized
+        base_has_openrouter = "openrouter.ai" in _safe_str(base_url).lower()
+        lowered = normalized.lower()
+        if lowered == "deepseek-chat" and base_has_openrouter:
+            return "deepseek/deepseek-chat"
+        if lowered == "deepseek-reasoner" and base_has_openrouter:
+            return "deepseek/deepseek-reasoner"
+        return normalized
+
+    def _load_runtime_settings(self) -> dict[str, str]:
+        settings: dict[str, str] = {}
+        try:
+            settings = config_manager.read_env()
+        except Exception:
+            settings = {}
+
+        return {
+            "api_key": _safe_str(settings.get("AI_API_KEY") or os.getenv("AI_API_KEY") or config.AI_API_KEY),
+            "base_url": _safe_str(
+                settings.get("AI_API_BASE_URL") or os.getenv("AI_API_BASE_URL") or config.AI_API_BASE_URL
+            )
+            or "https://openrouter.ai/api/v1",
+            "default_model": _safe_str(
+                settings.get("DEFAULT_MODEL_NAME") or os.getenv("DEFAULT_MODEL_NAME") or config.DEFAULT_MODEL_NAME
+            )
+            or "deepseek/deepseek-v3.2",
+            "timeout": _safe_str(os.getenv("MODEL_REQUEST_TIMEOUT_SECONDS", str(config.MODEL_REQUEST_TIMEOUT_SECONDS))),
+        }
+
+    def _sync_runtime_settings(self) -> None:
+        runtime = self._load_runtime_settings()
+        api_key = runtime["api_key"]
+        base_url = runtime["base_url"]
+        default_model = runtime["default_model"]
+
+        try:
+            timeout_seconds = max(1, int(runtime["timeout"]))
+        except Exception:
+            timeout_seconds = config.MODEL_REQUEST_TIMEOUT_SECONDS
+
+        self._api_key = api_key
+        self._base_url = base_url
+        self._timeout_seconds = timeout_seconds
+        self.model = self._normalize_model_name(self._model_override or default_model, base_url)
+
+        if not self._api_key:
+            self.client = None
             self._init_error = "API调用失败: 模型未配置（请在设置页配置 AI_API_KEY）"
             return
         try:
             self.client = openai.OpenAI(
-                api_key=config.AI_API_KEY,
-                base_url=config.AI_API_BASE_URL,
-                timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
+                api_key=self._api_key,
+                base_url=self._base_url,
+                timeout=self._timeout_seconds,
                 max_retries=1,
             )
+            self._init_error = None
         except Exception as exc:
+            self.client = None
             self._init_error = self._format_api_error(str(exc))
 
-    @staticmethod
-    def _format_api_error(message: str) -> str:
+    def _format_api_error(self, message: str) -> str:
         normalized = message.lower()
         if "timeout" in normalized or "timed out" in normalized:
-            return f"API调用失败: 模型请求超时（>{config.MODEL_REQUEST_TIMEOUT_SECONDS}s）"
+            return f"API调用失败: 模型请求超时（>{self._timeout_seconds}s）"
         if "authentication fails" in normalized or "governor" in normalized or "invalid api key" in normalized or "invalid_api_key" in normalized:
             return "API调用失败: 模型服务鉴权失败（请检查 API key 与模型权限）"
         if "quota exceeded" in normalized or "rate limit" in normalized:
@@ -39,13 +108,15 @@ class DeepSeekClient:
     def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
                  temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """调用DeepSeek API"""
+        # 每次请求前同步 settings.db，保证配置页保存后即时生效。
+        self._sync_runtime_settings()
         if self._init_error:
             return self._init_error
         if self.client is None:
             return "API调用失败: 模型客户端未初始化"
         # 使用实例的模型，如果没有传入则使用默认模型
         model_to_use = model or self.model
-        model_to_use = self._normalize_model_name(model_to_use)
+        model_to_use = self._normalize_model_name(model_to_use, self._base_url)
         
         # 对于 reasoner 模型，自动增加 max_tokens
         if "reasoner" in model_to_use.lower() and max_tokens <= 2000:
@@ -57,7 +128,7 @@ class DeepSeekClient:
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
+                timeout=self._timeout_seconds,
             )
             
             # 处理 reasoner 模型的响应
@@ -86,14 +157,14 @@ class DeepSeekClient:
                 and ("deepseek/deepseek-chat" not in model_to_use.lower())
             ):
                 try:
-                    fallback_model = config.normalize_model_name("deepseek-chat")
+                    fallback_model = self._normalize_model_name("deepseek-chat", self._base_url)
                     if fallback_model != model_to_use:
                         response = self.client.chat.completions.create(
                             model=fallback_model,
                             messages=messages,
                             temperature=temperature,
                             max_tokens=max_tokens,
-                            timeout=config.MODEL_REQUEST_TIMEOUT_SECONDS,
+                            timeout=self._timeout_seconds,
                         )
                         message = response.choices[0].message
                         result = ""
@@ -110,9 +181,6 @@ class DeepSeekClient:
                 except Exception:
                     pass
             return self._format_api_error(str(e))
-
-    def _normalize_model_name(self, model_name: str) -> str:
-        return config.normalize_model_name(model_name)
     
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""

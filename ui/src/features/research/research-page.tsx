@@ -34,6 +34,8 @@ const extractOutputCount = (output: string) => {
   return match ? Number.parseInt(match[1], 10) : 0;
 };
 
+const RESEARCH_TASK_POLL_MAX_ROUNDS = 1800;
+
 const extractOutputSentiment = (output: string) => {
   const pairMatch = output.match(/(\d+)\s*\/\s*(\d+)/);
   if (pairMatch) {
@@ -312,6 +314,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
         { label: t("Last update"), value: snapshot.updatedAt || "--" },
       ]
     : [];
+  const taskLogs = (taskJob?.logs ?? []).slice().reverse();
 
   const handleBatchWatchlist = async () => {
     if (!canBatchWatchlist || batching) return;
@@ -333,9 +336,14 @@ export function ResearchPage({ client }: ResearchPageProps) {
     setIsRegenerating(true);
     setRunFeedback(t("Submitting research task..."));
     const pollTask = async (taskId: string) => {
-      for (let index = 0; index < 180; index += 1) {
+      for (let index = 0; index < RESEARCH_TASK_POLL_MAX_ROUNDS; index += 1) {
         const latest = (await taskClient.getTaskStatus(taskId)) as ResearchSnapshot["taskJob"];
         setTaskJob(latest);
+        if (latest) {
+          const latestMessage = localizeResearchText(latest.message) || t("Research task running...");
+          const latestProgress = typeof latest.progress === "number" ? ` (${latest.progress}%)` : "";
+          setRunFeedback(`${latestMessage}${latestProgress}`);
+        }
         if (latest && ["completed", "failed"].includes(latest.status)) {
           await resource.refresh();
           return latest;
@@ -440,6 +448,30 @@ export function ResearchPage({ client }: ResearchPageProps) {
           <h2 className="section-card__title">{t("Module analysis")}</h2>
           <p className="section-card__description">{localizeResearchText(snapshot.summary.title)}</p>
           {runFeedback ? <div className="discover-candidate-toolbar__feedback">{runFeedback}</div> : null}
+          {taskJob ? (
+            <div className="summary-list" style={{ marginTop: "10px" }}>
+              <div className="summary-item">
+                <div className="summary-item__title">{t("Task status")}</div>
+                <div className="summary-item__body">
+                  {t("Status {status} · Stage {stage} · Progress {progress}%", {
+                    status: localizeResearchText(taskJob.status || "running"),
+                    stage: localizeResearchText(taskJob.stage || "--"),
+                    progress: String(taskJob.progress ?? 0),
+                  })}
+                </div>
+                <div className="summary-item__body">{localizeResearchText(taskJob.message)}</div>
+                {taskLogs.length > 0 ? (
+                  <div style={{ marginTop: "10px", maxHeight: "170px", overflowY: "auto" }}>
+                    {taskLogs.map((log, index) => (
+                      <div key={`${log.time}-${index}`} className="summary-item__body" style={{ marginBottom: "6px" }}>
+                        [{log.time}] {localizeResearchText(log.stage)} · {localizeResearchText(log.message)}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           <div className="research-module-layout">
             <aside className="research-module-list" aria-label={t("Research module list")}>
               {modulesWithInsights.map((module) => {

@@ -557,9 +557,17 @@ def _to_vote_row(item: Any, default_signal: str = "") -> dict[str, str]:
     }
 
 
-def _extract_technical_indicators(*, tech_votes: list[dict[str, Any]], reasoning: str) -> list[dict[str, str]]:
+def _extract_technical_indicators(
+    *,
+    tech_votes: list[dict[str, Any]],
+    context_votes: list[dict[str, Any]],
+    reasoning: str,
+    analysis_text: str = "",
+    strategy_profile: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     patterns = [
         ("现价", r"现价\s*(-?\d+(?:\.\d+)?)"),
+        ("现价", r"价格\s*(-?\d+(?:\.\d+)?)"),
         ("成本", r"成本\s*(-?\d+(?:\.\d+)?)"),
         ("MA5", r"MA5\s*(-?\d+(?:\.\d+)?)"),
         ("MA10", r"MA10\s*(-?\d+(?:\.\d+)?)"),
@@ -568,6 +576,10 @@ def _extract_technical_indicators(*, tech_votes: list[dict[str, Any]], reasoning
         ("MACD", r"MACD\s*(-?\d+(?:\.\d+)?)"),
         ("RSI12", r"RSI12\s*(-?\d+(?:\.\d+)?)"),
         ("量比", r"量比\s*(-?\d+(?:\.\d+)?)"),
+        ("成交量", r"成交量\s*[:：]?\s*([-\d,.]+(?:亿|万)?(?:手|股)?)"),
+        ("5日均量", r"(?:5日均量|五日均量|VOL5|Volume_MA5)\s*[:：]?\s*([-\d,.]+(?:亿|万)?(?:手|股)?)"),
+        ("换手率", r"换手率\s*[:：]?\s*(-?\d+(?:\.\d+)?)%?"),
+        ("成交额", r"成交额\s*[:：]?\s*([-\d,.]+(?:亿|万)?(?:元)?)"),
         ("浮盈亏", r"浮盈亏\s*(-?\d+(?:\.\d+)?)%"),
     ]
     indicator_map: dict[str, dict[str, str]] = {}
@@ -583,6 +595,19 @@ def _extract_technical_indicators(*, tech_votes: list[dict[str, Any]], reasoning
             "note": _txt(note),
         }
 
+    def _scan_text(text: str, source: str, note: str = "") -> None:
+        content = _txt(text)
+        if not content:
+            return
+        for metric, pattern in patterns:
+            matched = re.search(pattern, content)
+            if not matched:
+                continue
+            value = _txt(matched.group(1))
+            if metric in {"浮盈亏", "换手率"} and value and not value.endswith("%"):
+                value = f"{value}%"
+            _add_indicator(metric, value, source, note or content)
+
     for vote in tech_votes:
         if not isinstance(vote, dict):
             continue
@@ -591,24 +616,29 @@ def _extract_technical_indicators(*, tech_votes: list[dict[str, Any]], reasoning
         reason = _txt(vote.get("reason"))
         if factor and score_text:
             _add_indicator(f"{factor}打分", score_text, "tech_vote", reason)
-        if reason:
-            for metric, pattern in patterns:
-                matched = re.search(pattern, reason)
-                if matched:
-                    value = _txt(matched.group(1))
-                    if metric == "浮盈亏":
-                        value = f"{value}%"
-                    _add_indicator(metric, value, "tech_vote_reason", reason)
+        _scan_text(reason, "tech_vote_reason", reason)
 
-    text = _txt(reasoning)
-    if text:
-        for metric, pattern in patterns:
-            matched = re.search(pattern, text)
-            if matched:
-                value = _txt(matched.group(1))
-                if metric == "浮盈亏":
-                    value = f"{value}%"
-                _add_indicator(metric, value, "reasoning")
+    for vote in context_votes:
+        if not isinstance(vote, dict):
+            continue
+        component = _txt(vote.get("component") or vote.get("factor") or vote.get("name"))
+        score_text = _txt(vote.get("score"))
+        reason = _txt(vote.get("reason") or vote.get("note") or vote.get("detail"))
+        if component.lower() in {"liquidity", "volume", "volume_flow"} and score_text:
+            _add_indicator("流动性打分", score_text, "context_vote", reason)
+        _scan_text(reason, "context_vote_reason", reason)
+
+    _scan_text(_txt(reasoning), "reasoning")
+    _scan_text(_txt(analysis_text), "analysis")
+
+    profile = strategy_profile if isinstance(strategy_profile, dict) else {}
+    market_regime = profile.get("market_regime")
+    if isinstance(market_regime, dict):
+        _scan_text(_txt(market_regime.get("reason")), "strategy_profile")
+    for key in ("risk_style", "auto_inferred_risk_style", "analysis_timeframe"):
+        item = profile.get(key)
+        if isinstance(item, dict):
+            _scan_text(_txt(item.get("reason")), "strategy_profile")
 
     return list(indicator_map.values())
 
@@ -1041,6 +1071,47 @@ def _indicator_derivation(
             return f"量比={metric_value:.2f}，成交偏弱，趋势延续性需要谨慎评估。"
         return f"量比={metric_value:.2f}，成交活跃度处于常态区间。"
 
+    if metric_name == "成交量":
+        avg_volume = metric_values.get("5日均量")
+        if metric_value is None:
+            return "成交量是当前周期真实成交规模，用于验证价格信号是否有资金参与。"
+        if avg_volume is None or avg_volume == 0:
+            return "成交量用于验证价格动作的资金参与强度，需配合均量或量比判断。"
+        ratio = metric_value / avg_volume
+        if ratio >= 1.5:
+            return f"成交量约为5日均量的 {ratio:.2f} 倍，属于放量，信号可信度更高。"
+        if ratio <= 0.8:
+            return f"成交量约为5日均量的 {ratio:.2f} 倍，属于缩量，趋势延续需谨慎。"
+        return f"成交量约为5日均量的 {ratio:.2f} 倍，量能处于常态区间。"
+
+    if metric_name in {"5日均量", "五日均量", "VOL5"}:
+        return "5日均量用于给当前成交量提供基准，判断是放量突破还是缩量震荡。"
+
+    if metric_name == "换手率":
+        if metric_value is None:
+            return "换手率用于衡量筹码交换强度和交易拥挤程度。"
+        if metric_value >= 8:
+            return f"换手率={metric_value:.2f}% 偏高，资金博弈激烈，波动风险同步升高。"
+        if metric_value <= 1:
+            return f"换手率={metric_value:.2f}% 偏低，流动性一般，趋势推进通常较慢。"
+        return f"换手率={metric_value:.2f}% 处于常态区间。"
+
+    if metric_name == "成交额":
+        if metric_value is None:
+            return "成交额用于衡量资金绝对规模，常与成交量、换手率联动观察。"
+        if metric_value > 0:
+            return f"成交额={_txt(value)}，可与历史均值对比判断资金是否持续流入。"
+        return "成交额接近 0，说明资金参与度较低。"
+
+    if metric_name == "流动性打分":
+        if metric_value is None:
+            return "流动性打分来自环境轨，对成交活跃度与可交易性进行量化。"
+        if metric_value > 0:
+            return f"流动性打分为正({metric_value:+.4f})，说明成交环境支持信号执行。"
+        if metric_value < 0:
+            return f"流动性打分为负({metric_value:+.4f})，说明成交环境偏弱，执行应更保守。"
+        return "流动性打分为中性，对决策影响有限。"
+
     if metric_name == "浮盈亏":
         if metric_value is None:
             return "浮盈亏用于评估持仓安全垫与止盈止损空间。"
@@ -1204,7 +1275,13 @@ def _build_signal_detail_payload(
         "positionRatio": _txt(dual_track.get("position_ratio"), _txt(signal.get("position_size_pct"), "0")),
     }
 
-    technical_indicators = _extract_technical_indicators(tech_votes=tech_votes_raw, reasoning=reasoning_text)
+    technical_indicators = _extract_technical_indicators(
+        tech_votes=tech_votes_raw,
+        context_votes=context_votes_raw,
+        reasoning=reasoning_text,
+        analysis_text=analysis_text,
+        strategy_profile=strategy_profile,
+    )
     effective_thresholds = _safe_json_load(strategy_profile.get("effective_thresholds"))
     runtime_context = _build_runtime_context(
         context,

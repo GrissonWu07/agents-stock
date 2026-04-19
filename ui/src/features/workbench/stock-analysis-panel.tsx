@@ -309,6 +309,12 @@ export function StockAnalysisPanel({
   const displayAnalysis = analysisResults.find((item) => item.symbol === activeResultSymbol) ?? analysisResults[0] ?? analysis;
 
   useEffect(() => {
+    const currentSymbol = (displayAnalysis?.symbol ?? "").trim();
+    if (!currentSymbol) return;
+    setSymbol(currentSymbol);
+  }, [displayAnalysis?.symbol]);
+
+  useEffect(() => {
     const codes = splitSymbols(inputSeed);
     if (codes.length === 0) return;
     setSymbol(codes.join(","));
@@ -499,7 +505,10 @@ export function StockAnalysisPanel({
                     key={item.symbol}
                     type="button"
                     className={`chip${item.symbol === displayAnalysis.symbol ? " chip--active" : ""}`}
-                    onClick={() => setActiveResultSymbol(item.symbol)}
+                    onClick={() => {
+                      setActiveResultSymbol(item.symbol);
+                      setSymbol(item.symbol);
+                    }}
                   >
                     {item.stockName ? `${item.stockName} (${item.symbol})` : item.symbol}
                   </button>
@@ -585,7 +594,7 @@ export function StockAnalysisPanel({
           <div className="summary-list" style={{ marginTop: "12px" }}>
             <div className="summary-item summary-item--accent">
               <div className="summary-item__title">{localizeSummaryTitle(displayAnalysis.summaryTitle)}</div>
-              <MarkdownBlock className="summary-item__body markdown-body" content={t(displayAnalysis.summaryBody)} />
+              <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={t(displayAnalysis.summaryBody)} />
               {displayAnalysis.generatedAt ? (
                 <div className="summary-item__meta">{t("Generate time: {time}", { time: displayAnalysis.generatedAt })}</div>
               ) : null}
@@ -614,7 +623,7 @@ export function StockAnalysisPanel({
               </div>
               <div className="analyst-layout__content">
                 <div className="summary-item__title">{t(activeAnalystView.title)}</div>
-                <MarkdownBlock className="summary-item__body markdown-body" content={activeAnalystView.body} />
+                <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={activeAnalystView.body} />
               </div>
             </div>
           ) : null}
@@ -650,14 +659,14 @@ export function StockAnalysisPanel({
             <div className="summary-item summary-item--accent">
               <div className="summary-item__title">{t("Final investment decision")}</div>
               <MarkdownBlock
-                className="summary-item__body markdown-body"
+                className="summary-item__body markdown-body content-scroll"
                 content={localizeDecisionText(displayAnalysis.finalDecisionText ?? displayAnalysis.decision)}
               />
             </div>
             <div className="summary-item">
               <div className="summary-item__title">{t("Operation advice")}</div>
               <MarkdownBlock
-                className="summary-item__body markdown-body"
+                className="summary-item__body markdown-body content-scroll"
                 content={operationAdvice || t("No standalone action advice. Please follow the final decision on the left.")}
               />
             </div>
@@ -668,7 +677,7 @@ export function StockAnalysisPanel({
               {otherDecisionInsights.map((insight, index) => (
                 <div className="summary-item" key={`${insight.title}-${index}`}>
                   <div className="summary-item__title">{t(insight.title)}</div>
-                  <MarkdownBlock className="summary-item__body markdown-body" content={t(insight.body)} />
+                  <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={t(insight.body)} />
                 </div>
               ))}
             </div>

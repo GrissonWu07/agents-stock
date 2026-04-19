@@ -534,7 +534,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
               <div className="summary-list">
                 <div className="summary-item summary-item--accent" style={{ padding: "12px 14px" }}>
                   <div className="summary-item__title">{t(analysisSnapshot.summaryTitle)}</div>
-                  <div className="summary-item__body">{analysisSnapshot.summaryBody}</div>
+                  <div className="summary-item__body content-scroll">{analysisSnapshot.summaryBody}</div>
                   {analysisSnapshot.generatedAt ? <div className="summary-item__meta">{t("Generate time: {time}", { time: analysisSnapshot.generatedAt })}</div> : null}
                 </div>
               </div>
@@ -549,7 +549,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
               <div className="summary-list" style={{ marginTop: "12px" }}>
                 <div className="summary-item" style={{ padding: "12px 14px" }}>
                   <div className="summary-item__title">{t("Final decision")}</div>
-                  <div className="summary-item__body">{localizeDecisionText(analysisSnapshot.finalDecisionText ?? analysisSnapshot.decision)}</div>
+                  <div className="summary-item__body content-scroll">{localizeDecisionText(analysisSnapshot.finalDecisionText ?? analysisSnapshot.decision)}</div>
                 </div>
               </div>
               {discoverDecisionInsights.length > 0 ? (
@@ -557,7 +557,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                   {discoverDecisionInsights.map((insight) => (
                     <div className="summary-item" key={insight.title} style={{ padding: "12px 14px" }}>
                       <div className="summary-item__title">{t(insight.title)}</div>
-                      <div className="summary-item__body">{insight.body}</div>
+                      <div className="summary-item__body content-scroll">{insight.body}</div>
                     </div>
                   ))}
                 </div>
@@ -567,7 +567,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                   {discoverAnalystViews.map((insight) => (
                     <div className="summary-item" key={insight.title} style={{ padding: "12px 14px" }}>
                       <div className="summary-item__title">{t(insight.title)}</div>
-                      <div className="summary-item__body">{insight.body}</div>
+                      <div className="summary-item__body content-scroll">{insight.body}</div>
                     </div>
                   ))}
                 </div>

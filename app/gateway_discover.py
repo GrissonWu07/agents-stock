@@ -392,10 +392,12 @@ def _build_main_force_discover_result(stocks_df: Any, top_n: int) -> dict[str, A
     }
 
 
-def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> None:
+def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
     selected = set(_normalize_discover_strategy_selection(payload))
     selected_at = _now()
     top_n = max(_int(payload.get("topN"), 5) or 5, 1)
+    completed: list[str] = []
+    failed: list[dict[str, str]] = []
 
     if "main_force" in selected:
         try:
@@ -415,8 +417,11 @@ def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> None:
                     selected_at=selected_at,
                     base_dir=context.selector_result_dir,
                 )
-        except Exception:
-            pass
+                completed.append("main_force")
+            else:
+                failed.append({"strategy": "main_force", "reason": t("No valid result returned")})
+        except Exception as exc:
+            failed.append({"strategy": "main_force", "reason": str(exc) or t("Strategy execution failed")})
 
     simple_strategies: list[tuple[str, Callable[[], tuple[bool, Any, str]]]] = [
         ("low_price_bull", lambda: _selector_cls("LowPriceBullSelector")().get_low_price_stocks(top_n=top_n)),
@@ -436,8 +441,13 @@ def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> None:
                     selected_at=selected_at,
                     base_dir=context.selector_result_dir,
                 )
-        except Exception:
-            continue
+                completed.append(strategy_key)
+            else:
+                failed.append({"strategy": strategy_key, "reason": t("No valid result returned")})
+        except Exception as exc:
+            failed.append({"strategy": strategy_key, "reason": str(exc) or t("Strategy execution failed")})
+
+    return {"completed": completed, "failed": failed}
 
 
 class DiscoverTaskManager(AsyncTaskManagerBase):
@@ -460,17 +470,32 @@ def _run_discover_task(context: Any, task_id: str, payload: dict[str, Any]) -> N
         message=t("Running discovery strategies. Total: {count}.", count=len(selected)),
     )
     try:
-        _run_discover_strategies(context, payload)
+        run_result = _run_discover_strategies(context, payload)
         rows = _discover_rows(context)
+        failed_items = run_result.get("failed") if isinstance(run_result, dict) and isinstance(run_result.get("failed"), list) else []
+        completed_items = run_result.get("completed") if isinstance(run_result, dict) and isinstance(run_result.get("completed"), list) else []
+        message = t("Discovery task completed. Current candidates: {count}.", count=len(rows))
+        if failed_items:
+            failed_names = ", ".join(str(item.get("strategy")) for item in failed_items if isinstance(item, dict) and item.get("strategy"))
+            message = t(
+                "{base} Failed strategies: {strategies}.",
+                base=message,
+                strategies=failed_names or t("unknown"),
+            )
         discover_task_manager.update_task(
             task_id,
             now=_now,
             status="completed",
             stage="completed",
             progress=100,
-            message=t("Discovery task completed. Current candidates: {count}.", count=len(rows)),
+            message=message,
             finished_at=_now(),
-            result={"candidateCount": len(rows), "updatedAt": _now()},
+            result={
+                "candidateCount": len(rows),
+                "updatedAt": _now(),
+                "completedStrategies": completed_items,
+                "failedStrategies": failed_items,
+            },
         )
     except Exception as exc:
         discover_task_manager.update_task(

@@ -127,6 +127,19 @@ class AsyncTaskManagerBase:
         if isinstance(task.get("errors"), list):
             errors = [item for item in task.get("errors") if isinstance(item, dict)]
             payload["failedSymbols"] = [txt(item.get("symbol"), "") for item in errors if txt(item.get("symbol"), "")]
+        if isinstance(task.get("logs"), list):
+            log_rows: list[dict[str, str]] = []
+            for item in task.get("logs")[-20:]:
+                if not isinstance(item, dict):
+                    continue
+                log_rows.append(
+                    {
+                        "time": txt(item.get("time"), ""),
+                        "stage": txt(item.get("stage"), ""),
+                        "message": txt(item.get("message"), ""),
+                    }
+                )
+            payload["logs"] = log_rows
         return payload
 
     def task_response(
@@ -160,6 +173,19 @@ class AsyncTaskManagerBase:
             payload["results"] = task.get("results")
         if isinstance(task.get("errors"), list):
             payload["errors"] = task.get("errors")
+        if isinstance(task.get("logs"), list):
+            log_rows: list[dict[str, str]] = []
+            for item in task.get("logs")[-100:]:
+                if not isinstance(item, dict):
+                    continue
+                log_rows.append(
+                    {
+                        "time": txt(item.get("time"), ""),
+                        "stage": txt(item.get("stage"), ""),
+                        "message": txt(item.get("message"), ""),
+                    }
+                )
+            payload["logs"] = log_rows
         if "result" in task:
             payload["result"] = task.get("result")
         if isinstance(task.get("payload"), dict):

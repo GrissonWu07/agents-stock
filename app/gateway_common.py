@@ -10,7 +10,7 @@ from app.watchlist_selector_integration import normalize_stock_code
 
 
 RESEARCH_MARKDOWN_TEXT_LIMIT = 2000
-RESEARCH_MODULE_TIMEOUT_SECONDS = int(os.getenv("RESEARCH_MODULE_TIMEOUT_SECONDS", "240"))
+RESEARCH_MODULE_TIMEOUT_SECONDS = int(os.getenv("RESEARCH_MODULE_TIMEOUT_SECONDS", "600"))
 RESEARCH_MODULE_MAX_PARALLEL = max(1, int(os.getenv("RESEARCH_MODULE_MAX_PARALLEL", "2")))
 
 
@@ -91,10 +91,9 @@ def table(columns: list[str], rows: list[dict[str, Any]], empty_label: str) -> d
 
 
 def snippet(value: Any, limit: int = 80, default: str = "") -> str:
-    text = txt(value, default)
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip(" ,;；。.") + "…"
+    # 保留兼容函数签名，但后端不再做文本截断。
+    _ = limit
+    return txt(value, default)
 
 
 def looks_like_stock_code(value: Any) -> bool:

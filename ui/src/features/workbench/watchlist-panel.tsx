@@ -11,6 +11,8 @@ type WatchlistPanelProps = {
   onRefresh: (codes: string[]) => void;
   onBatchQuant: (codes: string[]) => void;
   onBatchAnalyze: (codes: string[]) => void;
+  analysisBusy?: boolean;
+  analysisBusyMessage?: string;
   onClearSelection: () => void;
   onRemoveWatchlist: (code: string) => void;
 };
@@ -28,6 +30,8 @@ export function WatchlistPanel({
   onRefresh,
   onBatchQuant,
   onBatchAnalyze,
+  analysisBusy = false,
+  analysisBusyMessage = "",
   onClearSelection,
   onRemoveWatchlist,
 }: WatchlistPanelProps) {
@@ -82,7 +86,7 @@ export function WatchlistPanel({
   };
 
   const handleBatchAnalyze = () => {
-    if (selectedCodes.length > 0) {
+    if (!analysisBusy && selectedCodes.length > 0) {
       onBatchAnalyze(selectedCodes);
     }
   };
@@ -148,10 +152,10 @@ export function WatchlistPanel({
               />
               <IconButton
                 icon="🔎"
-                label={t("Start analysis")}
+                label={analysisBusy ? t("Analysis in progress") : t("Start analysis")}
                 tone="accent"
                 onClick={handleBatchAnalyze}
-                disabled={selectedCodes.length === 0}
+                disabled={selectedCodes.length === 0 || analysisBusy}
               />
               <IconButton
                 icon="✕"
@@ -165,6 +169,11 @@ export function WatchlistPanel({
             </div>
             <div className="watchlist-toolbar__status" data-testid="watchlist-toolbar-status">
               <span className="watchlist-toolbar__count">{t("Selected {count} stocks", { count: selectedCodes.length })}</span>
+              {analysisBusy ? (
+                <span className="badge badge--accent" style={{ marginLeft: "8px" }}>
+                  {analysisBusyMessage || t("Analysis in progress")}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>

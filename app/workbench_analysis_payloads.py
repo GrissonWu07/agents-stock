@@ -34,10 +34,9 @@ def _num(value: Any, digits: int = 2, default: str = "0.00") -> str:
 
 
 def _snippet(value: Any, limit: int = 80, default: str = "") -> str:
-    text = _txt(value, default)
-    if len(text) <= limit:
-        return text
-    return f"{text[: max(limit - 1, 0)]}…"
+    # 保留兼容函数签名，但不再执行任何文本截断。
+    _ = limit
+    return _txt(value, default)
 
 
 def _insight(title: str, body: str, tone: str | None = None) -> dict[str, Any]:
@@ -115,14 +114,18 @@ def _format_indicator_cards(indicators: dict[str, Any] | None, explanations: Any
     explanation_map = explanations if isinstance(explanations, dict) else {}
     specs = [
         (t("Price"), ["price", "close", "Close"], t("Latest traded price, used for trend location and stop planning.")),
+        (t("Volume"), ["volume", "Volume"], t("Latest traded volume in current bar/session.")),
+        (t("Volume MA5"), ["volume_ma5", "Volume_MA5"], t("5-period average volume, baseline for volume expansion/shrinkage.")),
         ("MA5", ["ma5", "MA5"], t("5-day moving average for short-term rhythm.")),
         ("MA10", ["ma10", "MA10"], t("10-day moving average for short-to-mid transition.")),
         ("MA20", ["ma20", "MA20"], t("20-day moving average as medium-term strength boundary.")),
         ("MA60", ["ma60", "MA60"], t("60-day moving average for medium-long trend.")),
         ("RSI", ["rsi", "RSI"], t("Relative Strength Index for overbought/oversold signal.")),
         ("MACD", ["macd", "MACD"], t("Trend momentum indicator. Positive favors bullish bias.")),
+        (t("MACD histogram"), ["macd_histogram", "MACD_histogram"], t("MACD histogram shows acceleration/deceleration of momentum.")),
         (t("Signal line"), ["macd_signal", "MACD_signal"], t("MACD signal line for momentum turning points.")),
         (t("Bollinger upper"), ["bb_upper", "BB_upper"], t("Upper volatility band. Near upper band often means larger swings.")),
+        (t("Bollinger middle"), ["bb_middle", "BB_middle"], t("Bollinger middle band (usually MA20), center line for mean reversion checks.")),
         (t("Bollinger lower"), ["bb_lower", "BB_lower"], t("Lower volatility band. Near lower band requires volume confirmation.")),
         (t("K value"), ["k_value", "K"], t("KDJ fast line for sensitive short-cycle movement.")),
         (t("D value"), ["d_value", "D"], t("KDJ slow line. K/D cross can support turning-point judgment.")),
@@ -181,6 +184,16 @@ def build_workbench_analysis_payload(
     if not summary_body:
         summary_body = _txt(stock_analysis_service.build_indicator_summary(indicator_explanations), t("Analysis completed."))
     summary_body = _txt(summary_body, t("Analysis completed."))
+    stock_sector = _txt(
+        _first_non_empty(
+            stock_info if isinstance(stock_info, dict) else {},
+            ["sector", "industry", "board", "concept", "所属行业", "板块"],
+        )
+    )
+    summary_header = [f"{t('Stock code')}: {code}"]
+    if stock_sector and stock_sector.upper() not in {"N/A", "NA", "--", "未知"}:
+        summary_header.append(f"{t('Sector')}: {stock_sector}")
+    summary_body = "\n".join(summary_header + ["", summary_body])
 
     analyst_views: list[dict[str, Any]] = []
     insights: list[dict[str, Any]] = []
