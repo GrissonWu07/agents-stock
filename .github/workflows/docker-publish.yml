@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: uhub.service.ucloud.cn
-  IMAGE_NAME: uhub.service.ucloud.cn/xuanwu/xuanwustock
+  REGISTRY: docker.io
+  IMAGE_NAME: grissonwu07/xuanwustock
   DOCKER_CONFIG: /tmp/.docker-xuanwustock
 
 jobs:
@@ -31,23 +31,15 @@ jobs:
 
       - name: Configure registry auth
         env:
-          REGISTRY_USERNAME: ${{ secrets.UHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.UHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.UHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD || secrets.UHUB_PASSWORD }}
         run: |
           set -euo pipefail
-          AUTH="$(printf '%s:%s' "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 | tr -d '\n')"
-          cat > "$DOCKER_CONFIG/config.json" <<EOF
-          {
-            "auths": {
-              "$REGISTRY": {
-                "auth": "$AUTH"
-              },
-              "https://$REGISTRY": {
-                "auth": "$AUTH"
-              }
-            }
-          }
-          EOF
+          if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
+            echo "Missing Docker registry credentials"
+            exit 1
+          fi
+          echo "$REGISTRY_PASSWORD" | docker --config "$DOCKER_CONFIG" login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build and push backend image
         run: |
@@ -158,23 +150,15 @@ jobs:
 
       - name: Configure registry auth
         env:
-          REGISTRY_USERNAME: ${{ secrets.UHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.UHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.UHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD || secrets.UHUB_PASSWORD }}
         run: |
           set -euo pipefail
-          AUTH="$(printf '%s:%s' "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 | tr -d '\n')"
-          cat > "$DOCKER_CONFIG/config.json" <<EOF
-          {
-            "auths": {
-              "$REGISTRY": {
-                "auth": "$AUTH"
-              },
-              "https://$REGISTRY": {
-                "auth": "$AUTH"
-              }
-            }
-          }
-          EOF
+          if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
+            echo "Missing Docker registry credentials"
+            exit 1
+          fi
+          echo "$REGISTRY_PASSWORD" | docker --config "$DOCKER_CONFIG" login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
 
       - name: Pull and restart services
         run: |
@@ -201,7 +185,7 @@ jobs:
           SERVICE_IMAGE_TAG="sha-${SHORT_SHA}"
           UI_IMAGE_TAG="ui-sha-${SHORT_SHA}"
           XUANWUSTOCK_DATA_DIR="$APP_HOME/data"
-          export SERVICE_IMAGE_TAG UI_IMAGE_TAG XUANWUSTOCK_DATA_DIR
+          export SERVICE_IMAGE_TAG UI_IMAGE_TAG XUANWUSTOCK_DATA_DIR IMAGE_NAME
           retry_pull "${IMAGE_NAME}:${SERVICE_IMAGE_TAG}"
           retry_pull "${IMAGE_NAME}:${UI_IMAGE_TAG}"
           docker rm -f xuanwustock-ui xuanwustock-service >/dev/null 2>&1 || true

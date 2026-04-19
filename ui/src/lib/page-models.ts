@@ -252,6 +252,7 @@ export type ReplaySnapshot = {
     runId?: string;
     status: string;
     stage?: string;
+    progress?: number;
     startAt?: string;
     endAt?: string;
     range: string;
