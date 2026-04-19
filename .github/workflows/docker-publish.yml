@@ -31,8 +31,8 @@ jobs:
 
       - name: Configure registry auth
         env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.UHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD || secrets.UHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKERHUB_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
@@ -150,8 +150,8 @@ jobs:
 
       - name: Configure registry auth
         env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || secrets.UHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD || secrets.UHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKERHUB_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
