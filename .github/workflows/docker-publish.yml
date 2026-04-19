@@ -131,9 +131,6 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Prepare Docker config
         run: |
           set -euo pipefail
@@ -146,7 +143,45 @@ jobs:
       - name: Prepare deploy compose under app home
         run: |
           set -euo pipefail
-          cp build/docker-compose.deploy.yml "$APP_HOME/config/docker-compose.deploy.yml"
+          cat > "$APP_HOME/config/docker-compose.deploy.yml" <<'EOF'
+          version: '3.8'
+
+          services:
+            backend:
+              image: ${IMAGE_NAME:-grissonwu07/xuanwustock}:${SERVICE_IMAGE_TAG:-latest}
+              container_name: xuanwustock-service
+              ports:
+                - "8501:8501"
+              volumes:
+                - ${XUANWUSTOCK_DATA_DIR:-/Users/grisson.wu/app/xuanwustock/data}:/app/data
+              environment:
+                - TZ=Asia/Shanghai
+              restart: unless-stopped
+              networks:
+                - agentsstock-network
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:8501/api/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+                start_period: 60s
+
+            frontend:
+              image: ${IMAGE_NAME:-grissonwu07/xuanwustock}:${UI_IMAGE_TAG:-ui-latest}
+              container_name: xuanwustock-ui
+              ports:
+                - "12080:80"
+              depends_on:
+                backend:
+                  condition: service_healthy
+              restart: unless-stopped
+              networks:
+                - agentsstock-network
+
+          networks:
+            agentsstock-network:
+              driver: bridge
+          EOF
 
       - name: Configure registry auth
         env:
