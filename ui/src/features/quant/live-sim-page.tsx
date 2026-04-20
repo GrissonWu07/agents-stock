@@ -444,19 +444,6 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
           </div>
 
           <QuantTableSectionCard
-            title="当前持仓"
-            table={snapshot.holdings}
-            emptyTitle={snapshot.holdings.emptyLabel ?? "当前持仓暂无数据"}
-            emptyDescription={snapshot.holdings.emptyMessage ?? "模拟账户当前还没有形成持仓，待下一轮信号触发后会在这里补充。"}
-          />
-          <QuantTableSectionCard
-            title="成交记录"
-            table={snapshot.trades}
-            emptyTitle={snapshot.trades.emptyLabel ?? "成交记录暂无数据"}
-            emptyDescription={snapshot.trades.emptyMessage ?? "如果调度还没有生成新的成交，这里会先保持为空。"}
-          />
-
-          <QuantTableSectionCard
             title="量化候选池"
             description="候选池由“我的关注”人工推进到这里，再进入实时模拟和历史回放。"
             table={snapshot.candidatePool}
@@ -469,6 +456,23 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
             onRowAction={(row, action) => {
               void resource.runAction(action.action ?? "analyze-candidate", row.id);
             }}
+          />
+
+          <QuantTableSectionCard
+            title="当前持仓"
+            table={snapshot.holdings}
+            emptyTitle={snapshot.holdings.emptyLabel ?? "当前持仓暂无数据"}
+            emptyDescription={snapshot.holdings.emptyMessage ?? "模拟账户当前还没有形成持仓，待下一轮信号触发后会在这里补充。"}
+            actionsHead="操作"
+            onRowAction={(row, action) => {
+              void resource.runAction(action.action ?? "delete-position", row.id);
+            }}
+          />
+          <QuantTableSectionCard
+            title="成交记录"
+            table={snapshot.trades}
+            emptyTitle={snapshot.trades.emptyLabel ?? "成交记录暂无数据"}
+            emptyDescription={snapshot.trades.emptyMessage ?? "如果调度还没有生成新的成交，这里会先保持为空。"}
           />
 
           <WorkbenchCard>

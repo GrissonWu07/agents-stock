@@ -606,7 +606,92 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
     db = context.quant_db()
     scheduler = context.scheduler().get_status()
     account = db.get_account_summary()
-    return {"updatedAt": _now(), "config": {"interval": f"{scheduler.get('interval_minutes', 0)} 分钟", "timeframe": _txt(scheduler.get("analysis_timeframe"), "30m"), "strategyMode": _txt(scheduler.get("strategy_mode"), "auto"), "autoExecute": "开启" if scheduler.get("auto_execute") else "关闭", "market": _txt(scheduler.get("market"), "CN"), "initialCapital": _txt(account.get("initial_cash"), "0")}, "status": {"running": "运行中" if scheduler.get("running") else "已停止", "lastRun": _txt(scheduler.get("last_run_at"), "--"), "nextRun": _txt(scheduler.get("next_run"), "--"), "candidateCount": _txt(len(context.candidate_pool().list_candidates(status="active")), "0")}, "metrics": [_metric("账户结果", account.get("total_equity", 0)), _metric("当前持仓", account.get("position_count", 0)), _metric("总收益率", _pct(account.get("total_return_pct"))), _metric("可用现金", account.get("available_cash"),)], "candidatePool": _table(["股票代码", "股票名称", "来源", "最新价格"], _candidate_rows(context, status="active", include_actions=True), "暂无候选股票"), "pendingSignals": [_insight(_txt(item.get("stock_name") or item.get("stock_code") or "待执行信号"), _txt(item.get("reasoning") or item.get("execution_note") or "待处理"), "warning" if _txt(item.get("action")) in {"BUY", "SELL"} else "neutral") for item in db.get_pending_signals()], "executionCenter": {"title": "执行中心", "body": "待执行信号会放在最上方，重点解释为什么成交、为什么跳过。", "chips": ["待执行", "信号列表", "详情"]}, "holdings": _table(["代码", "名称", "数量", "成本", "现价", "浮盈亏"], [{"id": _txt(item.get("stock_code"), str(i)), "cells": [_txt(item.get("stock_code")), _txt(item.get("stock_name")), _txt(item.get("quantity"), "0"), _num(item.get("avg_price")), _num(item.get("latest_price")), _pct(item.get("unrealized_pnl_pct"))], "code": _txt(item.get("stock_code")), "name": _txt(item.get("stock_name"))} for i, item in enumerate(db.get_positions())], "暂无持仓"), "trades": _table(["时间", "代码", "动作", "数量", "价格", "备注"], [{"id": _txt(item.get("id"), str(i)), "cells": [_txt(item.get("executed_at") or item.get("created_at"), "--"), _txt(item.get("stock_code")), _txt(item.get("action")), _txt(item.get("quantity"), "0"), _num(item.get("price")), _txt(item.get("note") or "自动执行")], "code": _txt(item.get("stock_code")), "name": _txt(item.get("stock_name"))} for i, item in enumerate(db.get_trade_history(limit=50))], "暂无交易记录"), "curve": [{"label": _txt(item.get("created_at"), str(i)), "value": float(item.get("total_equity") or 0)} for i, item in enumerate(db.get_account_snapshots(limit=20))]}
+    return {
+        "updatedAt": _now(),
+        "config": {
+            "interval": f"{scheduler.get('interval_minutes', 0)} 分钟",
+            "timeframe": _txt(scheduler.get("analysis_timeframe"), "30m"),
+            "strategyMode": _txt(scheduler.get("strategy_mode"), "auto"),
+            "autoExecute": "开启" if scheduler.get("auto_execute") else "关闭",
+            "market": _txt(scheduler.get("market"), "CN"),
+            "initialCapital": _txt(account.get("initial_cash"), "0"),
+        },
+        "status": {
+            "running": "运行中" if scheduler.get("running") else "已停止",
+            "lastRun": _txt(scheduler.get("last_run_at"), "--"),
+            "nextRun": _txt(scheduler.get("next_run"), "--"),
+            "candidateCount": _txt(len(context.candidate_pool().list_candidates(status="active")), "0"),
+        },
+        "metrics": [
+            _metric("账户结果", account.get("total_equity", 0)),
+            _metric("当前持仓", account.get("position_count", 0)),
+            _metric("总收益率", _pct(account.get("total_return_pct"))),
+            _metric("可用现金", account.get("available_cash")),
+        ],
+        "candidatePool": _table(
+            ["股票代码", "股票名称", "来源", "最新价格"],
+            _candidate_rows(context, status="active", include_actions=True),
+            "暂无候选股票",
+        ),
+        "pendingSignals": [
+            _insight(
+                _txt(item.get("stock_name") or item.get("stock_code") or "待执行信号"),
+                _txt(item.get("reasoning") or item.get("execution_note") or "待处理"),
+                "warning" if _txt(item.get("action")) in {"BUY", "SELL"} else "neutral",
+            )
+            for item in db.get_pending_signals()
+        ],
+        "executionCenter": {
+            "title": "执行中心",
+            "body": "待执行信号会放在最上方，重点解释为什么成交、为什么跳过。",
+            "chips": ["待执行", "信号列表", "详情"],
+        },
+        "holdings": _table(
+            ["代码", "名称", "数量", "成本", "现价", "浮盈亏"],
+            [
+                {
+                    "id": _txt(item.get("stock_code"), str(i)),
+                    "cells": [
+                        _txt(item.get("stock_code")),
+                        _txt(item.get("stock_name")),
+                        _txt(item.get("quantity"), "0"),
+                        _num(item.get("avg_price")),
+                        _num(item.get("latest_price")),
+                        _pct(item.get("unrealized_pnl_pct")),
+                    ],
+                    "code": _txt(item.get("stock_code")),
+                    "name": _txt(item.get("stock_name")),
+                    "actions": [{"label": "删除", "icon": "🗑", "tone": "danger", "action": "delete-position"}],
+                }
+                for i, item in enumerate(db.get_positions())
+            ],
+            "暂无持仓",
+        ),
+        "trades": _table(
+            ["时间", "代码", "动作", "数量", "价格", "备注"],
+            [
+                {
+                    "id": _txt(item.get("id"), str(i)),
+                    "cells": [
+                        _txt(item.get("executed_at") or item.get("created_at"), "--"),
+                        _txt(item.get("stock_code")),
+                        _txt(item.get("action")),
+                        _txt(item.get("quantity"), "0"),
+                        _num(item.get("price")),
+                        _txt(item.get("note") or "自动执行"),
+                    ],
+                    "code": _txt(item.get("stock_code")),
+                    "name": _txt(item.get("stock_name")),
+                }
+                for i, item in enumerate(db.get_trade_history(limit=50))
+            ],
+            "暂无交易记录",
+        ),
+        "curve": [
+            {"label": _txt(item.get("created_at"), str(i)), "value": float(item.get("total_equity") or 0)}
+            for i, item in enumerate(db.get_account_snapshots(limit=20))
+        ],
+    }
 
 
 def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
@@ -2127,6 +2212,16 @@ def _action_live_sim_delete_candidate(context: UIApiContext, payload: Any) -> di
     return _snapshot_live_sim(context)
 
 
+def _action_live_sim_delete_position(context: UIApiContext, payload: Any) -> dict[str, Any]:
+    code = _code_from_payload(payload)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing position code")
+    removed = context.quant_db().delete_position(code)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Position not found: {code}")
+    return _snapshot_live_sim(context)
+
+
 def _action_live_sim_bulk_quant(context: UIApiContext, payload: Any) -> dict[str, Any]:
     context.scheduler().run_once(run_reason="ui_manual_run")
     return _snapshot_live_sim(context)
@@ -2453,6 +2548,7 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("live-sim", "reset"): _action_live_sim_reset,
     ("live-sim", "analyze-candidate"): _action_live_sim_analyze_candidate,
     ("live-sim", "delete-candidate"): _action_live_sim_delete_candidate,
+    ("live-sim", "delete-position"): _action_live_sim_delete_position,
     ("live-sim", "bulk-quant"): _action_live_sim_bulk_quant,
     ("his-replay", "start"): _action_his_replay_start,
     ("his-replay", "continue"): _action_his_replay_continue,
@@ -2584,6 +2680,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         ("/api/v1/quant/live-sim/actions/reset", "live-sim", "reset"),
         ("/api/v1/quant/live-sim/actions/analyze-candidate", "live-sim", "analyze-candidate"),
         ("/api/v1/quant/live-sim/actions/delete-candidate", "live-sim", "delete-candidate"),
+        ("/api/v1/quant/live-sim/actions/delete-position", "live-sim", "delete-position"),
         ("/api/v1/quant/live-sim/actions/bulk-quant", "live-sim", "bulk-quant"),
         ("/api/v1/quant/his-replay/actions/start", "his-replay", "start"),
         ("/api/v1/quant/his-replay/actions/continue", "his-replay", "continue"),

@@ -469,6 +469,96 @@ class QuantSimDB:
         conn.commit()
         conn.close()
 
+    def delete_position(self, stock_code: str) -> bool:
+        code = str(stock_code or "").strip()
+        if not code:
+            return False
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT * FROM sim_positions
+                WHERE stock_code = ? AND status = 'holding'
+                LIMIT 1
+                """,
+                (code,),
+            )
+            position = cursor.fetchone()
+            if position is None:
+                return False
+
+            quantity = int(position["quantity"] or 0)
+            latest_price = float(position["latest_price"] or 0)
+            if latest_price <= 0:
+                latest_price = float(position["avg_price"] or 0)
+            latest_price = round(max(latest_price, 0.0), 4)
+
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(remaining_quantity * entry_price), 0) AS remaining_cost
+                FROM sim_position_lots
+                WHERE stock_code = ? AND remaining_quantity > 0
+                """,
+                (code,),
+            )
+            remaining_cost = float(cursor.fetchone()["remaining_cost"] or 0)
+            proceeds = round(latest_price * max(quantity, 0), 4)
+            realized_pnl = round(proceeds - remaining_cost, 4)
+            executed_at_text = self._now()
+
+            if quantity > 0 and latest_price > 0:
+                self._set_available_cash(cursor, self._get_available_cash(cursor) + proceeds)
+                self._record_trade(
+                    cursor,
+                    signal_id=0,
+                    stock_code=code,
+                    stock_name=position["stock_name"],
+                    action="sell",
+                    price=latest_price,
+                    quantity=quantity,
+                    amount=proceeds,
+                    realized_pnl=realized_pnl,
+                    note="手动删除持仓",
+                    executed_at=executed_at_text,
+                )
+
+            cursor.execute(
+                """
+                UPDATE sim_position_lots
+                SET remaining_quantity = 0, status = 'closed', closed_at = ?
+                WHERE stock_code = ? AND remaining_quantity > 0
+                """,
+                (executed_at_text, code),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_positions
+                SET quantity = 0, latest_price = ?, market_value = 0,
+                    unrealized_pnl = 0, unrealized_pnl_pct = 0,
+                    status = 'closed', updated_at = ?
+                WHERE stock_code = ?
+                """,
+                (latest_price, executed_at_text, code),
+            )
+            cursor.execute(
+                """
+                UPDATE candidate_pool
+                SET status = 'active', updated_at = ?
+                WHERE stock_code = ? AND status <> 'active'
+                """,
+                (executed_at_text, code),
+            )
+            self._insert_account_snapshot(cursor, "manual_delete_position")
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def add_signal(self, signal: dict[str, Any]) -> int:
         conn = self._connect()
         cursor = conn.cursor()

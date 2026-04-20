@@ -59,6 +59,7 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
     reset: "/api/v1/quant/live-sim/actions/reset",
     "analyze-candidate": "/api/v1/quant/live-sim/actions/analyze-candidate",
     "delete-candidate": "/api/v1/quant/live-sim/actions/delete-candidate",
+    "delete-position": "/api/v1/quant/live-sim/actions/delete-position",
     "bulk-quant": "/api/v1/quant/live-sim/actions/bulk-quant",
   },
   "his-replay": {
