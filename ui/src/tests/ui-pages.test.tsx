@@ -12,7 +12,7 @@ import { RealMonitorPage } from "../features/monitor/real-monitor-page";
 import { HistoryPage } from "../features/history/history-page";
 import { SettingsPage } from "../features/settings/settings-page";
 
-const client: ApiClient = {
+const client = {
   baseUrl: "/api",
   mode: "mock",
   getPageSnapshot: (async (page: PageKey) => {
@@ -22,7 +22,7 @@ const client: ApiClient = {
     return mockRunPageAction(page as PageKey, action, payload);
   }) as unknown as ApiClient["runPageAction"],
   getTaskStatus: (async () => null) as unknown as ApiClient["getTaskStatus"],
-};
+} as unknown as ApiClient;
 
 const makeErrorClient = (message: string): ApiClient =>
   ({

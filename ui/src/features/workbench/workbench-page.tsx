@@ -179,19 +179,25 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
             onRefresh={(codes) => {
               void handleRefreshWatchlist(codes);
             }}
-            onBatchQuant={(codes) => resource.runAction("batch-quant", { codes })}
-            onBatchPortfolio={(codes, options) =>
-              resource.runAction("batch-portfolio", {
+            onBatchQuant={(codes) => {
+              void resource.runAction("batch-quant", { codes });
+            }}
+            onBatchPortfolio={async (codes, options) => {
+              await resource.runAction("batch-portfolio", {
                 codes,
                 costPrice: options?.costPrice,
                 quantity: options?.quantity,
-              })
-            }
+              });
+            }}
             onBatchAnalyze={handleBatchAnalyzeFromWatchlist}
             analysisBusy={showAnalysisBusy}
             analysisBusyMessage={analysisBusyMessage}
-            onClearSelection={() => resource.runAction("clear-selection")}
-            onRemoveWatchlist={(code) => resource.runAction("delete-watchlist", { code })}
+            onClearSelection={() => {
+              void resource.runAction("clear-selection");
+            }}
+            onRemoveWatchlist={(code) => {
+              void resource.runAction("delete-watchlist", { code });
+            }}
           />
           <StockAnalysisPanel
             analysis={snapshot.analysis}

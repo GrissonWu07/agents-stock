@@ -83,23 +83,23 @@ const normalizeKlinePoints = (points: ChartPoint[]): KlinePoint[] => {
   const normalized: KlinePoint[] = [];
   let prevClose: number | null = null;
   for (const point of points) {
-    const close = isFiniteNumber(point.close) ? point.close : isFiniteNumber(point.value) ? point.value : prevClose;
-    if (!isFiniteNumber(close)) {
+    const closePrice: number | null = isFiniteNumber(point.close) ? point.close : isFiniteNumber(point.value) ? point.value : prevClose;
+    if (!isFiniteNumber(closePrice)) {
       continue;
     }
-    const open = isFiniteNumber(point.open) ? point.open : prevClose ?? close;
-    const high = isFiniteNumber(point.high) ? point.high : Math.max(open, close);
-    const low = isFiniteNumber(point.low) ? point.low : Math.min(open, close);
+    const open = isFiniteNumber(point.open) ? point.open : prevClose ?? closePrice;
+    const high = isFiniteNumber(point.high) ? point.high : Math.max(open, closePrice);
+    const low = isFiniteNumber(point.low) ? point.low : Math.min(open, closePrice);
     const volume = isFiniteNumber(point.volume) ? point.volume : undefined;
     normalized.push({
       label: point.label,
       open,
       high,
       low,
-      close,
+      close: closePrice,
       volume,
     });
-    prevClose = close;
+    prevClose = closePrice;
   }
   return normalized;
 };

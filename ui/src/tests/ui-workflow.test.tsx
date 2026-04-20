@@ -8,8 +8,6 @@ import { ResearchPage } from "../features/research/research-page";
 import { mockPageSnapshot } from "./mock-backend";
 import type { PageKey, PageSnapshotMap } from "../lib/page-models";
 
-const createTaskStatusMock = () => vi.fn(async () => null) as unknown as ApiClient["getTaskStatus"];
-
 const clone = <T,>(value: T): T => {
   if (typeof structuredClone === "function") {
     return structuredClone(value);
@@ -22,27 +20,25 @@ function createClient(page: PageKey) {
   const getPageSnapshot = vi.fn(async () => clone(snapshot));
   const runPageAction = vi.fn(async (_page: PageKey, _action: string, _payload?: unknown) => clone(snapshot));
 
-  const client: ApiClient = {
+  const client = {
     baseUrl: "/api",
     mode: "mock",
     getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
     runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
-    getTaskStatus: createTaskStatusMock(),
-  };
+  } as unknown as ApiClient;
 
   return { client, runPageAction };
 }
 
 function createDiscoverClient(snapshot: PageSnapshotMap["discover"], runPageAction?: ApiClient["runPageAction"]) {
   const getPageSnapshot = vi.fn(async () => clone(snapshot));
-  const client: ApiClient = {
+  const client = {
     baseUrl: "/api",
     mode: "mock",
     getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
     runPageAction: (runPageAction ??
       (vi.fn(async () => clone(snapshot)) as unknown as ApiClient["runPageAction"])) as ApiClient["runPageAction"],
-    getTaskStatus: createTaskStatusMock(),
-  };
+  } as unknown as ApiClient;
 
   return { client };
 }
@@ -306,13 +302,12 @@ describe("ui workflow pages", () => {
     ];
 
     const getPageSnapshot = vi.fn(async () => clone(snapshot));
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => clone(snapshot)) as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(<ResearchPage client={client} />);
 

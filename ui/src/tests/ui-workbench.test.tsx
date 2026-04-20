@@ -5,19 +5,16 @@ import { WorkbenchPage } from "../features/workbench/workbench-page";
 import type { ApiClient } from "../lib/api-client";
 import { mockPageSnapshot } from "./mock-backend";
 
-const createTaskStatusMock = () => vi.fn(async () => null) as unknown as ApiClient["getTaskStatus"];
-
 const createClient = () => {
   const snapshot = mockPageSnapshot("workbench");
   const runPageAction = vi.fn(async () => snapshot);
 
-  const client: ApiClient = {
+  const client = {
     baseUrl: "/api",
     mode: "mock",
     getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
     runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
-    getTaskStatus: createTaskStatusMock(),
-  };
+  } as unknown as ApiClient;
 
   return { client, runPageAction };
 };
@@ -146,7 +143,7 @@ describe("workbench page", () => {
       progress: 18,
       symbol: "002463",
     };
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
@@ -156,8 +153,7 @@ describe("workbench page", () => {
         }
         return snapshot;
       }) as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
@@ -194,13 +190,12 @@ describe("workbench page", () => {
       progress: 18,
       symbol: "002463",
     };
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => queued) as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
@@ -234,13 +229,12 @@ describe("workbench page", () => {
       symbol: "002463",
     };
     failed.analysis.generatedAt = "2026-04-15T10:41:20.634856";
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: vi.fn(async () => failed) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => failed) as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
@@ -274,13 +268,12 @@ describe("workbench page", () => {
       startedAt: "2026-04-15T10:45:20.634856",
       updatedAt: "2026-04-15T10:45:25.634856",
     };
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: vi.fn(async () => queued) as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
@@ -331,13 +324,12 @@ describe("workbench page", () => {
       .mockResolvedValueOnce(completed);
     const runPageAction = vi.fn(async () => queued);
 
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: getPageSnapshot as unknown as ApiClient["getPageSnapshot"],
       runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
@@ -422,13 +414,12 @@ describe("workbench page", () => {
     snapshot.watchlist.rows = buildWatchlistRows(60);
     snapshot.watchlist.emptyLabel = "暂无关注股票。";
     const runPageAction = vi.fn(async () => snapshot);
-    const client: ApiClient = {
+    const client = {
       baseUrl: "/api",
       mode: "mock",
       getPageSnapshot: vi.fn(async () => snapshot) as unknown as ApiClient["getPageSnapshot"],
       runPageAction: runPageAction as unknown as ApiClient["runPageAction"],
-      getTaskStatus: createTaskStatusMock(),
-    };
+    } as unknown as ApiClient;
 
     render(
       <MemoryRouter>
