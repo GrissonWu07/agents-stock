@@ -394,6 +394,26 @@ a {
   grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
 }
 
+.portfolio-stock-row td {
+  cursor: pointer;
+}
+
+.portfolio-stock-row--active td {
+  background: #eef4ff;
+}
+
+.portfolio-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.portfolio-position-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1212,6 +1232,20 @@ a {
   padding-right: 4px;
 }
 
+.portfolio-indicator-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.portfolio-indicator-table th,
+.portfolio-indicator-table td {
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  vertical-align: top;
+  line-height: 1.45;
+}
+
 .summary-item__meta {
   margin-top: 8px;
   color: var(--text-muted);
@@ -1469,6 +1503,12 @@ a {
   padding: 6px 8px;
 }
 
+.sparkline__chart--kline {
+  max-height: none;
+  min-height: 220px;
+  padding: 8px 10px;
+}
+
 .sparkline__svg {
   width: 100%;
   height: 100%;
@@ -1486,6 +1526,50 @@ a {
 .sparkline__grid {
   stroke: rgba(79, 110, 247, 0.12);
   stroke-width: 1;
+}
+
+.sparkline__kline-separator {
+  stroke: rgba(79, 110, 247, 0.22);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.sparkline__kline-wick {
+  stroke-width: 1.4;
+}
+
+.sparkline__kline-wick--up {
+  stroke: #c93d39;
+}
+
+.sparkline__kline-wick--down {
+  stroke: #18794e;
+}
+
+.sparkline__kline-body {
+  stroke-width: 0.8;
+}
+
+.sparkline__kline-body--up {
+  fill: rgba(239, 83, 80, 0.28);
+  stroke: #c93d39;
+}
+
+.sparkline__kline-body--down {
+  fill: rgba(24, 121, 78, 0.24);
+  stroke: #18794e;
+}
+
+.sparkline__kline-volume {
+  opacity: 0.8;
+}
+
+.sparkline__kline-volume--up {
+  fill: rgba(239, 83, 80, 0.32);
+}
+
+.sparkline__kline-volume--down {
+  fill: rgba(24, 121, 78, 0.3);
 }
 
 .sparkline__crosshair {
@@ -1640,6 +1724,11 @@ a {
   .section-grid--three,
   .section-grid--sidebar,
   .mini-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-detail-grid,
+  .portfolio-position-form {
     grid-template-columns: 1fr;
   }
 

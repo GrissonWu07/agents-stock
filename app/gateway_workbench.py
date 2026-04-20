@@ -323,6 +323,103 @@ def action_workbench_batch_quant(context: Any, payload: dict[str, Any]) -> dict[
     return snapshot_workbench(context)
 
 
+def action_workbench_batch_portfolio(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    body = _payload_dict(payload)
+    codes = _normalize_codes(body) or [row["code"] for row in watchlist_rows(context)]
+    if not codes:
+        raise HTTPException(status_code=400, detail=t("Missing stock codes"))
+    input_cost = None
+    input_quantity = 100
+    try:
+        raw_cost = body.get("costPrice") if isinstance(body, dict) else None
+        if raw_cost not in (None, ""):
+            input_cost = float(raw_cost)
+    except (TypeError, ValueError):
+        input_cost = None
+    try:
+        raw_quantity = body.get("quantity") if isinstance(body, dict) else None
+        if raw_quantity not in (None, ""):
+            input_quantity = max(100, int(float(raw_quantity)))
+    except (TypeError, ValueError):
+        input_quantity = 100
+
+    watch_map: dict[str, dict[str, Any]] = {}
+    for item in context.watchlist().list_watches():
+        watch_code = normalize_stock_code(item.get("stock_code"))
+        if watch_code:
+            watch_map[watch_code] = item
+
+    manager = context.portfolio_manager()
+    added = 0
+    updated = 0
+    skipped = 0
+    failed = 0
+
+    for code in codes:
+        watch_item = watch_map.get(code, {})
+        metadata = watch_item.get("metadata") if isinstance(watch_item.get("metadata"), dict) else {}
+        sector = _txt(metadata.get("industry") or metadata.get("sector"), "")
+        name = _txt((watch_item or {}).get("stock_name"), code)
+        latest_price_raw = (watch_item or {}).get("latest_price")
+        try:
+            latest_price = float(latest_price_raw) if latest_price_raw is not None else None
+        except (TypeError, ValueError):
+            latest_price = None
+        target_cost = input_cost if input_cost is not None else latest_price
+        target_quantity = input_quantity if input_quantity is not None else 100
+
+        existing = manager.db.get_stock_by_code(code)
+        if existing:
+            update_fields: dict[str, Any] = {}
+            if target_cost is not None:
+                update_fields["cost_price"] = target_cost
+            if target_quantity is not None:
+                update_fields["quantity"] = target_quantity
+            if sector:
+                update_fields["sector"] = sector
+            if name:
+                update_fields["name"] = name
+            if update_fields:
+                ok, _ = manager.update_stock(_int(existing.get("id"), 0) or 0, **update_fields)
+                if ok:
+                    updated += 1
+                else:
+                    failed += 1
+            else:
+                skipped += 1
+            continue
+
+        success, message, _ = manager.add_stock(
+            code=code,
+            name=name,
+            sector=sector,
+            cost_price=target_cost,
+            quantity=target_quantity,
+            note="",
+            auto_monitor=True,
+        )
+        if success:
+            added += 1
+            continue
+        normalized_message = _txt(message).lower()
+        if "已存在" in _txt(message) or "exist" in normalized_message:
+            skipped += 1
+        else:
+            failed += 1
+
+    detail = t(
+        "Holdings registration completed: added {added}, updated {updated}, skipped {skipped}, failed {failed}.",
+        added=added,
+        updated=updated,
+        skipped=skipped,
+        failed=failed,
+    )
+    return build_workbench_snapshot(
+        context,
+        activity=[_timeline(_now(), t("Holdings registration"), detail)],
+    )
+
+
 def action_workbench_add_watchlist(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
     code = _code_from_payload(payload)
     if not code:
@@ -394,6 +491,7 @@ __all__ = [
     "action_workbench_add_watchlist",
     "action_workbench_analysis",
     "action_workbench_analysis_batch",
+    "action_workbench_batch_portfolio",
     "action_workbench_batch_quant",
     "action_workbench_delete",
     "action_workbench_refresh",

@@ -10,6 +10,7 @@ type WatchlistPanelProps = {
   onAddWatchlist: (code: string) => Promise<void> | void;
   onRefresh: (codes: string[]) => void;
   onBatchQuant: (codes: string[]) => void;
+  onBatchPortfolio: (codes: string[], options?: { costPrice?: string; quantity?: string }) => Promise<void> | void;
   onBatchAnalyze: (codes: string[]) => void;
   analysisBusy?: boolean;
   analysisBusyMessage?: string;
@@ -29,6 +30,7 @@ export function WatchlistPanel({
   onAddWatchlist,
   onRefresh,
   onBatchQuant,
+  onBatchPortfolio,
   onBatchAnalyze,
   analysisBusy = false,
   analysisBusyMessage = "",
@@ -41,6 +43,10 @@ export function WatchlistPanel({
   const [inlineCode, setInlineCode] = useState("");
   const [inlineSaving, setInlineSaving] = useState(false);
   const [inlineError, setInlineError] = useState("");
+  const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
+  const [portfolioCostPrice, setPortfolioCostPrice] = useState("");
+  const [portfolioQuantity, setPortfolioQuantity] = useState("");
+  const [portfolioSaving, setPortfolioSaving] = useState(false);
   const normalizedSearch = search.trim().toLowerCase();
   const filteredRows = useMemo(() => {
     if (!normalizedSearch) return watchlist.rows;
@@ -78,6 +84,18 @@ export function WatchlistPanel({
 
   const selectedCodes = selection.selectedIds;
   const selectedRows = pageRows.filter((row) => selectedCodes.includes(row.id));
+
+  const resolveRowPrice = (row: (typeof selectedRows)[number] | undefined): string => {
+    if (!row) return "";
+    const fromField = String(row.latestPrice ?? "").trim();
+    const fromCell = String(row.cells?.[2] ?? "").trim();
+    const raw = fromField || fromCell;
+    const normalized = raw.replace(/[^\d.-]/g, "");
+    if (!normalized) return "";
+    const value = Number(normalized);
+    if (!Number.isFinite(value)) return "";
+    return value.toFixed(2);
+  };
 
   const handleBatchQuant = () => {
     if (selectedCodes.length > 0) {
@@ -150,6 +168,19 @@ export function WatchlistPanel({
                 onClick={handleBatchQuant}
                 disabled={selectedCodes.length === 0}
               />
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => {
+                  setPortfolioDialogOpen(true);
+                  setPortfolioCostPrice(selectedRows.length === 1 ? resolveRowPrice(selectedRows[0]) : "");
+                  setPortfolioQuantity("100");
+                }}
+                disabled={selectedCodes.length === 0}
+                style={{ minHeight: "38px", padding: "0 12px" }}
+              >
+                {t("Register holdings")}
+              </button>
               <IconButton
                 icon="🔎"
                 label={analysisBusy ? t("Analysis in progress") : t("Start analysis")}
@@ -177,6 +208,76 @@ export function WatchlistPanel({
             </div>
           </div>
         </div>
+        {portfolioDialogOpen ? (
+          <div className="summary-item">
+            <div className="summary-item__title">{t("Register holdings")}</div>
+            <div className="summary-item__body">{t("Fill cost price and quantity for selected stocks.")}</div>
+            <div className="section-grid" style={{ marginTop: 10 }}>
+              <label className="field">
+                <span className="field__label">{t("Cost price")}</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={portfolioCostPrice}
+                  onChange={(event) => setPortfolioCostPrice(event.target.value)}
+                  placeholder={t("Current price")}
+                />
+              </label>
+              <label className="field">
+                <span className="field__label">{t("Quantity")}</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={100}
+                  step={100}
+                  value={portfolioQuantity}
+                  onChange={(event) => setPortfolioQuantity(event.target.value)}
+                  placeholder="100"
+                />
+              </label>
+            </div>
+            <div className="toolbar toolbar--compact" style={{ marginTop: 10 }}>
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={portfolioSaving || selectedCodes.length === 0}
+                onClick={async () => {
+                  setPortfolioSaving(true);
+                  try {
+                    const normalizedQuantity = Math.max(100, Number(portfolioQuantity || 100) || 100);
+                    await Promise.resolve(
+                      onBatchPortfolio(selectedCodes, {
+                        costPrice: portfolioCostPrice.trim(),
+                        quantity: String(normalizedQuantity),
+                      }),
+                    );
+                    setPortfolioDialogOpen(false);
+                    setPortfolioCostPrice("");
+                    setPortfolioQuantity("100");
+                  } finally {
+                    setPortfolioSaving(false);
+                  }
+                }}
+              >
+                {portfolioSaving ? t("Submitting...") : t("Confirm registration")}
+              </button>
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={portfolioSaving}
+                onClick={() => {
+                  setPortfolioDialogOpen(false);
+                  setPortfolioCostPrice("");
+                  setPortfolioQuantity("100");
+                }}
+              >
+                {t("Cancel")}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="table-shell watchlist-table-shell">
           <div className="watchlist-table__viewport">

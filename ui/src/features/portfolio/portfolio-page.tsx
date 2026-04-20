@@ -1,181 +1,124 @@
-import { useEffect, useState } from "react";
-import type { ApiClient } from "../../lib/api-client";
-import { SectionEmptyState } from "../../components/ui/section-empty";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiClient, type ApiClient } from "../../lib/api-client";
 import { PageHeader } from "../../components/ui/page-header";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
 import { PageEmptyState, PageErrorState, PageLoadingState } from "../../components/ui/page-state";
-import { Sparkline } from "../../components/ui/sparkline";
 import { usePageData } from "../../lib/use-page-data";
-
-const SCHEDULE_MODE_OPTIONS = [
-  { value: "sequential", label: "顺序分析" },
-  { value: "parallel", label: "并行分析" },
-];
-
-const DEFAULT_SCHEDULE_TIME = "09:30";
 
 type PortfolioPageProps = {
   client?: ApiClient;
 };
 
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
+const NEWS_PAGE_SIZE = 10;
+
 export function PortfolioPage({ client }: PortfolioPageProps) {
-  const resource = usePageData("portfolio", client);
+  const activeClient = client ?? apiClient;
+  const resource = usePageData("portfolio", activeClient);
   const snapshot = resource.data;
-  const snapshotVersion = snapshot?.updatedAt ?? "loading";
-  const [scheduleTime, setScheduleTime] = useState(DEFAULT_SCHEDULE_TIME);
-  const [analysisMode, setAnalysisMode] = useState("sequential");
-  const [maxWorkers, setMaxWorkers] = useState(1);
-  const [autoSyncMonitor, setAutoSyncMonitor] = useState(true);
-  const [sendNotification, setSendNotification] = useState(true);
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [pageSize, setPageSize] = useState(50);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [newsPageIndex, setNewsPageIndex] = useState(0);
+  const allRows = snapshot?.holdings.rows ?? [];
+  const filteredRows = allRows.filter((row) => {
+    if (!query.trim()) return true;
+    const text = query.trim().toLowerCase();
+    const haystack = [row.code, row.name, row.industry, ...row.cells].join(" ").toLowerCase();
+    return haystack.includes(text);
+  });
+  const safePageSize = PAGE_SIZE_OPTIONS.includes(pageSize) ? pageSize : 50;
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / safePageSize));
+  const safePage = Math.min(pageIndex, totalPages - 1);
+  const pageRows = filteredRows.slice(safePage * safePageSize, safePage * safePageSize + safePageSize);
+  const currentPageSymbols = useMemo(
+    () => pageRows.map((row) => (row.code ?? row.id ?? "").trim()).filter(Boolean),
+    [pageRows],
+  );
+  const job = snapshot?.portfolioAnalysisJob ?? null;
+  const marketNews = snapshot?.marketNews ?? [];
+  const newsTotalPages = Math.max(1, Math.ceil(marketNews.length / NEWS_PAGE_SIZE));
+  const safeNewsPage = Math.min(newsPageIndex, newsTotalPages - 1);
+  const pagedMarketNews = marketNews.slice(
+    safeNewsPage * NEWS_PAGE_SIZE,
+    safeNewsPage * NEWS_PAGE_SIZE + NEWS_PAGE_SIZE,
+  );
 
   useEffect(() => {
-    setScheduleTime(DEFAULT_SCHEDULE_TIME);
-    setAnalysisMode("sequential");
-    setMaxWorkers(1);
-    setAutoSyncMonitor(true);
-    setSendNotification(true);
-  }, [snapshotVersion]);
+    if (!job?.id || !(job.status === "queued" || job.status === "running")) {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const status = await activeClient.getTaskStatus<{
+          id: string;
+          status: string;
+          stage?: string;
+          progress?: number;
+          message?: string;
+        }>(job.id);
+        if (status.status === "completed" || status.status === "failed") {
+          await resource.refresh();
+        }
+      } catch {
+        // ignore polling error
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [activeClient, job?.id, job?.status, resource]);
 
-  if (resource.status === "loading" && !resource.data) {
-    return <PageLoadingState title="持仓分析加载中" description="正在读取当前持仓、收益归因和组合曲线。" />;
+  if (resource.status === "loading" && !snapshot) {
+    return <PageLoadingState title="持仓列表加载中" description="正在读取全部持仓股票列表与组合状态。" />;
   }
 
-  if (resource.status === "error" && !resource.data) {
+  if (resource.status === "error" && !snapshot) {
     return (
       <PageErrorState
-        title="持仓分析加载失败"
-        description={resource.error ?? "无法加载持仓分析数据，请稍后重试。"}
-        actionLabel="重新加载"
+        title="持仓列表加载失败"
+        description={resource.error ?? "无法加载持仓列表。"}
+        actionLabel="重试"
         onAction={resource.refresh}
       />
     );
   }
 
   if (!snapshot) {
-    return <PageEmptyState title="持仓分析暂无数据" description="后台尚未返回持仓分析快照。" actionLabel="刷新" onAction={resource.refresh} />;
+    return <PageEmptyState title="暂无持仓数据" description="后台尚未返回持仓列表。" actionLabel="刷新" onAction={resource.refresh} />;
   }
 
   return (
     <div>
-      <PageHeader eyebrow="Portfolio" title="持仓分析" description="持仓跟踪、组合分析和定时任务都在这里统一查看与操作。" />
+      <PageHeader eyebrow="Portfolio v2" title="持仓列表" description="全面查看所有持仓股票，点击任意股票进入详情页。" />
       <div className="stack">
         <WorkbenchCard>
-          <h2 className="section-card__title">快照概览</h2>
-          <p className="section-card__description">
-            当前持仓、收益归因、组合曲线和动作入口都来自同一份快照，页面会在刷新后同步回写最新状态。
-          </p>
-          <div className="mini-metric-grid">
-            <div className="mini-metric">
-              <div className="mini-metric__label">快照更新时间</div>
-              <div className="mini-metric__value">{snapshot.updatedAt}</div>
+          {job ? (
+            <div className="summary-item" style={{ marginBottom: 12 }}>
+              <div className="summary-item__title">仓位分析任务</div>
+              <div className="summary-item__body">
+                {job.message || "任务已提交"}（{job.status} / {job.stage || "-"} / {job.progress ?? 0}%）
+              </div>
             </div>
-            <div className="mini-metric">
-              <div className="mini-metric__label">当前持仓</div>
-              <div className="mini-metric__value">{snapshot.holdings.rows.length}</div>
+          ) : null}
+          <div className="summary-item summary-item--accent">
+            <div className="summary-item__title">组合仓位建议</div>
+            <div className="summary-item__body">{snapshot.portfolioDecision?.summary ?? "暂无组合级仓位建议。"}</div>
+            <div className="chip-row" style={{ marginTop: 8 }}>
+              <span className="chip chip--active">建议动作：{snapshot.portfolioDecision?.action ?? "--"}</span>
+              <span className="chip chip--active">目标仓位：{snapshot.portfolioDecision?.targetExposurePct ?? "--"}</span>
             </div>
-            <div className="mini-metric">
-              <div className="mini-metric__label">收益归因</div>
-              <div className="mini-metric__value">{snapshot.attribution.length}</div>
+            <div className="summary-item__body" style={{ marginTop: 8 }}>
+              看多 {snapshot.portfolioDecision?.bullishCount ?? 0} / 中性 {snapshot.portfolioDecision?.neutralCount ?? 0} / 看空 {snapshot.portfolioDecision?.bearishCount ?? 0}
             </div>
-          </div>
-          <div className="card-divider" />
-          <div className="summary-list">
-            <SectionEmptyState
-              title="组合动作"
-              description={snapshot.actions.length > 0 ? "这些动作代表当前组合页支持的后续操作。" : "当前没有可展示的组合动作。"}
-            >
-              {snapshot.actions.length > 0 ? (
-                snapshot.actions.map((action) => (
-                  <span className="badge badge--neutral" key={action}>
-                    {action}
-                  </span>
-                ))
-              ) : (
-                <span className="badge badge--neutral">暂无动作</span>
-              )}
-            </SectionEmptyState>
+            <div className="summary-item__body">
+              {typeof snapshot.portfolioDecision?.score === "number"
+                ? `综合得分 ${snapshot.portfolioDecision.score >= 0 ? "+" : ""}${snapshot.portfolioDecision.score.toFixed(2)}（按仓位和置信度加权）`
+                : "综合得分 --"}
+            </div>
           </div>
         </WorkbenchCard>
-        <WorkbenchCard>
-          <div className="toolbar">
-            <div>
-              <h2 className="section-card__title">组合操作</h2>
-              <p className="section-card__description" style={{ marginBottom: 0 }}>
-                这里直接调用后端的组合刷新和调度动作，避免把刷新和页面重新拉取混在一起。
-              </p>
-            </div>
-            <span className="toolbar__spacer" />
-            <button className="button button--secondary" type="button" onClick={() => void resource.runAction("refresh-portfolio")}>
-              刷新组合
-            </button>
-          </div>
-          <div className="card-divider" />
-          <div className="summary-list">
-            <label className="field">
-              <span className="field__label">定时执行时间</span>
-              <input className="input" type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
-            </label>
-            <label className="field">
-              <span className="field__label">分析模式</span>
-              <select className="input" value={analysisMode} onChange={(event) => setAnalysisMode(event.target.value)}>
-                {SCHEDULE_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span className="field__label">并行线程数</span>
-              <input
-                className="input"
-                disabled={analysisMode !== "parallel"}
-                min={1}
-                max={16}
-                step={1}
-                type="number"
-                value={maxWorkers}
-                onChange={(event) => setMaxWorkers(Number(event.target.value) || 1)}
-              />
-            </label>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
-              <input type="checkbox" checked={autoSyncMonitor} onChange={(event) => setAutoSyncMonitor(event.target.checked)} />
-              <span className="field__label" style={{ marginBottom: 0 }}>
-                自动同步到监测
-              </span>
-            </label>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
-              <input type="checkbox" checked={sendNotification} onChange={(event) => setSendNotification(event.target.checked)} />
-              <span className="field__label" style={{ marginBottom: 0 }}>
-                发送完成通知
-              </span>
-            </label>
-          </div>
-          <div className="card-divider" />
-          <div className="toolbar toolbar--compact">
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() =>
-                void resource.runAction("schedule-save", {
-                  scheduleTime,
-                  analysisMode,
-                  maxWorkers: analysisMode === "parallel" ? maxWorkers : 1,
-                  autoSyncMonitor,
-                  sendNotification,
-                })
-              }
-            >
-              保存调度
-            </button>
-            <button className="button button--secondary" type="button" onClick={() => void resource.runAction("schedule-start")}>
-              启动调度
-            </button>
-            <button className="button button--secondary" type="button" onClick={() => void resource.runAction("schedule-stop")}>
-              停止调度
-            </button>
-          </div>
-        </WorkbenchCard>
+
         <div className="metric-grid">
           {snapshot.metrics.map((metric) => (
             <WorkbenchCard className="metric-card" key={metric.label}>
@@ -184,96 +127,190 @@ export function PortfolioPage({ client }: PortfolioPageProps) {
             </WorkbenchCard>
           ))}
         </div>
-        <div className="section-grid">
-          <WorkbenchCard>
-            <h2 className="section-card__title">当前持仓</h2>
-            {snapshot.holdings.rows.length === 0 ? (
-              <SectionEmptyState
-                title="当前没有持仓明细"
-                description="当组合里出现新的持仓后，这里会自动回填代码、仓位、浮盈亏和建议动作。"
+
+        <WorkbenchCard>
+          <div className="toolbar">
+            <label className="field" style={{ minWidth: 220 }}>
+              <input
+                className="input"
+                placeholder="按代码/名称/板块搜索"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPageIndex(0);
+                }}
               />
-            ) : null}
-            <div className="table-shell">
-              <table className="table">
-                <thead>
+            </label>
+            <label className="field" style={{ width: 120 }}>
+              <select
+                className="input"
+                value={safePageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value) || 50);
+                  setPageIndex(0);
+                }}
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option value={size} key={size}>
+                    {size}/页
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="toolbar__spacer" />
+            <button className="button button--secondary" type="button" onClick={() => void resource.runAction("refresh-portfolio")}>
+              刷新组合
+            </button>
+            <button
+              className="button button--secondary"
+              type="button"
+              disabled={currentPageSymbols.length === 0}
+              onClick={() =>
+                void resource.runAction("refresh-indicators", {
+                  symbols: currentPageSymbols,
+                  scope: "indicators_only",
+                })
+              }
+            >
+              刷新技术指标
+            </button>
+            <button className="button button--secondary" type="button" onClick={() => void resource.runAction("analyze", { mode: "parallel" })}>
+              实时分析仓位
+            </button>
+          </div>
+
+          <div className="table-shell">
+            <table className="table">
+              <thead>
+                <tr>
+                  {snapshot.holdings.columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                  <th className="table__actions-head">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.length === 0 ? (
                   <tr>
-                    {snapshot.holdings.columns.map((column) => (
-                      <th key={column}>{column}</th>
-                    ))}
-                    <th className="table__actions-head">操作</th>
+                    <td colSpan={snapshot.holdings.columns.length + 1} className="table__empty">
+                      {snapshot.holdings.emptyLabel ?? "暂无持仓"}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {snapshot.holdings.rows.map((row) => (
-                    <tr key={row.id}>
-                      {row.cells.map((cell, index) => (
-                        <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {cell}
-                        </td>
-                      ))}
-                      <td>
-                        <div className="table__actions">
-                          {row.actions?.map((action) => (
+                ) : (
+                  pageRows.map((row) => {
+                    const symbol = (row.code ?? row.id ?? "").trim();
+                    return (
+                      <tr className="portfolio-stock-row" key={row.id} onClick={() => navigate(`/portfolio/position/${encodeURIComponent(symbol)}`)}>
+                        {row.cells.map((cell, index) => (
+                          <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                            {cell}
+                          </td>
+                        ))}
+                        <td className="table__actions-cell">
+                          <div className="table__actions">
                             <button
-                              key={`${row.id}-${action.label}`}
                               className="chip chip--active"
                               type="button"
-                              onClick={() => void resource.runAction(action.action ?? "analyze", row.id)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                navigate(`/portfolio/position/${encodeURIComponent(symbol)}`);
+                              }}
                             >
-                              {action.icon ?? action.label}
-                              <span>{action.label}</span>
+                              详情
                             </button>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                            <button
+                              className="chip chip--danger"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (!symbol) return;
+                                if (!window.confirm(`确认删除持仓 ${symbol} ?`)) return;
+                                void resource.runAction("delete-position", { code: symbol });
+                              }}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="watchlist-pagination" style={{ marginTop: 12 }}>
+            <div className="watchlist-pagination__summary">
+              共 {filteredRows.length} 条 · 第 {safePage + 1} / {totalPages} 页
             </div>
-          </WorkbenchCard>
-          <WorkbenchCard>
-            <h2 className="section-card__title">收益归因</h2>
-            {snapshot.attribution.length === 0 ? (
-              <SectionEmptyState
-                title="收益归因暂无数据"
-                description="等待新的持仓分析结果写回后，这里会展示盈利来源、回撤来源和风险协同。"
-              />
+            <div className="watchlist-pagination__controls">
+              <button className="button button--secondary" type="button" disabled={safePage <= 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}>
+                上一页
+              </button>
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={safePage >= totalPages - 1}
+                onClick={() => setPageIndex((value) => Math.min(totalPages - 1, value + 1))}
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </WorkbenchCard>
+
+        <WorkbenchCard>
+          <h2 className="section-card__title">市场重点实时新闻</h2>
+          <div className="summary-list">
+            {marketNews.length === 0 ? (
+              <div className="summary-item">
+                <div className="summary-item__title">暂无市场新闻</div>
+                <div className="summary-item__body">当前没有可展示的重点新闻。</div>
+              </div>
             ) : (
-              <div className="summary-list">
-                {snapshot.attribution.map((item) => (
-                  <div className="summary-item" key={item.title}>
-                    <div className="summary-item__title">{item.title}</div>
-                    <div className="summary-item__body">{item.body}</div>
+              pagedMarketNews.map((item, index) => (
+                <div className="summary-item" key={`${index}-${item.title}`}>
+                  <div className="summary-item__title">{item.title}</div>
+                  <div className="summary-item__body">{item.body}</div>
+                  <div className="chip-row" style={{ marginTop: 8 }}>
+                    <span className="badge badge--neutral">{item.source || "market"}</span>
+                    <span className="badge badge--neutral">{item.time || "--"}</span>
+                    {item.url ? (
+                      <a className="badge badge--neutral" href={item.url} target="_blank" rel="noreferrer">
+                        原文
+                      </a>
+                    ) : null}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))
             )}
-            <div className="card-divider" />
-            <h2 className="section-card__title" style={{ fontSize: "1.2rem" }}>
-              组合曲线
-            </h2>
-            <Sparkline points={snapshot.curve} />
-            <div className="card-divider" />
-            <h2 className="section-card__title" style={{ fontSize: "1.2rem" }}>
-              组合动作
-            </h2>
-            {snapshot.actions.length === 0 ? (
-              <SectionEmptyState
-                title="组合动作暂无数据"
-                description="当前没有动作标签可展示，刷新组合或执行调度后会同步回填。"
-              />
-            ) : (
-              <div className="chip-row">
-                {snapshot.actions.map((action) => (
-                  <span className="chip chip--active" key={action}>
-                    {action}
-                  </span>
-                ))}
+          </div>
+          {marketNews.length > 0 ? (
+            <div className="watchlist-pagination" style={{ marginTop: 12 }}>
+              <div className="watchlist-pagination__summary">
+                共 {marketNews.length} 条 · 第 {safeNewsPage + 1} / {newsTotalPages} 页
               </div>
-            )}
-          </WorkbenchCard>
-        </div>
+              <div className="watchlist-pagination__controls">
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={safeNewsPage <= 0}
+                  onClick={() => setNewsPageIndex((value) => Math.max(0, value - 1))}
+                >
+                  上一页
+                </button>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={safeNewsPage >= newsTotalPages - 1}
+                  onClick={() => setNewsPageIndex((value) => Math.min(newsTotalPages - 1, value + 1))}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </WorkbenchCard>
       </div>
     </div>
   );

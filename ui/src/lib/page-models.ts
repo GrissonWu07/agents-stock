@@ -76,6 +76,11 @@ export type SelectableOption = {
 export type ChartPoint = {
   label: string;
   value: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
 };
 
 export type ActionTile = {
@@ -199,12 +204,57 @@ export type ResearchSnapshot = {
 };
 
 export type PortfolioSnapshot = {
+  taskId?: string;
   updatedAt: string;
   metrics: SummaryMetric[];
   holdings: TableSection;
   attribution: Insight[];
   curve: ChartPoint[];
   actions: string[];
+  selectedSymbol?: string;
+  detail?: {
+    symbol: string;
+    stockName: string;
+    sector: string;
+    kline: ChartPoint[];
+    indicators: SummaryMetric[];
+    pendingSignals: TableSection;
+    decision: {
+      rating: string;
+      summary: string;
+      updatedAt: string;
+    };
+    positionForm: {
+      quantity: string;
+      costPrice: string;
+      takeProfit: string;
+      stopLoss: string;
+      note: string;
+    };
+  };
+  indicatorRefresh?: {
+    updatedAt: string;
+    scope: string;
+    symbols: string[];
+  };
+  portfolioDecision?: {
+    action: string;
+    targetExposurePct: string;
+    summary: string;
+    bullishCount?: number;
+    neutralCount?: number;
+    bearishCount?: number;
+    score?: number;
+    reasons?: string[];
+  };
+  marketNews?: {
+    title: string;
+    body: string;
+    source?: string;
+    time?: string;
+    url?: string;
+  }[];
+  portfolioAnalysisJob?: TaskJob | null;
 };
 
 export type LiveSimSnapshot = {

@@ -30,7 +30,7 @@ class PortfolioManager:
     
     # ==================== 持仓股票管理 ====================
     
-    def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
+    def add_stock(self, code: str, name: str, sector: str = "", cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
                   auto_monitor: bool = True) -> Tuple[bool, str, Optional[int]]:
         """
@@ -59,7 +59,7 @@ class PortfolioManager:
                 return False, f"股票代码 {code} 已存在", None
             
             # 添加到数据库
-            stock_id = self.db.add_stock(code, name, cost_price, quantity, note, auto_monitor)
+            stock_id = self.db.add_stock(code, name, sector, cost_price, quantity, note, auto_monitor)
             return True, f"添加持仓股票成功: {code} {name}", stock_id
             
         except Exception as e:

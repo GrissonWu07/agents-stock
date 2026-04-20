@@ -180,6 +180,13 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
               void handleRefreshWatchlist(codes);
             }}
             onBatchQuant={(codes) => resource.runAction("batch-quant", { codes })}
+            onBatchPortfolio={(codes, options) =>
+              resource.runAction("batch-portfolio", {
+                codes,
+                costPrice: options?.costPrice,
+                quantity: options?.quantity,
+              })
+            }
             onBatchAnalyze={handleBatchAnalyzeFromWatchlist}
             analysisBusy={showAnalysisBusy}
             analysisBusyMessage={analysisBusyMessage}

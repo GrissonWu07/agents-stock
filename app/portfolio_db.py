@@ -48,14 +48,25 @@ class PortfolioDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     code TEXT NOT NULL UNIQUE,
                     name TEXT NOT NULL,
+                    sector TEXT,
                     cost_price REAL,
                     quantity INTEGER,
+                    take_profit REAL,
+                    stop_loss REAL,
                     note TEXT,
                     auto_monitor BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            cursor.execute("PRAGMA table_info(portfolio_stocks)")
+            columns = {str(row[1]) for row in cursor.fetchall()}
+            if "sector" not in columns:
+                cursor.execute("ALTER TABLE portfolio_stocks ADD COLUMN sector TEXT")
+            if "take_profit" not in columns:
+                cursor.execute("ALTER TABLE portfolio_stocks ADD COLUMN take_profit REAL")
+            if "stop_loss" not in columns:
+                cursor.execute("ALTER TABLE portfolio_stocks ADD COLUMN stop_loss REAL")
             
             # 创建持仓分析历史表
             cursor.execute('''
@@ -99,7 +110,7 @@ class PortfolioDB:
     
     # ==================== 持仓股票CRUD操作 ====================
     
-    def add_stock(self, code: str, name: str, cost_price: Optional[float] = None,
+    def add_stock(self, code: str, name: str, sector: str = "", cost_price: Optional[float] = None,
                   quantity: Optional[int] = None, note: str = "", 
                   auto_monitor: bool = True) -> int:
         """
@@ -125,9 +136,9 @@ class PortfolioDB:
         try:
             cursor.execute('''
                 INSERT INTO portfolio_stocks 
-                (code, name, cost_price, quantity, note, auto_monitor, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (code, name, cost_price, quantity, note, auto_monitor, 
+                (code, name, sector, cost_price, quantity, note, auto_monitor, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (code, name, sector, cost_price, quantity, note, auto_monitor, 
                   datetime.now(), datetime.now()))
             
             conn.commit()
@@ -160,7 +171,7 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         # 允许更新的字段
-        allowed_fields = ['code', 'name', 'cost_price', 'quantity', 'note', 'auto_monitor']
+        allowed_fields = ['code', 'name', 'cost_price', 'quantity', 'take_profit', 'stop_loss', 'note', 'auto_monitor']
         update_fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
         
         if not update_fields:
@@ -559,7 +570,7 @@ class PortfolioDB:
                 SELECT 
                     s.*,
                     h.rating, h.confidence, h.current_price, h.target_price,
-                    h.entry_min, h.entry_max, h.take_profit, h.stop_loss,
+                    h.entry_min, h.entry_max, h.take_profit AS analysis_take_profit, h.stop_loss AS analysis_stop_loss,
                     h.analysis_time
                 FROM portfolio_stocks s
                 LEFT JOIN (

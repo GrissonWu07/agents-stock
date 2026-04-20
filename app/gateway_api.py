@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config_manager import ConfigManager, config_manager
 from app.database import StockAnalysisDatabase
+from app import stock_analysis_service
 from app.gateway_common import (
     code_from_payload as _code_from_payload,
     float_value as _float,
@@ -45,6 +46,7 @@ from app.gateway_workbench import (
     action_workbench_add_watchlist as _action_workbench_add_watchlist,
     action_workbench_analysis as _action_workbench_analysis,
     action_workbench_analysis_batch as _action_workbench_analysis_batch,
+    action_workbench_batch_portfolio as _action_workbench_batch_portfolio,
     action_workbench_batch_quant as _action_workbench_batch_quant,
     action_workbench_delete as _action_workbench_delete,
     action_workbench_refresh as _action_workbench_refresh,
@@ -53,6 +55,7 @@ from app.gateway_workbench import (
 from app.main_force_batch_db import MainForceBatchDatabase
 from app.monitor_db import monitor_db
 from app.portfolio_db import portfolio_db
+from app.portfolio_rebalance_tasks import portfolio_rebalance_task_manager
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.db import QuantSimDB
 from app.quant_sim.engine import QuantSimEngine
@@ -108,6 +111,262 @@ def _candidate_rows(
             }
         )
     return rows
+
+
+def _indicator_alias_value(indicators: dict[str, Any], aliases: list[str]) -> Any:
+    for alias in aliases:
+        if alias in indicators:
+            return indicators.get(alias)
+    lowered = {str(key).lower(): value for key, value in indicators.items()}
+    for alias in aliases:
+        alias_key = str(alias).lower()
+        if alias_key in lowered:
+            return lowered.get(alias_key)
+    return None
+
+
+def _build_portfolio_indicator_cards(
+    indicators: dict[str, Any] | None,
+    explanations: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    indicators = indicators if isinstance(indicators, dict) else {}
+    explanations = explanations if isinstance(explanations, dict) else {}
+    specs = [
+        ("Price", ["price", "close", "Close"], "Latest traded price."),
+        ("Volume", ["volume", "Volume"], "Latest traded volume."),
+        ("Volume MA5", ["volume_ma5", "Volume_MA5"], "5-period average volume."),
+        ("MA5", ["ma5", "MA5"], "5-day moving average."),
+        ("MA10", ["ma10", "MA10"], "10-day moving average."),
+        ("MA20", ["ma20", "MA20"], "20-day moving average."),
+        ("MA60", ["ma60", "MA60"], "60-day moving average."),
+        ("RSI", ["rsi", "RSI"], "Relative strength index."),
+        ("MACD", ["macd", "MACD"], "Trend momentum indicator."),
+        ("Signal line", ["macd_signal", "MACD_signal"], "MACD signal line."),
+        ("Bollinger upper", ["bb_upper", "BB_upper"], "Upper volatility band."),
+        ("Bollinger middle", ["bb_middle", "BB_middle"], "Middle volatility band."),
+        ("Bollinger lower", ["bb_lower", "BB_lower"], "Lower volatility band."),
+        ("K value", ["k_value", "K"], "KDJ fast line."),
+        ("D value", ["d_value", "D"], "KDJ slow line."),
+        ("Volume ratio", ["volume_ratio", "Volume_ratio", "量比"], "Relative activity vs average volume."),
+    ]
+    cards: list[dict[str, Any]] = []
+    for label, aliases, default_hint in specs:
+        value = _indicator_alias_value(indicators, aliases)
+        detail = explanations.get(label) if isinstance(explanations.get(label), dict) else None
+        hint = _txt(detail.get("summary"), default_hint) if detail else default_hint
+        cards.append(
+            {
+                "label": label,
+                "value": _num(value) if isinstance(value, (int, float)) else _txt(value, "--"),
+                "hint": hint,
+            }
+        )
+    return cards
+
+
+def _build_portfolio_kline(stock_data: Any) -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    if stock_data is None or not hasattr(stock_data, "tail"):
+        return points
+    def _row_number(row: Any, aliases: list[str]) -> float | None:
+        if not hasattr(row, "get"):
+            return None
+        for alias in aliases:
+            value = row.get(alias)
+            if value in (None, ""):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+    try:
+        tail = stock_data.tail(160)
+        for index, row in tail.iterrows():
+            close_number = _row_number(row, ["Close", "收盘", "close"])
+            if close_number is None:
+                continue
+            open_number = _row_number(row, ["Open", "开盘", "open"])
+            high_number = _row_number(row, ["High", "最高", "high"])
+            low_number = _row_number(row, ["Low", "最低", "low"])
+            volume_number = _row_number(row, ["Volume", "成交量", "volume", "vol"])
+            if open_number is None:
+                open_number = close_number
+            if high_number is None:
+                high_number = max(open_number, close_number)
+            if low_number is None:
+                low_number = min(open_number, close_number)
+            label = _txt(index)
+            if hasattr(index, "strftime"):
+                try:
+                    label = index.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    label = _txt(index)
+            item: dict[str, Any] = {
+                "label": label,
+                "value": close_number,
+                "open": open_number,
+                "high": high_number,
+                "low": low_number,
+                "close": close_number,
+            }
+            if volume_number is not None:
+                item["volume"] = volume_number
+            points.append(item)
+    except Exception:
+        return []
+    return points
+
+
+def _portfolio_technical_snapshot(symbol: str, cycle: str = "1y") -> dict[str, Any]:
+    if not symbol:
+        return {"symbol": "", "stockName": "", "sector": "", "kline": [], "indicators": []}
+    stock_info, stock_data, indicators = stock_analysis_service.get_stock_data(symbol, cycle)
+    info = stock_info if isinstance(stock_info, dict) else {}
+    indicator_map = indicators if isinstance(indicators, dict) else {}
+    indicator_explanations = stock_analysis_service.build_indicator_explanations(
+        indicator_map,
+        current_price=info.get("current_price"),
+    )
+    return {
+        "symbol": symbol,
+        "stockName": _txt(info.get("name"), symbol),
+        "sector": _txt(info.get("sector") or info.get("industry") or info.get("board") or info.get("所属行业")),
+        "kline": _build_portfolio_kline(stock_data),
+        "indicators": _build_portfolio_indicator_cards(indicator_map, indicator_explanations),
+    }
+
+
+def _portfolio_pending_signal_rows(context: "UIApiContext", symbol: str | None = None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for i, item in enumerate(context.quant_db().get_pending_signals()):
+        code = normalize_stock_code(item.get("stock_code"))
+        if symbol and code != symbol:
+            continue
+        rows.append(
+            {
+                "id": _txt(item.get("id"), f"pending-{i}"),
+                "cells": [
+                    _txt(item.get("created_at") or item.get("updated_at"), "--"),
+                    code,
+                    _txt(item.get("action"), "HOLD").upper(),
+                    _txt(item.get("strategy_mode") or item.get("decision_type"), "--"),
+                    _txt(item.get("status"), "pending"),
+                    _txt(item.get("reasoning") or item.get("execution_note"), "--"),
+                ],
+                "code": code,
+                "name": _txt(item.get("stock_name"), code),
+            }
+        )
+    return rows
+
+
+def _payload_codes(payload: Any) -> list[str]:
+    body = _payload_dict(payload)
+    values = body.get("symbols") if isinstance(body.get("symbols"), list) else []
+    if not values:
+        raw_codes = body.get("codes")
+        if isinstance(raw_codes, list):
+            values = raw_codes
+        elif isinstance(raw_codes, str):
+            values = re.split(r"[\s,;，；]+", raw_codes)
+    normalized = [normalize_stock_code(_txt(code)) for code in values if _txt(code)]
+    return [code for code in normalized if code]
+
+
+def _load_market_focus_news(context: "UIApiContext", limit: int = 8) -> list[dict[str, Any]]:
+    try:
+        from app.sector_strategy_db import SectorStrategyDatabase
+
+        db = SectorStrategyDatabase(default_db_path("sector_strategy.db", data_dir=context.data_dir))
+        payload = db.get_latest_news_data(within_hours=24)
+        content = payload.get("data_content") if isinstance(payload, dict) else []
+        items: list[dict[str, Any]] = []
+        for idx, item in enumerate(content[:limit]):
+            if not isinstance(item, dict):
+                continue
+            title = _txt(item.get("title"), f"市场新闻 {idx + 1}")
+            body = _txt(item.get("content")) or _txt(item.get("summary"))
+            if len(body) > 180:
+                body = f"{body[:180]}..."
+            items.append(
+                {
+                    "title": title,
+                    "body": body or "暂无摘要",
+                    "source": _txt(item.get("source"), "market"),
+                    "time": _txt(item.get("news_date"), "--"),
+                    "url": _txt(item.get("url")),
+                }
+            )
+        return items
+    except Exception:
+        return []
+
+
+def _build_portfolio_adjustment_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "action": "保持",
+            "targetExposurePct": "0%",
+            "summary": "当前无持仓，建议先控制仓位并等待有效信号。",
+            "bullishCount": 0,
+            "neutralCount": 0,
+            "bearishCount": 0,
+            "score": 0.0,
+            "reasons": ["暂无持仓股票数据"],
+        }
+
+    bullish = 0
+    bearish = 0
+    neutral = 0
+    weighted_score = 0.0
+    total_weight = 0.0
+    reasons: list[str] = []
+    for item in rows:
+        rating = _txt(item.get("rating"), "").upper()
+        quantity = _float(item.get("quantity")) or 0.0
+        price = _float(item.get("current_price")) or _float(item.get("cost_price")) or 0.0
+        weight = max(quantity * price, 1.0)
+        confidence = min(max((_float(item.get("confidence")) or 5.0) / 10.0, 0.0), 1.0)
+
+        vote = 0.0
+        if ("买" in rating) or ("BUY" in rating):
+            bullish += 1
+            vote = 1.0
+        elif ("卖" in rating) or ("SELL" in rating):
+            bearish += 1
+            vote = -1.0
+        else:
+            neutral += 1
+            vote = 0.0
+
+        weighted_score += vote * confidence * weight
+        total_weight += weight
+
+    normalized_score = weighted_score / total_weight if total_weight > 0 else 0.0
+    if normalized_score >= 0.35:
+        action = "加仓"
+        target_exposure = "70%"
+    elif normalized_score <= -0.35:
+        action = "降仓"
+        target_exposure = "35%"
+    else:
+        action = "保持"
+        target_exposure = "50%"
+
+    reasons.append(f"看多 {bullish} / 中性 {neutral} / 看空 {bearish}")
+    reasons.append(f"综合得分 {normalized_score:+.2f}（按仓位和置信度加权）")
+    summary = f"组合仓位建议：{action}，建议目标仓位约 {target_exposure}。"
+    return {
+        "action": action,
+        "targetExposurePct": target_exposure,
+        "summary": summary,
+        "bullishCount": bullish,
+        "neutralCount": neutral,
+        "bearishCount": bearish,
+        "score": round(normalized_score, 4),
+        "reasons": reasons,
+    }
 
 
 @dataclass
@@ -215,22 +474,132 @@ class UIApiContext:
 
 
 
-def _snapshot_portfolio(context: UIApiContext) -> dict[str, Any]:
+def _snapshot_portfolio(
+    context: UIApiContext,
+    *,
+    selected_symbol: str | None = None,
+    indicator_overrides: dict[str, dict[str, Any]] | None = None,
+    analysis_job: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     manager = context.portfolio_manager()
-    rows = []
-    for item in manager.get_all_latest_analysis():
+    latest_rows = manager.get_all_latest_analysis()
+    summary = context.portfolio().get_account_summary()
+
+    rows: list[dict[str, Any]] = []
+    latest_by_symbol: dict[str, dict[str, Any]] = {}
+    for item in latest_rows:
         code = normalize_stock_code(item.get("code") or item.get("symbol"))
+        if not code:
+            continue
+        latest_by_symbol[code] = item
+        name = _txt(item.get("name") or item.get("stock_name"), code)
+        sector = _txt(item.get("sector") or item.get("industry") or item.get("board") or item.get("所属行业"), "-")
+        quantity = _int(item.get("quantity"), 0) or 0
+        cost_price = _float(item.get("cost_price"))
+        current_price = _float(item.get("current_price"))
+        pnl_pct = None
+        if current_price is not None and cost_price not in (None, 0):
+            pnl_pct = ((current_price - cost_price) / cost_price) * 100
+        confidence = _float(item.get("confidence"))
+        score = min(max(confidence * 10.0, 0.0), 100.0) if confidence is not None else None
         rows.append(
             {
                 "id": code,
-                "cells": [code, _txt(item.get("name") or item.get("stock_name") or code), _txt(item.get("quantity") or item.get("cost_price") or "0"), _txt(item.get("rating") or "持有"), _num(item.get("current_price")), _num(item.get("target_price"))],
-                "actions": [{"label": "分析", "icon": "🔎", "tone": "accent", "action": "analyze"}],
+                "cells": [
+                    code,
+                    name,
+                    sector,
+                    _txt(quantity),
+                    _num(cost_price),
+                    _num((item.get("take_profit") if item.get("take_profit") is not None else item.get("analysis_take_profit")), default="--"),
+                    _num((item.get("stop_loss") if item.get("stop_loss") is not None else item.get("analysis_stop_loss")), default="--"),
+                    _num(current_price),
+                    _pct(pnl_pct),
+                    _num(score, digits=0, default="--"),
+                ],
+                "actions": [{"label": "详情", "icon": "🔎", "tone": "accent", "action": "view-detail"}],
                 "code": code,
-                "name": _txt(item.get("name") or item.get("stock_name") or code),
+                "name": name,
+                "industry": sector,
             }
         )
-    summary = context.portfolio().get_account_summary()
-    return {"updatedAt": _now(), "metrics": [_metric("当前持仓", len(rows)), _metric("组合收益", _pct(summary.get("total_return_pct"))), _metric("最大回撤", _pct(summary.get("max_drawdown_pct"))), _metric("风险暴露", "中性")], "holdings": _table(["代码", "名称", "持仓数量", "评级", "当前价", "目标价"], rows, "暂无持仓"), "attribution": [_insight("盈利来源", "主要盈利来自趋势持仓和及时的仓位管理。", "success"), _insight("回撤来源", "回撤主要来自震荡市下的仓位切换不够快。", "warning")], "curve": [], "actions": ["调整仓位", "查看明细", "导出风险"]}
+
+    selected = normalize_stock_code(selected_symbol)
+    if not selected and rows:
+        selected = _txt(rows[0].get("code"))
+    selected_item = latest_by_symbol.get(selected) if selected else None
+
+    technical = {}
+    if selected:
+        if indicator_overrides and isinstance(indicator_overrides.get(selected), dict):
+            technical = indicator_overrides[selected]
+        else:
+            technical = _portfolio_technical_snapshot(selected, cycle="1y")
+
+    history = None
+    if selected_item:
+        stock_id = _int(selected_item.get("id"))
+        if stock_id is not None:
+            history = manager.get_latest_analysis(stock_id)
+
+    detail = {
+        "symbol": selected,
+        "stockName": _txt(
+            technical.get("stockName"),
+            _txt(selected_item.get("name") if selected_item else "", selected),
+        ),
+        "sector": _txt(
+            selected_item.get("sector") if selected_item else technical.get("sector"),
+            _txt(technical.get("sector"), "-"),
+        ),
+        "kline": technical.get("kline") if isinstance(technical.get("kline"), list) else [],
+        "indicators": technical.get("indicators") if isinstance(technical.get("indicators"), list) else [],
+        "pendingSignals": _table(
+            ["时间", "代码", "动作", "策略", "状态", "依据"],
+            _portfolio_pending_signal_rows(context, selected) if selected else [],
+            "暂无待执行信号",
+        ),
+        "decision": {
+            "rating": _txt(
+                (selected_item or {}).get("rating"),
+                "持有",
+            ),
+            "summary": _txt((history or {}).get("summary"), "可点击“实时分析”获取最新结论。"),
+            "updatedAt": _txt((selected_item or {}).get("analysis_time"), "--"),
+        },
+        "positionForm": {
+            "quantity": _txt((selected_item or {}).get("quantity"), "0"),
+            "costPrice": _num((selected_item or {}).get("cost_price")),
+            "takeProfit": _num((selected_item or {}).get("take_profit") if (selected_item or {}).get("take_profit") is not None else (selected_item or {}).get("analysis_take_profit")),
+            "stopLoss": _num((selected_item or {}).get("stop_loss") if (selected_item or {}).get("stop_loss") is not None else (selected_item or {}).get("analysis_stop_loss")),
+            "note": _txt((selected_item or {}).get("note")),
+        },
+    }
+    portfolio_decision = _build_portfolio_adjustment_summary(latest_rows if isinstance(latest_rows, list) else [])
+    market_news = _load_market_focus_news(context, limit=8)
+
+    return {
+        "updatedAt": _now(),
+        "metrics": [
+            _metric("当前持仓", len(rows)),
+            _metric("组合收益", _pct(summary.get("total_return_pct"))),
+            _metric("最大回撤", _pct(summary.get("max_drawdown_pct"))),
+            _metric("可用现金", _num(summary.get("available_cash"))),
+        ],
+        "holdings": _table(["代码", "名称", "板块", "持仓数量", "成本", "止盈价", "止损价", "现价", "浮盈亏", "分数"], rows, "暂无持仓"),
+        "selectedSymbol": selected,
+        "detail": detail,
+        "attribution": [],
+        "curve": detail["kline"],
+        "actions": ["实时分析仓位", "刷新技术指标", "更新持仓信息"],
+        "portfolioDecision": portfolio_decision,
+        "marketNews": market_news,
+        "portfolioAnalysisJob": portfolio_rebalance_task_manager.job_view(
+            analysis_job or portfolio_rebalance_task_manager.latest_task(),
+            txt=_txt,
+            int_fn=_int,
+        ),
+    }
 
 
 def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
@@ -1609,11 +1978,42 @@ def _action_history_rerun(context: UIApiContext, payload: Any) -> dict[str, Any]
 
 
 def _action_portfolio_analyze(context: UIApiContext, payload: Any) -> dict[str, Any]:
-    code = _code_from_payload(payload)
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing portfolio stock code")
-    context.portfolio_manager().analyze_single_stock(code)
-    return _snapshot_portfolio(context)
+    body = _payload_dict(payload)
+    code = _code_from_payload(body)
+    manager = context.portfolio_manager()
+    if code:
+        manager.analyze_single_stock(code)
+        return _snapshot_portfolio(context, selected_symbol=code)
+
+    mode = _txt(body.get("mode"), "parallel")
+    max_workers = _int(body.get("maxWorkers"), 3) or 3
+    period = _txt(body.get("cycle"), "1y")
+    task_id = portfolio_rebalance_task_manager.create_task(
+        mode=mode,
+        cycle=period,
+        max_workers=max_workers,
+        now=_now,
+    )
+    portfolio_rebalance_task_manager.start_background(
+        task_id=task_id,
+        target=portfolio_rebalance_task_manager.run_task,
+        kwargs={
+            "task_id": task_id,
+            "context": context,
+            "now": _now,
+            "txt": _txt,
+        },
+        name_prefix="portfolio-rebalance",
+    )
+    rows = manager.get_all_latest_analysis()
+    default_symbol = normalize_stock_code((rows[0].get("code") or rows[0].get("symbol")) if rows else "")
+    snapshot = _snapshot_portfolio(
+        context,
+        selected_symbol=default_symbol,
+        analysis_job=portfolio_rebalance_task_manager.get_task(task_id),
+    )
+    snapshot["taskId"] = task_id
+    return snapshot
 
 
 def _action_portfolio_refresh(context: UIApiContext, payload: Any) -> dict[str, Any]:
@@ -1641,6 +2041,76 @@ def _action_portfolio_schedule_start(context: UIApiContext, payload: Any) -> dic
 
 def _action_portfolio_schedule_stop(context: UIApiContext, payload: Any) -> dict[str, Any]:
     context.portfolio_scheduler().stop_scheduler()
+    return _snapshot_portfolio(context)
+
+
+def _action_portfolio_refresh_indicators(context: UIApiContext, payload: Any) -> dict[str, Any]:
+    body = _payload_dict(payload)
+    selected_symbol = normalize_stock_code(body.get("selectedSymbol") or body.get("selected_symbol"))
+    symbols = _payload_codes(body)
+    if not symbols:
+        if selected_symbol:
+            symbols = [selected_symbol]
+        else:
+            symbols = [
+                normalize_stock_code(item.get("code") or item.get("symbol"))
+                for item in context.portfolio_manager().get_all_latest_analysis()
+                if normalize_stock_code(item.get("code") or item.get("symbol"))
+            ][:50]
+    overrides: dict[str, dict[str, Any]] = {}
+    manager = context.portfolio_manager()
+    for symbol in symbols:
+        overrides[symbol] = _portfolio_technical_snapshot(symbol, cycle=_txt(body.get("cycle"), "1y"))
+        sector = _txt(overrides[symbol].get("sector"))
+        if sector:
+            existing = manager.db.get_stock_by_code(symbol)
+            if existing and _txt(existing.get("sector")) != sector:
+                manager.update_stock(_int(existing.get("id"), 0) or 0, sector=sector)
+    snapshot = _snapshot_portfolio(
+        context,
+        selected_symbol=selected_symbol or (symbols[0] if symbols else ""),
+        indicator_overrides=overrides,
+    )
+    snapshot["indicatorRefresh"] = {
+        "updatedAt": _now(),
+        "scope": "indicators_only",
+        "symbols": symbols,
+    }
+    return snapshot
+
+
+def _action_portfolio_update_position(context: UIApiContext, payload: Any) -> dict[str, Any]:
+    body = _payload_dict(payload)
+    code = normalize_stock_code(_txt(body.get("code") or body.get("symbol")))
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing portfolio stock code")
+    manager = context.portfolio_manager()
+    stock = manager.db.get_stock_by_code(code)
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Portfolio stock not found: {code}")
+    manager.db.update_stock(
+        int(stock["id"]),
+        cost_price=_float(body.get("costPrice") if "costPrice" in body else body.get("cost_price")),
+        quantity=_int(body.get("quantity")),
+        take_profit=_float(body.get("takeProfit") if "takeProfit" in body else body.get("take_profit")),
+        stop_loss=_float(body.get("stopLoss") if "stopLoss" in body else body.get("stop_loss")),
+        note=_txt(body.get("note")) if "note" in body else None,
+    )
+    return _snapshot_portfolio(context, selected_symbol=code)
+
+
+def _action_portfolio_delete_position(context: UIApiContext, payload: Any) -> dict[str, Any]:
+    body = _payload_dict(payload)
+    code = normalize_stock_code(_txt(body.get("code") or body.get("symbol") or _code_from_payload(body)))
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing portfolio stock code")
+    manager = context.portfolio_manager()
+    stock = manager.db.get_stock_by_code(code)
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Portfolio stock not found: {code}")
+    ok, message = manager.delete_stock(_int(stock.get("id"), 0) or 0)
+    if not ok:
+        raise HTTPException(status_code=500, detail=message or f"Failed to delete portfolio stock: {code}")
     return _snapshot_portfolio(context)
 
 
@@ -1745,6 +2215,7 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("workbench", "add-watchlist"): _action_workbench_add_watchlist,
     ("workbench", "refresh-watchlist"): _action_workbench_refresh,
     ("workbench", "batch-quant"): _action_workbench_batch_quant,
+    ("workbench", "batch-portfolio"): _action_workbench_batch_portfolio,
     ("workbench", "analysis"): _action_workbench_analysis,
     ("workbench", "analysis-batch"): _action_workbench_analysis_batch,
     ("workbench", "clear-selection"): lambda context, payload: _action_noop(context, "workbench"),
@@ -1760,6 +2231,9 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("portfolio", "schedule-save"): _action_portfolio_schedule_save,
     ("portfolio", "schedule-start"): _action_portfolio_schedule_start,
     ("portfolio", "schedule-stop"): _action_portfolio_schedule_stop,
+    ("portfolio", "refresh-indicators"): _action_portfolio_refresh_indicators,
+    ("portfolio", "update-position"): _action_portfolio_update_position,
+    ("portfolio", "delete-position"): _action_portfolio_delete_position,
     ("live-sim", "save"): _action_live_sim_save,
     ("live-sim", "start"): _action_live_sim_start,
     ("live-sim", "stop"): _action_live_sim_stop,
@@ -1789,7 +2263,7 @@ def _health(path: str) -> dict[str, str]:
     return {"status": "ok", "service": SERVICE_NAME, "path": path}
 
 
-TASK_MANAGERS = [analysis_task_manager, discover_task_manager, research_task_manager]
+TASK_MANAGERS = [analysis_task_manager, discover_task_manager, research_task_manager, portfolio_rebalance_task_manager]
 
 
 def _resolve_task_manager(task_id: str):
@@ -1831,11 +2305,26 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
     def get_live_sim_signals(limit: int = 200) -> dict[str, Any]:
         return _live_signal_table(api_context, limit=limit)
 
+    @app.get("/api/v1/portfolio_v2/positions/{symbol}")
+    def get_portfolio_position(symbol: str) -> dict[str, Any]:
+        normalized = normalize_stock_code(symbol)
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Missing portfolio stock code")
+        return _snapshot_portfolio(api_context, selected_symbol=normalized)
+
+    @app.patch("/api/v1/portfolio_v2/positions/{symbol}")
+    async def patch_portfolio_position(symbol: str, request: Request) -> dict[str, Any]:
+        payload = await _json(request)
+        body = _payload_dict(payload)
+        body["code"] = normalize_stock_code(symbol)
+        return _action_portfolio_update_position(api_context, body)
+
     for path, page in {
         "/api/v1/workbench": "workbench",
         "/api/v1/discover": "discover",
         "/api/v1/research": "research",
         "/api/v1/portfolio": "portfolio",
+        "/api/v1/portfolio_v2": "portfolio",
         "/api/v1/quant/live-sim": "live-sim",
         "/api/v1/quant/his-replay": "his-replay",
         "/api/v1/monitor/ai": "ai-monitor",
@@ -1854,6 +2343,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         ("/api/v1/workbench/actions/add-watchlist", "workbench", "add-watchlist"),
         ("/api/v1/workbench/actions/refresh-watchlist", "workbench", "refresh-watchlist"),
         ("/api/v1/workbench/actions/batch-quant", "workbench", "batch-quant"),
+        ("/api/v1/workbench/actions/batch-portfolio", "workbench", "batch-portfolio"),
         ("/api/v1/workbench/actions/analysis", "workbench", "analysis"),
         ("/api/v1/workbench/actions/analysis-batch", "workbench", "analysis-batch"),
         ("/api/v1/workbench/actions/clear-selection", "workbench", "clear-selection"),
@@ -1869,6 +2359,17 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         ("/api/v1/portfolio/actions/schedule-save", "portfolio", "schedule-save"),
         ("/api/v1/portfolio/actions/schedule-start", "portfolio", "schedule-start"),
         ("/api/v1/portfolio/actions/schedule-stop", "portfolio", "schedule-stop"),
+        ("/api/v1/portfolio/actions/refresh-indicators", "portfolio", "refresh-indicators"),
+        ("/api/v1/portfolio/actions/update-position", "portfolio", "update-position"),
+        ("/api/v1/portfolio/actions/delete-position", "portfolio", "delete-position"),
+        ("/api/v1/portfolio_v2/actions/analyze", "portfolio", "analyze"),
+        ("/api/v1/portfolio_v2/actions/refresh-portfolio", "portfolio", "refresh-portfolio"),
+        ("/api/v1/portfolio_v2/actions/schedule-save", "portfolio", "schedule-save"),
+        ("/api/v1/portfolio_v2/actions/schedule-start", "portfolio", "schedule-start"),
+        ("/api/v1/portfolio_v2/actions/schedule-stop", "portfolio", "schedule-stop"),
+        ("/api/v1/portfolio_v2/actions/refresh-indicators", "portfolio", "refresh-indicators"),
+        ("/api/v1/portfolio_v2/actions/update-position", "portfolio", "update-position"),
+        ("/api/v1/portfolio_v2/actions/delete-position", "portfolio", "delete-position"),
         ("/api/v1/quant/live-sim/actions/save", "live-sim", "save"),
         ("/api/v1/quant/live-sim/actions/start", "live-sim", "start"),
         ("/api/v1/quant/live-sim/actions/stop", "live-sim", "stop"),

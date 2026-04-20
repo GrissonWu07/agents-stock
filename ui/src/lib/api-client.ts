@@ -12,7 +12,7 @@ export const PAGE_ENDPOINTS: Record<PageKey, string> = {
   workbench: "/api/v1/workbench",
   discover: "/api/v1/discover",
   research: "/api/v1/research",
-  portfolio: "/api/v1/portfolio",
+  portfolio: "/api/v1/portfolio_v2",
   "live-sim": "/api/v1/quant/live-sim",
   "his-replay": "/api/v1/quant/his-replay",
   "ai-monitor": "/api/v1/monitor/ai",
@@ -26,6 +26,7 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
     "add-watchlist": "/api/v1/workbench/actions/add-watchlist",
     "refresh-watchlist": "/api/v1/workbench/actions/refresh-watchlist",
     "batch-quant": "/api/v1/workbench/actions/batch-quant",
+    "batch-portfolio": "/api/v1/workbench/actions/batch-portfolio",
     analysis: "/api/v1/workbench/actions/analysis",
     "analysis-batch": "/api/v1/workbench/actions/analysis-batch",
     "clear-selection": "/api/v1/workbench/actions/clear-selection",
@@ -42,11 +43,14 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
     "item-watchlist": "/api/v1/research/actions/item-watchlist",
   },
   portfolio: {
-    analyze: "/api/v1/portfolio/actions/analyze",
-    "refresh-portfolio": "/api/v1/portfolio/actions/refresh-portfolio",
-    "schedule-save": "/api/v1/portfolio/actions/schedule-save",
-    "schedule-start": "/api/v1/portfolio/actions/schedule-start",
-    "schedule-stop": "/api/v1/portfolio/actions/schedule-stop",
+    analyze: "/api/v1/portfolio_v2/actions/analyze",
+    "refresh-portfolio": "/api/v1/portfolio_v2/actions/refresh-portfolio",
+    "schedule-save": "/api/v1/portfolio_v2/actions/schedule-save",
+    "schedule-start": "/api/v1/portfolio_v2/actions/schedule-start",
+    "schedule-stop": "/api/v1/portfolio_v2/actions/schedule-stop",
+    "refresh-indicators": "/api/v1/portfolio_v2/actions/refresh-indicators",
+    "update-position": "/api/v1/portfolio_v2/actions/update-position",
+    "delete-position": "/api/v1/portfolio_v2/actions/delete-position",
   },
   "live-sim": {
     save: "/api/v1/quant/live-sim/actions/save",
@@ -85,7 +89,7 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
 };
 
 type RequestOptions = {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
 };
@@ -192,12 +196,31 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return await requestLive<T>(`/api/v1/tasks/${taskId}`);
   };
 
+  const requestPortfolioPosition = async <T,>(symbol: string): Promise<T> => {
+    if (!symbol.trim()) {
+      throw new ApiError(t("Missing stock code"), 400, `/api/v1/portfolio_v2/positions/${symbol}`);
+    }
+    return await requestLive<T>(`/api/v1/portfolio_v2/positions/${encodeURIComponent(symbol)}`);
+  };
+
+  const patchPortfolioPosition = async <T,>(symbol: string, payload: unknown): Promise<T> => {
+    if (!symbol.trim()) {
+      throw new ApiError(t("Missing stock code"), 400, `/api/v1/portfolio_v2/positions/${symbol}`);
+    }
+    return await requestLive<T>(`/api/v1/portfolio_v2/positions/${encodeURIComponent(symbol)}`, {
+      method: "PATCH",
+      body: payload ?? {},
+    });
+  };
+
   return {
     baseUrl,
     mode,
     getPageSnapshot: requestPage,
     runPageAction: requestAction,
     getTaskStatus: requestTask,
+    getPortfolioPosition: requestPortfolioPosition,
+    patchPortfolioPosition,
   };
 }
 

@@ -389,5 +389,13 @@
   "News flow": "新闻流量",
   "Macro analysis": "宏观分析",
   "Macro cycle": "宏观周期",
-  "You can switch page to view other candidates.": "你可以切换到上一页或下一页查看其他结果。"
+  "You can switch page to view other candidates.": "你可以切换到上一页或下一页查看其他结果。",
+  "Register holdings": "登记持仓",
+  "Fill cost price and quantity for selected stocks.": "为已选股票填写成本价和数量。",
+  "Cost price": "成本价",
+  "Quantity": "数量",
+  "Optional": "可选",
+  "Submitting...": "提交中...",
+  "Confirm registration": "确认登记",
+  "Current price": "当前价格"
 }
