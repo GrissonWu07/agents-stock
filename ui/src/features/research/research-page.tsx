@@ -665,8 +665,10 @@ export function ResearchPage({ client }: ResearchPageProps) {
                     </td>
                   </tr>
                 ) : (
-                  filteredRows.map((row) => (
-                    <tr key={row.id} className={selection.isSelected(row.id) ? "table__row--selected" : undefined}>
+                  filteredRows.map((row, rowIndex) => {
+                    const rowKey = `${row.id}-${String(row.cells[2] ?? row.source ?? "")}-${rowIndex}`;
+                    return (
+                    <tr key={rowKey} className={selection.isSelected(row.id) ? "table__row--selected" : undefined}>
                       <td className="table__checkbox-cell">
                         <input
                           type="checkbox"
@@ -676,7 +678,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
                         />
                       </td>
                       {row.cells.map((cell, index) => (
-                        <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                        <td key={`${rowKey}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
                           {typeof cell === "string" ? localizeResearchText(cell) : cell}
                         </td>
                       ))}
@@ -689,7 +691,8 @@ export function ResearchPage({ client }: ResearchPageProps) {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -721,8 +724,8 @@ export function ResearchPage({ client }: ResearchPageProps) {
               </div>
               {selectedPreview.length > 0 ? (
                 <div className="chip-row" style={{ marginTop: "10px" }}>
-                  {selectedPreview.map((row) => (
-                    <span className="badge badge--neutral" key={row.id}>
+                  {selectedPreview.map((row, previewIndex) => (
+                    <span className="badge badge--neutral" key={`${row.id}-${previewIndex}`}>
                       {localizeResearchText(String(row.cells[1] ?? row.id))} · {localizeResearchText(String(row.cells[2] ?? row.source ?? t("Source not marked")))}
                     </span>
                   ))}

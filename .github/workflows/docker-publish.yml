@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: grissonwu07/xuanwustock
+  REGISTRY: uhub.service.ucloud.cn
+  IMAGE_NAME: uhub.service.ucloud.cn/xuanwu/xuanwustock
   DOCKER_CONFIG: /tmp/.docker-xuanwustock
 
 jobs:
@@ -32,8 +32,8 @@ jobs:
       - name: Configure registry auth (best effort)
         continue-on-error: true
         env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKERHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.UHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.UHUB_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
@@ -163,7 +163,7 @@ jobs:
 
           services:
             backend:
-              image: ${IMAGE_NAME:-grissonwu07/xuanwustock}:${SERVICE_IMAGE_TAG:-latest}
+              image: ${IMAGE_NAME:-uhub.service.ucloud.cn/xuanwu/xuanwustock}:${SERVICE_IMAGE_TAG:-latest}
               container_name: xuanwustock-service
               ports:
                 - "8501:8501"
@@ -182,7 +182,7 @@ jobs:
                 start_period: 60s
 
             frontend:
-              image: ${IMAGE_NAME:-grissonwu07/xuanwustock}:${UI_IMAGE_TAG:-ui-latest}
+              image: ${IMAGE_NAME:-uhub.service.ucloud.cn/xuanwu/xuanwustock}:${UI_IMAGE_TAG:-ui-latest}
               container_name: xuanwustock-ui
               ports:
                 - "12080:80"
@@ -201,8 +201,8 @@ jobs:
       - name: Configure registry auth (best effort)
         continue-on-error: true
         env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKERHUB_PASSWORD }}
+          REGISTRY_USERNAME: ${{ secrets.UHUB_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.UHUB_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
