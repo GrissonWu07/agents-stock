@@ -145,6 +145,7 @@
   "SMTP server": "SMTP服务器地址",
   "Small but active growth candidates": "小而活跃的成长标的",
   "Small cap": "小市值",
+  "AI stock selection": "AI选股",
   "Source": "来源",
   "Source module": "来源模块",
   "Source strategy": "来源策略",
@@ -166,6 +167,7 @@
   "Trend momentum indicator. Positive favors bullish bias.": "趋势动能指标，正值偏多、负值偏空。",
   "Value": "低估值",
   "Valuation re-rating direction": "估值修复方向",
+  "AI scanner sector-theme selection": "AI扫描器板块主题选股",
   "Volume ratio": "量比",
   "Webhook custom keyword (for DingTalk security check)": "Webhook自定义关键词（钉钉安全验证）",
   "Webhook type (dingtalk/feishu)": "Webhook类型（dingtalk/feishu）",
@@ -192,5 +194,12 @@
   "{symbol} is being analyzed": "{symbol} 分析中",
   "{count} symbols added to analysis queue, task id: {task_id}": "共 {count} 只股票进入分析队列，任务ID：{task_id}"
   ,
-  "Configuration validated": "配置验证通过"
+  "Configuration validated": "配置验证通过",
+  "Stockpolicy root not found: {path}": "未找到 Stockpolicy 目录：{path}",
+  "Stockpolicy scanner import failed: {reason}": "导入 Stockpolicy 扫描器失败：{reason}",
+  "Stockpolicy scanner returned invalid result": "Stockpolicy 扫描器返回结果格式无效",
+  "Stockpolicy scanner failed: {reason}": "Stockpolicy 扫描失败：{reason}",
+  "Stockpolicy scanner returned no selected stocks": "Stockpolicy 扫描未返回候选股票",
+  "Scanner score: {score}": "扫描得分：{score}",
+  "AI scanner selected candidate": "AI扫描器筛选候选"
 }

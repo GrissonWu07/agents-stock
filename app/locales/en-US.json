@@ -145,6 +145,7 @@
   "SMTP server": "SMTP server",
   "Small but active growth candidates": "Small but active growth candidates",
   "Small cap": "Small cap",
+  "AI stock selection": "AI stock selection",
   "Source": "Source",
   "Source module": "Source module",
   "Source strategy": "Source strategy",
@@ -166,6 +167,7 @@
   "Trend momentum indicator. Positive favors bullish bias.": "Trend momentum indicator. Positive favors bullish bias.",
   "Value": "Value",
   "Valuation re-rating direction": "Valuation re-rating direction",
+  "AI scanner sector-theme selection": "AI scanner sector-theme selection",
   "Volume ratio": "Volume ratio",
   "Webhook custom keyword (for DingTalk security check)": "Webhook custom keyword (for DingTalk security check)",
   "Webhook type (dingtalk/feishu)": "Webhook type (dingtalk/feishu)",
@@ -192,5 +194,12 @@
   "{symbol} is being analyzed": "{symbol} is being analyzed",
   "{count} symbols added to analysis queue, task id: {task_id}": "{count} symbols added to analysis queue, task id: {task_id}"
   ,
-  "Configuration validated": "Configuration validated"
+  "Configuration validated": "Configuration validated",
+  "Stockpolicy root not found: {path}": "Stockpolicy root not found: {path}",
+  "Stockpolicy scanner import failed: {reason}": "Stockpolicy scanner import failed: {reason}",
+  "Stockpolicy scanner returned invalid result": "Stockpolicy scanner returned invalid result",
+  "Stockpolicy scanner failed: {reason}": "Stockpolicy scanner failed: {reason}",
+  "Stockpolicy scanner returned no selected stocks": "Stockpolicy scanner returned no selected stocks",
+  "Scanner score: {score}": "Scanner score: {score}",
+  "AI scanner selected candidate": "AI scanner selected candidate"
 }

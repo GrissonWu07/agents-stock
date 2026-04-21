@@ -28,6 +28,7 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\
 
 const DISCOVER_TEXT_ALIASES: Record<string, string> = {
   "净利增长": "Profit growth",
+  "AI选股": "AI stock selection",
 };
 
 const localizeDiscoverText = (value: string | undefined) => {
@@ -70,11 +71,13 @@ const localizeDiscoverText = (value: string | undefined) => {
     "Small cap",
     "Profit growth",
     "Value",
+    "AI stock selection",
     "Main fund flow + financial filter + AI pick",
     "Low-price high-elasticity candidates",
     "Small but active growth candidates",
     "Earnings growth trend screening",
     "Valuation re-rating direction",
+    "AI scanner sector-theme selection",
     "Top recommendations",
     "This section keeps priority targets after model aggregation, with single/batch add to watchlist.",
     "⭐ Add selected to watchlist",
@@ -104,6 +107,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
   const [search, setSearch] = useState("");
   const [batching, setBatching] = useState(false);
   const [runningStrategy, setRunningStrategy] = useState(false);
+  const [runStrategySelection, setRunStrategySelection] = useState<string>("all");
   const [runFeedback, setRunFeedback] = useState<string>("");
   const [analysisFeedback, setAnalysisFeedback] = useState<string>("");
   const [analysisSnapshot, setAnalysisSnapshot] = useState<WorkbenchSnapshot["analysis"] | null>(null);
@@ -115,6 +119,15 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
   const pageSize = 6;
 
   const snapshot = resource.data;
+  const runStrategyOptions = [
+    { value: "all", label: t("All strategies") },
+    { value: "main_force", label: t("Main force selection") },
+    { value: "low_price_bull", label: t("Low price momentum") },
+    { value: "small_cap", label: t("Small cap") },
+    { value: "profit_growth", label: t("Profit growth") },
+    { value: "value_stock", label: t("Value") },
+    { value: "ai_scanner", label: t("AI stock selection") },
+  ];
   const searchTerm = search.trim();
   const normalizedSearch = searchTerm.toLowerCase();
   const sourceRows = snapshot?.candidateTable.rows ?? [];
@@ -233,6 +246,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
     if (runningStrategy || strategyBusy) return;
     setRunningStrategy(true);
     setRunFeedback(t("Submitting discover task..."));
+    const runPayload = runStrategySelection === "all" ? {} : { strategy: runStrategySelection };
     const pollTask = async (taskId: string) => {
       for (let index = 0; index < 180; index += 1) {
         const latest = (await taskClient.getTaskStatus(taskId)) as DiscoverSnapshot["taskJob"];
@@ -249,7 +263,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
       return null;
     };
     try {
-      const result = await resource.runAction("run-strategy");
+      const result = await resource.runAction("run-strategy", runPayload);
       if (!result) {
         setRunFeedback(t("Discover task submission failed. Please retry."));
         return;
@@ -327,9 +341,24 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
         title={t("Discover")}
         description={localizeDiscoverText("Aggregate multiple selection strategies in one page and add outputs into watchlist.")}
         actions={
-          <button className="button button--primary" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy}>
-            {runningStrategy || strategyBusy ? t("Running...") : t("Run strategy")}
-          </button>
+          <div className="chip-row" style={{ gap: "8px" }}>
+            <select
+              className="select"
+              style={{ minWidth: "180px" }}
+              value={runStrategySelection}
+              onChange={(event) => setRunStrategySelection(event.target.value)}
+              disabled={runningStrategy || strategyBusy}
+            >
+              {runStrategyOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button className="button button--primary" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy}>
+              {runningStrategy || strategyBusy ? t("Running...") : t("Run strategy")}
+            </button>
+          </div>
         }
       />
       <div className="stack">
@@ -353,7 +382,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
             <span className="toolbar__spacer" />
             <div className="chip-row">
               {snapshot.strategies.map((strategy) => (
-                <span className="badge badge--neutral" key={strategy.name}>
+                <span className="badge badge--neutral" key={strategy.key || strategy.name}>
                   {localizeDiscoverText(strategy.name)} · {localizeDiscoverText(strategy.status)}
                 </span>
               ))}
@@ -361,7 +390,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
           </div>
           <div className="section-grid section-grid--three" style={{ marginTop: "8px" }}>
             {snapshot.strategies.map((strategy) => (
-              <div className="summary-item" key={strategy.name} style={{ padding: "12px 14px" }}>
+              <div className="summary-item" key={strategy.key || strategy.name} style={{ padding: "12px 14px" }}>
                 <div className="summary-item__title">{localizeDiscoverText(strategy.name)}</div>
                 <div className="summary-item__body">{localizeDiscoverText(strategy.note)}</div>
                 <div className="card-divider" />

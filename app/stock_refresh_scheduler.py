@@ -468,7 +468,7 @@ class UnifiedStockRefreshScheduler:
             pass
 
         try:
-            for strategy_key in ["low_price_bull", "small_cap", "profit_growth", "value_stock"]:
+            for strategy_key in ["low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]:
                 stocks_df, _ = load_simple_selector_state(strategy_key, base_dir=context.selector_result_dir)
                 if stocks_df is None or getattr(stocks_df, "empty", False):
                     continue

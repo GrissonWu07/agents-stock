@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
+from pathlib import Path
+import sys
+import math
 from types import SimpleNamespace
 from typing import Any, Callable
 
 from fastapi import HTTPException
+import pandas as pd
 
 from app.async_task_base import AsyncTaskManagerBase
 from app.gateway_common import (
@@ -34,6 +39,17 @@ LowPriceBullSelector = None
 SmallCapSelector = None
 ProfitGrowthSelector = None
 ValueStockSelector = None
+
+
+def _discover_strategy_defs() -> list[tuple[str, str, str]]:
+    return [
+        ("main_force", t("Main force selection"), t("Main fund flow + financial filter + AI pick")),
+        ("low_price_bull", t("Low price momentum"), t("Low-price high-elasticity candidates")),
+        ("small_cap", t("Small cap"), t("Small but active growth candidates")),
+        ("profit_growth", t("Profit growth"), t("Earnings growth trend screening")),
+        ("value_stock", t("Value"), t("Valuation re-rating direction")),
+        ("ai_scanner", t("AI stock selection"), t("AI scanner sector-theme selection")),
+    ]
 
 
 def _selector_cls(name: str):
@@ -78,6 +94,20 @@ def _parse_selector_timestamp(value: Any) -> datetime | None:
         return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _num_or_dash(value: Any, digits: int = 2) -> str:
+    try:
+        if value is None:
+            return "--"
+        if isinstance(value, str) and not value.strip():
+            return "--"
+        number = float(value)
+        if not math.isfinite(number):
+            return "--"
+        return f"{number:.{digits}f}"
+    except (TypeError, ValueError):
+        return "--"
 
 
 def _discover_row_from_mapping(row: dict[str, Any], *, source: str, selected_at: str | None) -> dict[str, Any] | None:
@@ -125,7 +155,7 @@ def _discover_row_from_mapping(row: dict[str, Any], *, source: str, selected_at:
             ],
         )
     )
-    latest_price = _num(
+    latest_price = _num_or_dash(
         _first_non_empty(
             row,
             [
@@ -139,7 +169,7 @@ def _discover_row_from_mapping(row: dict[str, Any], *, source: str, selected_at:
             ],
         )
     )
-    market_cap = _num(
+    market_cap = _num_or_dash(
         _first_non_empty(
             row,
             [
@@ -150,7 +180,7 @@ def _discover_row_from_mapping(row: dict[str, Any], *, source: str, selected_at:
             ],
         )
     )
-    pe = _num(
+    pe = _num_or_dash(
         _first_non_empty(
             row,
             [
@@ -161,7 +191,7 @@ def _discover_row_from_mapping(row: dict[str, Any], *, source: str, selected_at:
             ],
         )
     )
-    pb = _num(
+    pb = _num_or_dash(
         _first_non_empty(
             row,
             [
@@ -256,6 +286,163 @@ def _discover_rows_from_simple_selector(
     return rows
 
 
+def _resolve_stockpolicy_root(payload: dict[str, Any]) -> Path:
+    configured = _txt(payload.get("stockpolicyRoot") or payload.get("stockpolicy_root") or os.getenv("STOCKPOLICY_ROOT"))
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path(__file__).resolve().parents[2] / "stockpolicy").resolve()
+
+
+def _run_ai_scanner_strategy(context: Any, payload: dict[str, Any], *, top_n: int) -> pd.DataFrame:
+    stockpolicy_root = _resolve_stockpolicy_root(payload)
+    if not stockpolicy_root.exists():
+        raise RuntimeError(t("Stockpolicy root not found: {path}", path=str(stockpolicy_root)))
+
+    stockpolicy_path = str(stockpolicy_root)
+    if stockpolicy_path not in sys.path:
+        sys.path.insert(0, stockpolicy_path)
+
+    try:
+        from src.scanner import ScannerConfig, ScannerOrchestrator  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(t("Stockpolicy scanner import failed: {reason}", reason=exc)) from exc
+
+    top_k_sectors = max(_int(payload.get("topKSectors"), 5) or 5, 1)
+    max_stocks = max(_int(payload.get("maxStocks"), top_n) or top_n, 1)
+    lookback_days = max(_int(payload.get("lookbackDays"), 180) or 180, 1)
+    live_config_path = _txt(payload.get("scannerLiveConfigPath"), "config/stock/live.yaml")
+    data_dir = _txt(payload.get("scannerDataDir"), "data")
+
+    config = ScannerConfig(
+        top_k_sectors=top_k_sectors,
+        max_universe_size=max_stocks,
+        lookback_days=lookback_days,
+        live_config_path=live_config_path,
+        data_dir=data_dir,
+    )
+
+    previous_cwd = os.getcwd()
+    try:
+        os.chdir(stockpolicy_path)
+        run_result = ScannerOrchestrator(config=config).run_scan()
+    finally:
+        os.chdir(previous_cwd)
+
+    if not isinstance(run_result, dict):
+        raise RuntimeError(t("Stockpolicy scanner returned invalid result"))
+
+    if not run_result.get("success"):
+        errors = run_result.get("errors") if isinstance(run_result.get("errors"), list) else []
+        reason = "; ".join(_txt(item) for item in errors if _txt(item))
+        raise RuntimeError(
+            t(
+                "Stockpolicy scanner failed: {reason}",
+                reason=reason or t("Strategy execution failed"),
+            )
+        )
+
+    selected_stocks = run_result.get("selected_stocks") if isinstance(run_result.get("selected_stocks"), list) else []
+    if not selected_stocks:
+        raise RuntimeError(t("Stockpolicy scanner returned no selected stocks"))
+
+    rows: list[dict[str, Any]] = []
+    for item in selected_stocks:
+        if not isinstance(item, dict):
+            continue
+        code = _discover_code(item.get("code") or item.get("symbol"))
+        if not code:
+            continue
+        reasons = item.get("reasons") if isinstance(item.get("reasons"), list) else []
+        reason_text = "；".join(_txt(reason) for reason in reasons if _txt(reason))
+        score_raw = item.get("scanner_score")
+        reason_parts: list[str] = []
+        if score_raw not in (None, ""):
+            reason_parts.append(t("Scanner score: {score}", score=_num(score_raw)))
+        if reason_text:
+            reason_parts.append(reason_text)
+        if not reason_parts:
+            reason_parts.append(t("AI scanner selected candidate"))
+
+        rows.append(
+            {
+                "股票代码": code,
+                "股票简称": _txt(item.get("name"), code),
+                "所属行业": _txt(item.get("sector")),
+                "最新价": _first_non_empty(item, ["latest_price", "current_price", "price"]),
+                "总市值": _first_non_empty(item, ["market_cap", "total_market_value", "marketCap"]),
+                "市盈率": _first_non_empty(item, ["pe", "pe_ratio", "pe_ttm"]),
+                "市净率": _first_non_empty(item, ["pb", "pb_ratio"]),
+                "reason": " | ".join(reason_parts),
+            }
+        )
+
+    if not rows:
+        raise RuntimeError(t("Stockpolicy scanner returned no selected stocks"))
+
+    watchlist_service = None
+    try:
+        watchlist_service = context.watchlist()
+    except Exception:
+        watchlist_service = None
+
+    if watchlist_service:
+        for row in rows:
+            code = _discover_code(row.get("股票代码"))
+            if not code:
+                continue
+            quote: dict[str, Any] = {}
+            basic_info: dict[str, Any] = {}
+            try:
+                fetched_quote = watchlist_service.quote_fetcher(code, _txt(row.get("股票简称")) or None)
+                if isinstance(fetched_quote, dict):
+                    quote = fetched_quote
+            except Exception:
+                quote = {}
+            try:
+                fetched_info = watchlist_service.basic_info_fetcher(code)
+                if isinstance(fetched_info, dict):
+                    basic_info = fetched_info
+            except Exception:
+                basic_info = {}
+
+            if _first_non_empty(row, ["最新价"]) in (None, "", "nan", "NaN"):
+                row["最新价"] = _first_non_empty(
+                    quote,
+                    ["current_price", "price", "latest_price", "最新价"],
+                ) or _first_non_empty(
+                    basic_info,
+                    ["current_price", "latest_price", "最新价"],
+                )
+            if _first_non_empty(row, ["总市值"]) in (None, "", "nan", "NaN"):
+                row["总市值"] = _first_non_empty(
+                    basic_info,
+                    ["market_cap", "total_market_cap", "circulating_market_cap", "总市值", "市值"],
+                )
+            if _first_non_empty(row, ["市盈率"]) in (None, "", "nan", "NaN"):
+                row["市盈率"] = _first_non_empty(
+                    basic_info,
+                    ["pe_ratio", "pe", "市盈率", "PE"],
+                )
+            if _first_non_empty(row, ["市净率"]) in (None, "", "nan", "NaN"):
+                row["市净率"] = _first_non_empty(
+                    basic_info,
+                    ["pb_ratio", "pb", "市净率", "PB"],
+                )
+            if (not _txt(row.get("股票简称")) or _txt(row.get("股票简称")) == code):
+                row["股票简称"] = _txt(
+                    _first_non_empty(quote, ["name", "股票简称", "名称"])
+                    or _first_non_empty(basic_info, ["name", "股票简称", "名称"]),
+                    row.get("股票简称") or code,
+                )
+            if not _txt(row.get("所属行业")):
+                row["所属行业"] = _txt(
+                    _first_non_empty(basic_info, ["industry", "sector", "所属行业", "板块"])
+                    or _first_non_empty(quote, ["industry", "sector", "所属行业", "板块"])
+                )
+
+    return pd.DataFrame(rows)
+
+
 def _discover_strategy_snapshots(context: Any) -> list[dict[str, Any]]:
     snapshots: list[dict[str, Any]] = []
     main_result, _, main_selected_at = load_main_force_state(base_dir=context.selector_result_dir)
@@ -272,12 +459,9 @@ def _discover_strategy_snapshots(context: Any) -> list[dict[str, Any]]:
                 }
             )
 
-    for strategy_key, strategy_name, strategy_note in [
-        ("low_price_bull", t("Low price momentum"), t("Low-price high-elasticity candidates")),
-        ("small_cap", t("Small cap"), t("Small but active growth candidates")),
-        ("profit_growth", t("Profit growth"), t("Earnings growth trend screening")),
-        ("value_stock", t("Value"), t("Valuation re-rating direction")),
-    ]:
+    for strategy_key, strategy_name, strategy_note in _discover_strategy_defs():
+        if strategy_key == "main_force":
+            continue
         stocks_df, selected_at = load_simple_selector_state(strategy_key, base_dir=context.selector_result_dir)
         rows = _discover_rows_from_simple_selector(strategy_key, strategy_name, selected_at, stocks_df)
         if rows:
@@ -311,6 +495,7 @@ def _discover_rows(context: Any) -> list[dict[str, Any]]:
             row["selectedAt"] = _txt(snapshot.get("selected_at") or row.get("selectedAt"))
             row["_selected_dt"] = _parse_selector_timestamp(row.get("selectedAt")) or datetime.min
             row["_strategy_priority"] = {
+                "ai_scanner": 6,
                 "main_force": 5,
                 "low_price_bull": 4,
                 "small_cap": 3,
@@ -359,7 +544,7 @@ def _discover_rows(context: Any) -> list[dict[str, Any]]:
 def _normalize_discover_strategy_selection(payload: dict[str, Any]) -> list[str]:
     raw = payload.get("strategies") or payload.get("strategy") or payload.get("strategyKey")
     if raw is None or raw == "":
-        return ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"]
+        return ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]
 
     values: list[str]
     if isinstance(raw, list):
@@ -373,13 +558,14 @@ def _normalize_discover_strategy_selection(payload: dict[str, Any]) -> list[str]
         "small_cap": {"small_cap", "small-cap", "small_cap"},
         "profit_growth": {"profit_growth", "profit-growth", "profit_growth"},
         "value_stock": {"value_stock", "value-stock", "value"},
+        "ai_scanner": {"ai_scanner", "ai-scanner", "ai_scanner_selection", "ai_selector", "ai_stock_selection"},
     }
 
     selected: list[str] = []
     for key, synonyms in aliases.items():
         if any(value in synonyms for value in values):
             selected.append(key)
-    return selected or ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"]
+    return selected or ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]
 
 
 def _build_main_force_discover_result(stocks_df: Any, top_n: int) -> dict[str, Any]:
@@ -448,6 +634,22 @@ def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> dict[str,
         except Exception as exc:
             failed.append({"strategy": "main_force", "reason": str(exc) or t("Strategy execution failed")})
 
+    if "ai_scanner" in selected:
+        try:
+            scanner_df = _run_ai_scanner_strategy(context, payload, top_n=top_n)
+            if scanner_df is not None and not getattr(scanner_df, "empty", False):
+                save_simple_selector_state(
+                    strategy_key="ai_scanner",
+                    stocks_df=scanner_df,
+                    selected_at=selected_at,
+                    base_dir=context.selector_result_dir,
+                )
+                completed.append("ai_scanner")
+            else:
+                failed.append({"strategy": "ai_scanner", "reason": t("No valid result returned")})
+        except Exception as exc:
+            failed.append({"strategy": "ai_scanner", "reason": str(exc) or t("Strategy execution failed")})
+
     simple_strategies: list[tuple[str, Callable[[], tuple[bool, Any, str]]]] = [
         ("low_price_bull", lambda: _selector_cls("LowPriceBullSelector")().get_low_price_stocks(top_n=top_n)),
         ("small_cap", lambda: _selector_cls("SmallCapSelector")().get_small_cap_stocks(top_n=top_n)),
@@ -500,21 +702,27 @@ def _run_discover_task(context: Any, task_id: str, payload: dict[str, Any]) -> N
         failed_items = run_result.get("failed") if isinstance(run_result, dict) and isinstance(run_result.get("failed"), list) else []
         completed_items = run_result.get("completed") if isinstance(run_result, dict) and isinstance(run_result.get("completed"), list) else []
         message = t("Discovery task completed. Current candidates: {count}.", count=len(rows))
+        status = "completed"
         if failed_items:
             failed_names = ", ".join(str(item.get("strategy")) for item in failed_items if isinstance(item, dict) and item.get("strategy"))
-            message = t(
-                "{base} Failed strategies: {strategies}.",
-                base=message,
-                strategies=failed_names or t("unknown"),
-            )
+            if not completed_items:
+                status = "failed"
+                message = t("Discovery task failed. Failed strategies: {strategies}.", strategies=failed_names or t("unknown"))
+            else:
+                message = t(
+                    "{base} Failed strategies: {strategies}.",
+                    base=message,
+                    strategies=failed_names or t("unknown"),
+                )
         discover_task_manager.update_task(
             task_id,
             now=_now,
-            status="completed",
-            stage="completed",
+            status=status,
+            stage=status,
             progress=100,
             message=message,
             finished_at=_now(),
+            errors=failed_items if failed_items else [],
             result={
                 "candidateCount": len(rows),
                 "updatedAt": _now(),
@@ -543,13 +751,7 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
     latest_selected_at = _txt(latest_snapshot.get("selected_at") or latest_row.get("selectedAt") or _now())
     latest_count = len(rows)
     strategy_lookup = {str(snapshot.get("key")): snapshot for snapshot in snapshots}
-    strategy_defs = [
-        ("main_force", t("Main force selection"), t("Main fund flow + financial filter + AI pick")),
-        ("low_price_bull", t("Low price momentum"), t("Low-price high-elasticity candidates")),
-        ("small_cap", t("Small cap"), t("Small but active growth candidates")),
-        ("profit_growth", t("Profit growth"), t("Earnings growth trend screening")),
-        ("value_stock", t("Value"), t("Valuation re-rating direction")),
-    ]
+    strategy_defs = _discover_strategy_defs()
     strategy_cards = []
     for strategy_key, strategy_name, strategy_note in strategy_defs:
         snapshot = strategy_lookup.get(strategy_key)
@@ -557,6 +759,7 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
         selected_at = _txt(snapshot.get("selected_at"), "--") if snapshot else "--"
         strategy_cards.append(
             {
+                "key": strategy_key,
                 "name": strategy_name,
                 "note": strategy_note,
                 "status": t("Latest picks: {count}", count=len(snapshot_rows)) if snapshot_rows else t("Pending run"),
@@ -569,7 +772,7 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
     return {
         "updatedAt": _now(),
         "metrics": [
-            _metric(t("Discovery strategies"), 5),
+            _metric(t("Discovery strategies"), len(strategy_defs)),
             _metric(t("Latest candidates"), len(rows)),
             _metric(t("Added to watchlist"), len(context.watchlist().list_watches())),
             _metric(t("Last run"), latest_selected_at),

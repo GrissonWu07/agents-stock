@@ -296,7 +296,6 @@
   "Real-time monitor": "实时监控",
   "Settings": "环境配置",
   "Request failed": "请求失败",
-  "Mock mode is test-only; use mock backend stubs": "Mock模式仅在测试环境提供模拟数据，请使用mock后端测试桩",
   "Missing task id": "缺少任务ID",
   "Unnamed metric": "未命名指标",
   "Unnamed strategy": "未命名策略",
@@ -310,7 +309,9 @@
   "Main force selection": "主力选股",
   "Low price momentum": "低价动量",
   "Small cap": "小市值",
+  "AI stock selection": "AI选股",
   "Value": "低估值",
+  "AI scanner sector-theme selection": "AI扫描器板块主题选股",
   "Main fund flow + financial filter + AI pick": "主资金流 + 财务过滤 + AI精选",
   "Low-price high-elasticity candidates": "低价高弹性候选",
   "Small but active growth candidates": "小而活跃的成长标的",
@@ -399,4 +400,6 @@
   "Submitting...": "提交中...",
   "Confirm registration": "确认登记",
   "Current price": "当前价格"
+  ,
+  "All strategies": "全部策略"
 }

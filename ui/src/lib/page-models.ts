@@ -168,6 +168,7 @@ export type DiscoverSnapshot = {
   updatedAt: string;
   metrics: SummaryMetric[];
   strategies: {
+    key: string;
     name: string;
     note: string;
     status: string;

@@ -1,6 +1,6 @@
 import type { PageKey, PageSnapshotMap } from "./page-models";
 import { t } from "./i18n";
-export type ApiMode = "live" | "hybrid" | "mock";
+export type ApiMode = "live" | "hybrid";
 
 export type ApiClientOptions = {
   baseUrl?: string;
@@ -155,9 +155,6 @@ export function createApiClient(options: ApiClientOptions = {}) {
   };
 
   const requestPage = async <T,>(page: PageKey): Promise<T> => {
-    if (mode === "mock") {
-      throw new ApiError(t("Mock mode is test-only; use mock backend stubs"), 501, PAGE_ENDPOINTS[page]);
-    }
     try {
       return await requestLive<T>(PAGE_ENDPOINTS[page]);
     } catch (error) {
@@ -169,13 +166,6 @@ export function createApiClient(options: ApiClientOptions = {}) {
   };
 
   const requestAction = async <T,>(page: PageKey, action: string, payload?: unknown): Promise<T> => {
-    if (mode === "mock") {
-      throw new ApiError(
-        t("Mock mode is test-only; use mock backend stubs"),
-        501,
-        PAGE_ACTION_ENDPOINTS[page][action] ?? `${PAGE_ENDPOINTS[page]}/actions/${action}`,
-      );
-    }
     try {
       const endpoint = PAGE_ACTION_ENDPOINTS[page][action] ?? `${PAGE_ENDPOINTS[page]}/actions/${action}`;
       return await requestLive<T>(endpoint, {

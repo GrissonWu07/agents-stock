@@ -297,7 +297,6 @@
   "Real-time monitor": "Real-time monitor",
   "Settings": "Settings",
   "Request failed": "Request failed",
-  "Mock mode is test-only; use mock backend stubs": "Mock mode is test-only; use mock backend stubs",
   "Missing task id": "Missing task id",
   "Unnamed metric": "Unnamed metric",
   "Unnamed strategy": "Unnamed strategy",
@@ -311,7 +310,9 @@
   "Main force selection": "Main force selection",
   "Low price momentum": "Low price momentum",
   "Small cap": "Small cap",
+  "AI stock selection": "AI stock selection",
   "Value": "Value",
+  "AI scanner sector-theme selection": "AI scanner sector-theme selection",
   "Main fund flow + financial filter + AI pick": "Main fund flow + financial filter + AI pick",
   "Low-price high-elasticity candidates": "Low-price high-elasticity candidates",
   "Small but active growth candidates": "Small but active growth candidates",
@@ -398,4 +399,6 @@
   "Submitting...": "Submitting...",
   "Confirm registration": "Confirm registration",
   "Current price": "Current price"
+  ,
+  "All strategies": "All strategies"
 }
