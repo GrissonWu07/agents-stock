@@ -25,6 +25,7 @@ from app.i18n import t
 from app.research_watchlist_integration import add_research_stock_to_watchlist, add_research_stocks_to_watchlist
 from app.sector_strategy_engine import SectorStrategyEngine
 from app.selector_result_store import load_latest_result, save_latest_result
+from app.stock_refresh_scheduler import load_stock_runtime_entries
 from app.watchlist_selector_integration import normalize_stock_code
 
 SectorStrategyDataFetcher = None
@@ -100,6 +101,23 @@ def _research_rows(context: Any) -> list[dict[str, Any]]:
                 "reason": _txt(item.get("note") or item.get("output") or ""),
             }
         )
+    runtime_entries = load_stock_runtime_entries(base_dir=context.selector_result_dir)
+    if runtime_entries:
+        for row in rows:
+            runtime = runtime_entries.get(normalize_stock_code(row.get("code")))
+            if not isinstance(runtime, dict):
+                continue
+            runtime_name = _txt(runtime.get("stock_name"))
+            runtime_price = runtime.get("latest_price")
+            runtime_sector = _txt(runtime.get("sector"))
+            if runtime_name:
+                row["name"] = runtime_name
+                if len(row.get("cells", [])) > 1:
+                    row["cells"][1] = runtime_name
+            if runtime_price not in (None, ""):
+                row["latestPrice"] = _num(runtime_price)
+            if runtime_sector:
+                row["industry"] = runtime_sector
     return rows
 
 

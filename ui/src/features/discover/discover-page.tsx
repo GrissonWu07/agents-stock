@@ -294,6 +294,13 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
     setTaskJob(snapshot?.taskJob ?? null);
   }, [snapshot?.taskJob]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void resource.refresh();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [resource.refresh]);
+
   if (resource.status === "loading" && !snapshot) {
     return <PageLoadingState title={t("Discover loading...")} description={t("Loading strategies, candidate stocks, and recent recommendations.")} />;
   }

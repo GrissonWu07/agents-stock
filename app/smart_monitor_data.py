@@ -7,6 +7,8 @@
 from app.console_utils import safe_print as print
 import logging
 import os
+import threading
+import time
 from app.akshare_client import ak
 import pandas as pd
 from typing import Dict, Optional
@@ -15,6 +17,9 @@ from datetime import datetime, timedelta
 
 class SmartMonitorDataFetcher:
     """A股数据获取器（支持多数据源降级：TDX -> AKShare -> Tushare）"""
+    _TDX_CIRCUIT_LOCK = threading.Lock()
+    _TDX_CIRCUIT_OPEN_UNTIL = 0.0
+    _TDX_CONSECUTIVE_FAILURES = 0
     
     def __init__(
         self,
@@ -81,6 +86,27 @@ class SmartMonitorDataFetcher:
                 self.logger.warning(f"Tushare初始化失败: {e}")
         else:
             self.logger.info("未配置Tushare Token，仅使用AKShare数据源")
+
+    @classmethod
+    def _is_tdx_circuit_open(cls) -> bool:
+        with cls._TDX_CIRCUIT_LOCK:
+            return time.monotonic() < float(cls._TDX_CIRCUIT_OPEN_UNTIL)
+
+    @classmethod
+    def _record_tdx_success(cls) -> None:
+        with cls._TDX_CIRCUIT_LOCK:
+            cls._TDX_CONSECUTIVE_FAILURES = 0
+            cls._TDX_CIRCUIT_OPEN_UNTIL = 0.0
+
+    @classmethod
+    def _record_tdx_failure(cls) -> None:
+        now = time.monotonic()
+        with cls._TDX_CIRCUIT_LOCK:
+            cls._TDX_CONSECUTIVE_FAILURES = int(cls._TDX_CONSECUTIVE_FAILURES) + 1
+            failures = cls._TDX_CONSECUTIVE_FAILURES
+            if failures >= 3:
+                cooldown = min(300.0, 20.0 * (2.0 ** min(failures - 3, 5)))
+                cls._TDX_CIRCUIT_OPEN_UNTIL = max(float(cls._TDX_CIRCUIT_OPEN_UNTIL), now + cooldown)
     
     def get_realtime_quote(self, stock_code: str, retry: int = 1) -> Optional[Dict]:
         """
@@ -97,15 +123,20 @@ class SmartMonitorDataFetcher:
         import time
         
         # 方法1: 尝试使用TDX（如果启用）
-        if self.use_tdx and self.tdx_fetcher:
+        if self.use_tdx and self.tdx_fetcher and not self._is_tdx_circuit_open():
             try:
                 quote = self.tdx_fetcher.get_realtime_quote(stock_code)
                 if quote:
+                    self._record_tdx_success()
                     return quote
                 else:
+                    self._record_tdx_failure()
                     self.logger.warning(f"TDX获取失败 {stock_code}，尝试降级到AKShare")
             except Exception as e:
+                self._record_tdx_failure()
                 self.logger.warning(f"TDX获取异常 {stock_code}: {e}，尝试降级到AKShare")
+        elif self.use_tdx and self.tdx_fetcher:
+            self.logger.debug(f"TDX熔断生效，跳过TDX直连并直接降级: {stock_code}")
         
         # 方法2: 组合使用AKShare分钟行情 + 基本信息
         for attempt in range(retry):
@@ -212,15 +243,20 @@ class SmartMonitorDataFetcher:
         import time
         
         # 方法1: 尝试使用TDX（如果启用）
-        if self.use_tdx and self.tdx_fetcher:
+        if self.use_tdx and self.tdx_fetcher and not self._is_tdx_circuit_open():
             try:
                 indicators = self.tdx_fetcher.get_technical_indicators(stock_code, period)
                 if indicators:
+                    self._record_tdx_success()
                     return indicators
                 else:
+                    self._record_tdx_failure()
                     self.logger.warning(f"TDX计算技术指标失败 {stock_code}，尝试降级到AKShare")
             except Exception as e:
+                self._record_tdx_failure()
                 self.logger.warning(f"TDX计算技术指标异常 {stock_code}: {e}，尝试降级到AKShare")
+        elif self.use_tdx and self.tdx_fetcher:
+            self.logger.debug(f"TDX熔断生效，跳过TDX技术指标并直接降级: {stock_code}")
         
         # 方法2: 尝试使用AKShare
         for attempt in range(retry):

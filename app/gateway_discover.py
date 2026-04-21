@@ -26,6 +26,7 @@ from app.selector_ui_state import (
     save_main_force_state,
     save_simple_selector_state,
 )
+from app.stock_refresh_scheduler import load_stock_runtime_entries
 from app.watchlist_selector_integration import add_stock_to_watchlist, normalize_stock_code
 
 MainForceStockSelector = None
@@ -328,6 +329,30 @@ def _discover_rows(context: Any) -> list[dict[str, Any]]:
     for row in rows:
         row.pop("_selected_dt", None)
         row.pop("_strategy_priority", None)
+    runtime_entries = load_stock_runtime_entries(base_dir=context.selector_result_dir)
+    if runtime_entries:
+        for row in rows:
+            runtime = runtime_entries.get(_discover_code(row.get("code")))
+            if not isinstance(runtime, dict):
+                continue
+            runtime_name = _txt(runtime.get("stock_name"))
+            runtime_sector = _txt(runtime.get("sector"))
+            runtime_price = runtime.get("latest_price")
+
+            if runtime_name:
+                row["name"] = runtime_name
+                if len(row.get("cells", [])) > 1:
+                    row["cells"][1] = runtime_name
+
+            if runtime_sector:
+                row["industry"] = runtime_sector
+                if len(row.get("cells", [])) > 2:
+                    row["cells"][2] = runtime_sector
+
+            if runtime_price not in (None, ""):
+                row["latestPrice"] = _num(runtime_price)
+                if len(row.get("cells", [])) > 4:
+                    row["cells"][4] = row["latestPrice"]
     return rows
 
 

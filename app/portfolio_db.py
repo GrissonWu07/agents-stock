@@ -171,7 +171,7 @@ class PortfolioDB:
         cursor = conn.cursor()
         
         # 允许更新的字段
-        allowed_fields = ['code', 'name', 'cost_price', 'quantity', 'take_profit', 'stop_loss', 'note', 'auto_monitor']
+        allowed_fields = ['code', 'name', 'sector', 'cost_price', 'quantity', 'take_profit', 'stop_loss', 'note', 'auto_monitor']
         update_fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
         
         if not update_fields:

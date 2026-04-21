@@ -64,6 +64,10 @@ from app.quant_sim.replay_service import QuantSimReplayService
 from app.quant_sim.scheduler import get_quant_sim_scheduler
 from app.runtime_paths import DATA_DIR, LOGS_DIR, default_db_path
 from app.selector_result_store import DEFAULT_SELECTOR_RESULT_DIR
+from app.stock_refresh_scheduler import (
+    get_unified_stock_refresh_scheduler,
+    load_stock_runtime_entries,
+)
 from app.watchlist_selector_integration import normalize_stock_code
 from app.monitor_db import StockMonitorDatabase
 from app.watchlist_service import WatchlistService
@@ -484,6 +488,7 @@ def _snapshot_portfolio(
     manager = context.portfolio_manager()
     latest_rows = manager.get_all_latest_analysis()
     summary = context.portfolio().get_account_summary()
+    runtime_entries = load_stock_runtime_entries(base_dir=context.selector_result_dir)
 
     rows: list[dict[str, Any]] = []
     latest_by_symbol: dict[str, dict[str, Any]] = {}
@@ -491,16 +496,30 @@ def _snapshot_portfolio(
         code = normalize_stock_code(item.get("code") or item.get("symbol"))
         if not code:
             continue
-        latest_by_symbol[code] = item
-        name = _txt(item.get("name") or item.get("stock_name"), code)
-        sector = _txt(item.get("sector") or item.get("industry") or item.get("board") or item.get("所属行业"), "-")
-        quantity = _int(item.get("quantity"), 0) or 0
-        cost_price = _float(item.get("cost_price"))
-        current_price = _float(item.get("current_price"))
+        runtime = runtime_entries.get(code) if isinstance(runtime_entries, dict) else None
+        item_payload = dict(item)
+        runtime_name = _txt(runtime.get("stock_name")) if isinstance(runtime, dict) else ""
+        runtime_sector = _txt(runtime.get("sector")) if isinstance(runtime, dict) else ""
+        runtime_price = _float(runtime.get("latest_price")) if isinstance(runtime, dict) else None
+        if runtime_name:
+            item_payload["name"] = runtime_name
+            item_payload["stock_name"] = runtime_name
+        if runtime_sector:
+            item_payload["sector"] = runtime_sector
+            item_payload["industry"] = runtime_sector
+        if runtime_price is not None:
+            item_payload["current_price"] = runtime_price
+
+        latest_by_symbol[code] = item_payload
+        name = _txt(item_payload.get("name") or item_payload.get("stock_name"), code)
+        sector = _txt(item_payload.get("sector") or item_payload.get("industry") or item_payload.get("board") or item_payload.get("所属行业"), "-")
+        quantity = _int(item_payload.get("quantity"), 0) or 0
+        cost_price = _float(item_payload.get("cost_price"))
+        current_price = _float(item_payload.get("current_price"))
         pnl_pct = None
         if current_price is not None and cost_price not in (None, 0):
             pnl_pct = ((current_price - cost_price) / cost_price) * 100
-        confidence = _float(item.get("confidence"))
+        confidence = _float(item_payload.get("confidence"))
         score = min(max(confidence * 10.0, 0.0), 100.0) if confidence is not None else None
         rows.append(
             {
@@ -511,8 +530,8 @@ def _snapshot_portfolio(
                     sector,
                     _txt(quantity),
                     _num(cost_price),
-                    _num((item.get("take_profit") if item.get("take_profit") is not None else item.get("analysis_take_profit")), default="--"),
-                    _num((item.get("stop_loss") if item.get("stop_loss") is not None else item.get("analysis_stop_loss")), default="--"),
+                    _num((item_payload.get("take_profit") if item_payload.get("take_profit") is not None else item_payload.get("analysis_take_profit")), default="--"),
+                    _num((item_payload.get("stop_loss") if item_payload.get("stop_loss") is not None else item_payload.get("analysis_stop_loss")), default="--"),
                     _num(current_price),
                     _pct(pnl_pct),
                     _num(score, digits=0, default="--"),
@@ -1704,6 +1723,69 @@ def _format_ai_metric_value(value: Any, *, digits: int = 2, pct: bool = False, s
     return f"{number:+.{digits}f}" if signed else f"{number:.{digits}f}"
 
 
+def _fetch_signal_market_snapshot(stock_code: str) -> dict[str, Any]:
+    code = normalize_stock_code(stock_code)
+    if not code:
+        return {}
+    try:
+        from app.smart_monitor_data import SmartMonitorDataFetcher
+
+        fetcher = SmartMonitorDataFetcher()
+        snapshot = fetcher.get_comprehensive_data(code)
+        return snapshot if isinstance(snapshot, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_ai_market_rows(market_data: dict[str, Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+
+    def _append_market(label: str, value: Any, note: str = "") -> None:
+        if value in (None, ""):
+            return
+        row = {"label": label, "value": _txt(value, "--")}
+        if note:
+            row["note"] = note
+        rows.append(row)
+
+    _append_market("当前价", _format_ai_metric_value(market_data.get("current_price")))
+    _append_market("涨跌幅", _format_ai_metric_value(market_data.get("change_pct"), pct=True, signed=True))
+    _append_market("开盘价", _format_ai_metric_value(market_data.get("open")))
+    _append_market("最高价", _format_ai_metric_value(market_data.get("high")))
+    _append_market("最低价", _format_ai_metric_value(market_data.get("low")))
+    _append_market("成交量(手)", _txt(market_data.get("volume"), "--"))
+    _append_market("成交额(万)", _txt(market_data.get("amount"), "--"))
+    _append_market("换手率", _format_ai_metric_value(market_data.get("turnover_rate"), pct=True))
+    _append_market("量比", _format_ai_metric_value(market_data.get("volume_ratio")))
+    _append_market("趋势", _txt(market_data.get("trend"), "--"))
+    _append_market("MA5", _format_ai_metric_value(market_data.get("ma5")))
+    _append_market("MA20", _format_ai_metric_value(market_data.get("ma20")))
+    _append_market("MA60", _format_ai_metric_value(market_data.get("ma60")))
+    _append_market("MACD", _format_ai_metric_value(market_data.get("macd"), digits=4, signed=True))
+    _append_market("DIF", _format_ai_metric_value(market_data.get("macd_dif"), digits=4, signed=True))
+    _append_market("DEA", _format_ai_metric_value(market_data.get("macd_dea"), digits=4, signed=True))
+    _append_market("RSI6", _format_ai_metric_value(market_data.get("rsi6")))
+    _append_market("RSI12", _format_ai_metric_value(market_data.get("rsi12")))
+    _append_market("RSI24", _format_ai_metric_value(market_data.get("rsi24")))
+    _append_market("KDJ-K", _format_ai_metric_value(market_data.get("kdj_k")))
+    _append_market("KDJ-D", _format_ai_metric_value(market_data.get("kdj_d")))
+    _append_market("KDJ-J", _format_ai_metric_value(market_data.get("kdj_j")))
+    _append_market("布林上轨", _format_ai_metric_value(market_data.get("boll_upper")))
+    _append_market("布林中轨", _format_ai_metric_value(market_data.get("boll_mid")))
+    _append_market("布林下轨", _format_ai_metric_value(market_data.get("boll_lower")))
+    _append_market("布林位置", _txt(market_data.get("boll_position"), "--"))
+    return rows
+
+
+def _is_empty_market_value(value: Any) -> bool:
+    if value is None:
+        return True
+    text = _txt(value).strip()
+    if not text:
+        return True
+    return text.lower() in {"--", "-", "n/a", "na", "none", "null", "nan"}
+
+
 def _build_signal_ai_monitor_payload(
     *,
     context: UIApiContext,
@@ -1736,7 +1818,12 @@ def _build_signal_ai_monitor_payload(
         return payload
 
     if not decision_rows:
-        return empty_payload
+        fallback_market_data = _fetch_signal_market_snapshot(stock_code)
+        payload = dict(empty_payload)
+        payload["marketData"] = _build_ai_market_rows(fallback_market_data if isinstance(fallback_market_data, dict) else {})
+        if payload["marketData"]:
+            payload["message"] = "无 AI 盯盘记录，已使用实时行情快照补全技术指标。"
+        return payload
 
     checkpoint_dt = _parse_signal_time(checkpoint_at)
     selected = decision_rows[0]
@@ -1749,46 +1836,20 @@ def _build_signal_ai_monitor_payload(
                 matched_mode = "checkpoint_aligned"
                 break
 
-    market_data = selected.get("market_data") if isinstance(selected.get("market_data"), dict) else {}
+    decision_market_data = selected.get("market_data") if isinstance(selected.get("market_data"), dict) else {}
+    fallback_market_data = _fetch_signal_market_snapshot(stock_code)
+    market_data: dict[str, Any] = {}
+    if isinstance(fallback_market_data, dict):
+        market_data.update(fallback_market_data)
+    if isinstance(decision_market_data, dict):
+        for key, value in decision_market_data.items():
+            if _is_empty_market_value(value):
+                continue
+            market_data[key] = value
     account_info = selected.get("account_info") if isinstance(selected.get("account_info"), dict) else {}
     key_levels = selected.get("key_price_levels") if isinstance(selected.get("key_price_levels"), dict) else {}
 
-    market_rows: list[dict[str, str]] = []
-
-    def _append_market(label: str, value: Any, note: str = "") -> None:
-        if value in (None, ""):
-            return
-        row = {"label": label, "value": _txt(value, "--")}
-        if note:
-            row["note"] = note
-        market_rows.append(row)
-
-    _append_market("当前价", _format_ai_metric_value(market_data.get("current_price")))
-    _append_market("涨跌幅", _format_ai_metric_value(market_data.get("change_pct"), pct=True, signed=True))
-    _append_market("开盘价", _format_ai_metric_value(market_data.get("open")))
-    _append_market("最高价", _format_ai_metric_value(market_data.get("high")))
-    _append_market("最低价", _format_ai_metric_value(market_data.get("low")))
-    _append_market("成交量(手)", _txt(market_data.get("volume"), "--"))
-    _append_market("成交额(万)", _txt(market_data.get("amount"), "--"))
-    _append_market("换手率", _format_ai_metric_value(market_data.get("turnover_rate"), pct=True))
-    _append_market("量比", _format_ai_metric_value(market_data.get("volume_ratio")))
-    _append_market("趋势", _txt(market_data.get("trend"), "--"))
-    _append_market("MA5", _format_ai_metric_value(market_data.get("ma5")))
-    _append_market("MA20", _format_ai_metric_value(market_data.get("ma20")))
-    _append_market("MA60", _format_ai_metric_value(market_data.get("ma60")))
-    _append_market("MACD", _format_ai_metric_value(market_data.get("macd"), digits=4, signed=True))
-    _append_market("DIF", _format_ai_metric_value(market_data.get("macd_dif"), digits=4, signed=True))
-    _append_market("DEA", _format_ai_metric_value(market_data.get("macd_dea"), digits=4, signed=True))
-    _append_market("RSI6", _format_ai_metric_value(market_data.get("rsi6")))
-    _append_market("RSI12", _format_ai_metric_value(market_data.get("rsi12")))
-    _append_market("RSI24", _format_ai_metric_value(market_data.get("rsi24")))
-    _append_market("KDJ-K", _format_ai_metric_value(market_data.get("kdj_k")))
-    _append_market("KDJ-D", _format_ai_metric_value(market_data.get("kdj_d")))
-    _append_market("KDJ-J", _format_ai_metric_value(market_data.get("kdj_j")))
-    _append_market("布林上轨", _format_ai_metric_value(market_data.get("boll_upper")))
-    _append_market("布林中轨", _format_ai_metric_value(market_data.get("boll_mid")))
-    _append_market("布林下轨", _format_ai_metric_value(market_data.get("boll_lower")))
-    _append_market("布林位置", _txt(market_data.get("boll_position"), "--"))
+    market_rows = _build_ai_market_rows(market_data)
 
     account_rows: list[dict[str, str]] = []
 
@@ -2585,6 +2646,18 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
     api_context = context or UIApiContext()
     app = FastAPI(title="玄武AI智能体股票团队分析系统 Backend API", version="0.1.0")
     app.state.ui_context = api_context
+    try:
+        unified_stock_refresh_scheduler = get_unified_stock_refresh_scheduler(api_context)
+        unified_stock_refresh_scheduler.start()
+        app.state.unified_stock_refresh_scheduler = unified_stock_refresh_scheduler
+    except Exception:
+        app.state.unified_stock_refresh_scheduler = None
+
+    @app.on_event("shutdown")
+    def shutdown_unified_stock_refresh_scheduler() -> None:
+        scheduler = getattr(app.state, "unified_stock_refresh_scheduler", None)
+        if scheduler:
+            scheduler.stop()
 
     @app.get("/api/health")
     def api_health() -> dict[str, str]:

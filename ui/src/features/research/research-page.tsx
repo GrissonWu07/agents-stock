@@ -398,6 +398,13 @@ export function ResearchPage({ client }: ResearchPageProps) {
     setTaskJob(snapshot?.taskJob ?? null);
   }, [snapshot?.taskJob]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void resource.refresh();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [resource.refresh]);
+
   if (resource.status === "loading" && !snapshot) {
     return <PageLoadingState title={t("Research loading...")} description={t("Loading sector, dragon-tiger list, news, and macro view.")} />;
   }

@@ -69,6 +69,13 @@ export function PortfolioPage({ client }: PortfolioPageProps) {
     return () => window.clearInterval(timer);
   }, [activeClient, job?.id, job?.status, resource]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void resource.refresh();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [resource.refresh]);
+
   if (resource.status === "loading" && !snapshot) {
     return <PageLoadingState title="持仓列表加载中" description="正在读取全部持仓股票列表与组合状态。" />;
   }

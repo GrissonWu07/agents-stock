@@ -282,6 +282,91 @@ function _safeValue(...values: Array<string | undefined | null>): string {
   return "--";
 }
 
+const REQUIRED_MARKET_TECHNICAL_INDICATORS = [
+  "当前价",
+  "涨跌幅",
+  "开盘价",
+  "最高价",
+  "最低价",
+  "成交量(手)",
+  "成交额(万)",
+  "换手率",
+  "量比",
+  "趋势",
+  "DIF",
+  "DEA",
+  "RSI6",
+  "RSI12",
+  "RSI24",
+  "KDJ-K",
+  "KDJ-D",
+  "KDJ-J",
+];
+
+function _normalizeIndicatorName(name: string): string {
+  const raw = String(name || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const text = raw.replace(/\s+/g, "").replace(/（/g, "(").replace(/）/g, ")");
+  const lower = text.toLowerCase();
+  if (text === "当前价" || text === "现价" || text === "最新价" || text === "收盘价" || lower === "current_price" || lower === "last_price" || lower === "close") {
+    return "当前价";
+  }
+  if (text === "涨跌幅" || text === "涨跌幅(%)" || lower === "change_pct") {
+    return "涨跌幅";
+  }
+  if (text === "开盘价" || lower === "open") {
+    return "开盘价";
+  }
+  if (text === "最高价" || lower === "high") {
+    return "最高价";
+  }
+  if (text === "最低价" || lower === "low") {
+    return "最低价";
+  }
+  if (text === "成交量" || text === "成交量(手)" || lower === "volume") {
+    return "成交量(手)";
+  }
+  if (text === "成交额" || text === "成交额(万)" || lower === "amount") {
+    return "成交额(万)";
+  }
+  if (text === "换手率" || lower === "turnover_rate") {
+    return "换手率";
+  }
+  if (text === "量比" || lower === "volume_ratio") {
+    return "量比";
+  }
+  if (text === "趋势" || lower === "trend") {
+    return "趋势";
+  }
+  if (text === "DIF" || lower === "dif" || lower === "macd_dif") {
+    return "DIF";
+  }
+  if (text === "DEA" || lower === "dea" || lower === "macd_dea") {
+    return "DEA";
+  }
+  if (text === "RSI6" || lower === "rsi6") {
+    return "RSI6";
+  }
+  if (text === "RSI12" || lower === "rsi12") {
+    return "RSI12";
+  }
+  if (text === "RSI24" || lower === "rsi24") {
+    return "RSI24";
+  }
+  if (text === "K值" || text === "KDJ-K" || lower === "kdj_k") {
+    return "KDJ-K";
+  }
+  if (text === "D值" || text === "KDJ-D" || lower === "kdj_d") {
+    return "KDJ-D";
+  }
+  if (text === "J值" || text === "KDJ-J" || lower === "kdj_j") {
+    return "KDJ-J";
+  }
+  return text;
+}
+
 const ENV_COMPONENT_KEY_MAP: Record<string, string> = {
   source_prior: "Env component:source_prior",
   trend_regime: "Env component:trend_regime",
@@ -459,17 +544,6 @@ function _localizeDynamicText(rawText: string): string {
   return text;
 }
 
-function _localizeAiMatchedMode(mode: string): string {
-  const key = String(mode || "").trim().toLowerCase();
-  if (key === "checkpoint_aligned") {
-    return "按信号时间对齐";
-  }
-  if (key === "latest") {
-    return "取最新盯盘决策";
-  }
-  return "--";
-}
-
 export function SignalDetailPage() {
   const navigate = useNavigate();
   const { signalId } = useParams();
@@ -572,6 +646,15 @@ export function SignalDetailPage() {
   }
   const originalAnalysis = explanation.original?.analysis || detail.analysis || "暂无分析数据";
   const originalReasoning = explanation.original?.reasoning || detail.reasoning || "暂无决策理由";
+  const aiMonitor = detail.aiMonitor ?? emptyAiMonitor;
+  const marketIndicatorByName = new Map<string, AiMonitorValueRow>();
+  for (const item of aiMonitor.marketData ?? []) {
+    const key = _normalizeIndicatorName(item.label);
+    if (!key || marketIndicatorByName.has(key)) {
+      continue;
+    }
+    marketIndicatorByName.set(key, item);
+  }
   const technicalParamByName = new Map<string, ParameterDetailRow>();
   const consumedTechnicalParamNames = new Set<string>();
   for (const item of technicalParameterRows) {
@@ -608,6 +691,21 @@ export function SignalDetailPage() {
       detail: _safeValue(item.derivation),
     });
   }
+  const mergedTechnicalNormalizedNames = new Set(mergedTechnicalRows.map((item) => _normalizeIndicatorName(item.name)));
+  for (const indicatorName of REQUIRED_MARKET_TECHNICAL_INDICATORS) {
+    const normalizedName = _normalizeIndicatorName(indicatorName);
+    if (mergedTechnicalNormalizedNames.has(normalizedName)) {
+      continue;
+    }
+    const marketItem = marketIndicatorByName.get(normalizedName);
+    mergedTechnicalRows.push({
+      name: indicatorName,
+      value: _safeValue(marketItem?.value),
+      source: _safeValue(marketItem ? "行情快照" : ""),
+      detail: _safeValue(marketItem?.note),
+    });
+    mergedTechnicalNormalizedNames.add(normalizedName);
+  }
   const voteOverview = detail.voteOverview ?? {
     voterCount: 0,
     technicalVoterCount: 0,
@@ -618,8 +716,6 @@ export function SignalDetailPage() {
     rows: [],
   };
   const voteRows = voteOverview.rows ?? [];
-  const aiMonitor = detail.aiMonitor ?? emptyAiMonitor;
-  const aiDecision = aiMonitor.decision ?? emptyAiMonitor.decision;
   const keepPositionPct = (() => {
     const actionUpper = String(decision.action || "").trim().toUpperCase();
     const raw = Number(String(decision.positionSizePct ?? "").replace("%", "").trim());
@@ -707,142 +803,6 @@ export function SignalDetailPage() {
               </div>
             </>
           ) : null}
-
-          <div className="card-divider" />
-          <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>AI盯盘策略分析</h3>
-          {!aiMonitor.available ? (
-            <div className="summary-item">
-              <div className="summary-item__title">状态</div>
-              <div className="summary-item__body">{aiMonitor.message || "当前股票暂无 AI 盯盘策略记录"}</div>
-            </div>
-          ) : (
-            <>
-              <div className="mini-metric-grid" style={{ marginTop: "10px" }}>
-                <div className="mini-metric"><div className="mini-metric__label">匹配方式</div><div className="mini-metric__value">{_localizeAiMatchedMode(aiMonitor.matchedMode)}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">决策时间</div><div className="mini-metric__value">{aiDecision.decisionTime}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">操作</div><div className="mini-metric__value">{localizeDecisionCode(aiDecision.action)}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">置信度</div><div className="mini-metric__value">{aiDecision.confidence}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">风险等级</div><div className="mini-metric__value">{_localizeDynamicText(aiDecision.riskLevel)}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">建议仓位(%)</div><div className="mini-metric__value">{aiDecision.positionSizePct}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">止损(%)</div><div className="mini-metric__value">{aiDecision.stopLossPct}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">止盈(%)</div><div className="mini-metric__value">{aiDecision.takeProfitPct}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">交易时段</div><div className="mini-metric__value">{aiDecision.tradingSession}</div></div>
-                <div className="mini-metric"><div className="mini-metric__label">执行状态</div><div className="mini-metric__value">{aiDecision.executed ? "已执行" : "未执行"}</div></div>
-              </div>
-
-              <div className="summary-item" style={{ marginTop: "10px" }}>
-                <div className="summary-item__title">策略理由</div>
-                <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap", maxHeight: "220px", overflowY: "auto" }}>
-                  {_localizeDynamicText(aiDecision.reasoning || "--")}
-                </div>
-                <div className="summary-item__body">{_localizeDynamicText(aiDecision.executionResult || "--")}</div>
-              </div>
-
-              <div className="table-shell" style={{ marginTop: "10px" }}>
-                <table className="table table--auto">
-                  <thead>
-                    <tr><th>关键价位</th><th>数值</th></tr>
-                  </thead>
-                  <tbody>
-                    {(aiMonitor.keyLevels ?? []).length === 0
-                      ? tableRowEmpty(2, "暂无关键价位")
-                      : (aiMonitor.keyLevels ?? []).map((item, index) => (
-                          <tr key={`ai-level-${index}`}>
-                            <td>{_localizeDynamicText(item.label)}</td>
-                            <td>{item.value}</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="table-shell" style={{ marginTop: "10px" }}>
-                <table className="table table--auto">
-                  <thead>
-                    <tr><th>市场与技术快照</th><th>值</th><th>说明</th></tr>
-                  </thead>
-                  <tbody>
-                    {(aiMonitor.marketData ?? []).length === 0
-                      ? tableRowEmpty(3, "暂无市场快照")
-                      : (aiMonitor.marketData ?? []).map((item, index) => (
-                          <tr key={`ai-market-${index}`}>
-                            <td>{_localizeDynamicText(item.label)}</td>
-                            <td>{item.value}</td>
-                            <td>{_localizeDynamicText(item.note || "--")}</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="table-shell" style={{ marginTop: "10px" }}>
-                <table className="table table--auto">
-                  <thead>
-                    <tr><th>账户快照</th><th>值</th><th>说明</th></tr>
-                  </thead>
-                  <tbody>
-                    {(aiMonitor.accountData ?? []).length === 0
-                      ? tableRowEmpty(3, "暂无账户快照")
-                      : (aiMonitor.accountData ?? []).map((item, index) => (
-                          <tr key={`ai-account-${index}`}>
-                            <td>{_localizeDynamicText(item.label)}</td>
-                            <td>{item.value}</td>
-                            <td>{_localizeDynamicText(item.note || "--")}</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="table-shell" style={{ marginTop: "10px" }}>
-                <table className="table table--auto">
-                  <thead>
-                    <tr><th>时间</th><th>动作</th><th>置信度</th><th>风险</th><th>仓位(%)</th><th>止损(%)</th><th>止盈(%)</th><th>执行</th></tr>
-                  </thead>
-                  <tbody>
-                    {(aiMonitor.history ?? []).length === 0
-                      ? tableRowEmpty(8, "暂无 AI 盯盘历史")
-                      : (aiMonitor.history ?? []).map((item, index) => (
-                          <tr key={`ai-history-${index}`}>
-                            <td>{item.decisionTime}</td>
-                            <td>{localizeDecisionCode(item.action)}</td>
-                            <td>{item.confidence}</td>
-                            <td>{_localizeDynamicText(item.riskLevel)}</td>
-                            <td>{item.positionSizePct}</td>
-                            <td>{item.stopLossPct}</td>
-                            <td>{item.takeProfitPct}</td>
-                            <td>{item.executed ? "已执行" : "未执行"}</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="table-shell" style={{ marginTop: "10px" }}>
-                <table className="table table--auto">
-                  <thead>
-                    <tr><th>盯盘交易时间</th><th>动作</th><th>数量</th><th>价格</th><th>金额</th><th>费用</th><th>盈亏</th><th>状态</th></tr>
-                  </thead>
-                  <tbody>
-                    {(aiMonitor.trades ?? []).length === 0
-                      ? tableRowEmpty(8, "暂无盯盘交易记录")
-                      : (aiMonitor.trades ?? []).map((item, index) => (
-                          <tr key={`ai-trade-${index}`}>
-                            <td>{item.tradeTime}</td>
-                            <td>{localizeDecisionCode(item.tradeType)}</td>
-                            <td>{item.quantity}</td>
-                            <td>{item.price}</td>
-                            <td>{item.amount}</td>
-                            <td>{`${item.commission}/${item.tax}`}</td>
-                            <td>{item.profitLoss}</td>
-                            <td>{_localizeDynamicText(item.orderStatus)}</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
 
           <div className="card-divider" />
           <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>投票明细</h3>

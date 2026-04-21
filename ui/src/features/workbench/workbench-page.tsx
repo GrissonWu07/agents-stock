@@ -63,6 +63,13 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
     setLocalAnalysisPending(false);
   }, [analysisBusy]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void resource.refresh();
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [resource.refresh]);
+
   if (resource.status === "loading" && !resource.data) {
     return <PageLoadingState title={t("Workbench loading...")} description={t("Loading watchlist, stock analysis, and next-step entries.")} />;
   }

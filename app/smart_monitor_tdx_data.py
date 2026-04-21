@@ -22,6 +22,7 @@ from app.pytdx_host_config import load_pytdx_hosts
 DEFAULT_TDX_PORT = 7709
 DEFAULT_TDX_TIMEOUT = 5
 DEFAULT_HOST_LIMIT = 10
+DEFAULT_TDX_MAX_HOST_ATTEMPTS = 4
 SECURITY_LIST_PAGE_SIZE = 1000
 DEFAULT_DEPRIORITIZED_TDX_HOSTS = {
     ("218.85.139.19", 7709),
@@ -469,8 +470,32 @@ class SmartMonitorTDXDataFetcher:
 
     def _call_with_failover(self, operation):
         last_error = None
+        now = time.monotonic()
+        sorted_hosts = self._prioritize_hosts(self.hosts)
+        max_attempts = DEFAULT_TDX_MAX_HOST_ATTEMPTS
+        try:
+            max_attempts = max(1, int(os.getenv("TDX_MAX_HOST_ATTEMPTS", str(DEFAULT_TDX_MAX_HOST_ATTEMPTS))))
+        except Exception:
+            max_attempts = DEFAULT_TDX_MAX_HOST_ATTEMPTS
 
-        for name, host, port in self._prioritize_hosts(self.hosts):
+        active_hosts: List[Tuple[str, str, int]] = []
+        blocked_count = 0
+        for name, host, port in sorted_hosts:
+            health = self._get_host_health(host, port)
+            if float(health.get("blocked_until", 0.0)) > now:
+                blocked_count += 1
+                continue
+            active_hosts.append((name, host, port))
+
+        if not active_hosts:
+            active_hosts = sorted_hosts[:max_attempts]
+        else:
+            active_hosts = active_hosts[:max_attempts]
+
+        if blocked_count:
+            self.logger.debug(f"TDX节点冷却中，已跳过 {blocked_count} 个节点，本次最多尝试 {len(active_hosts)} 个节点")
+
+        for name, host, port in active_hosts:
             api = TdxHq_API(multithread=False, heartbeat=False, auto_retry=True, raise_exception=True)
             try:
                 connection = api.connect(host, port, self.timeout)
@@ -596,7 +621,7 @@ class SmartMonitorTDXDataFetcher:
             failures = float(state.get("failures", 0.0)) + 1.0
             state["failures"] = failures
             penalty_step = max(0.0, failures - 1.0)
-            cooldown = min(240.0, 5.0 * (2.0 ** min(penalty_step, 5.0)))
+            cooldown = min(600.0, 10.0 * (2.0 ** min(penalty_step, 6.0)))
             state["blocked_until"] = max(float(state.get("blocked_until", 0.0)), now + cooldown)
 
     def _prioritize_hosts(self, hosts: Sequence[Tuple[str, str, int]]) -> List[Tuple[str, str, int]]:
