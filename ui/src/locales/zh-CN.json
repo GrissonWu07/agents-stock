@@ -133,7 +133,7 @@
   "Research task failed: {message}": "研究任务失败：{message}",
   "Research task submission failed. Please retry.": "研究任务提交失败，请稍后重试。",
   "Research task submitted and running in background.": "研究任务已提交，正在后台运行。",
-  "Run strategy": "运行策略",
+  "Run strategy": "运行",
   "Rows {start}-{end}": "第 {start} - {end} 条",
   "Running...": "运行中...",
   "Search": "搜索",

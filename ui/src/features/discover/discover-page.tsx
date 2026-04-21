@@ -341,9 +341,9 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
         title={t("Discover")}
         description={localizeDiscoverText("Aggregate multiple selection strategies in one page and add outputs into watchlist.")}
         actions={
-          <div className="chip-row" style={{ gap: "8px" }}>
+          <div className="chip-row" style={{ gap: "8px", flexWrap: "nowrap", alignItems: "center" }}>
             <select
-              className="select"
+              className="input discover-strategy-select"
               style={{ minWidth: "180px" }}
               value={runStrategySelection}
               onChange={(event) => setRunStrategySelection(event.target.value)}
@@ -355,7 +355,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                 </option>
               ))}
             </select>
-            <button className="button button--primary" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy}>
+            <button className="button button--primary discover-run-button" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy}>
               {runningStrategy || strategyBusy ? t("Running...") : t("Run strategy")}
             </button>
           </div>

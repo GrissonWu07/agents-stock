@@ -693,6 +693,38 @@ a {
   margin-bottom: 10px;
 }
 
+.discover-strategy-select {
+  min-height: 48px;
+  border: 1px solid var(--soft-line);
+  border-radius: 14px;
+  background-color: #f7faff;
+  color: var(--text-strong);
+  font-weight: 700;
+  padding: 0 40px 0 14px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-strong) 50%),
+    linear-gradient(135deg, var(--text-strong) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.discover-strategy-select:focus {
+  outline: none;
+  border-color: rgba(79, 110, 247, 0.45);
+  box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.12);
+}
+
+.discover-run-button {
+  min-width: 88px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .discover-candidate-toolbar__search-row {
   display: inline-flex;
   align-items: center;
