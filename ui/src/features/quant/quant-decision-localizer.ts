@@ -7,6 +7,7 @@ const DECISION_KEY_MAP: Record<string, string> = {
   hold: "Action:HOLD",
   context: "Action:CONTEXT",
   dual_track_hold: "Decision:dual_track_hold",
+  dual_track_resonance: "Decision:dual_track_resonance",
   dual_track_convergence: "Decision:dual_track_convergence",
   dual_track_divergence: "Decision:dual_track_divergence",
   dual_track_buy: "Decision:dual_track_buy",
@@ -40,7 +41,7 @@ export function localizeDecisionCode(rawValue: string) {
   if (!value) {
     return "--";
   }
-  const normalized = value.toLowerCase();
+  const normalized = value.toLowerCase().replace(/[\s-]+/g, "_");
   const translationKey = DECISION_KEY_MAP[normalized];
   if (translationKey) {
     return t(translationKey);

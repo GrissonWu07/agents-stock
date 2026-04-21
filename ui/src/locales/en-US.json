@@ -225,6 +225,7 @@
   "Signal detail": "Signal detail",
   "Decision:auto": "Auto decision",
   "Decision:dual_track_hold": "Dual-track hold",
+  "Decision:dual_track_resonance": "Dual-track resonance",
   "Decision:dual_track_convergence": "Dual-track convergence",
   "Decision:dual_track_divergence": "Dual-track divergence",
   "Decision:dual_track_buy": "Dual-track buy",

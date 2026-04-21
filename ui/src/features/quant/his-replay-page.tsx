@@ -97,6 +97,24 @@ function withCodeName(rows: TableRow[], codeColumnIndex: number): TableRow[] {
   });
 }
 
+function removeExecutionResultColumn(table: TableSection): TableSection {
+  const targetIndex = table.columns.findIndex((column) => {
+    const normalized = String(column || "").trim().toLowerCase();
+    return normalized === "执行结果" || normalized === "execution result";
+  });
+  if (targetIndex < 0) {
+    return table;
+  }
+  return {
+    ...table,
+    columns: table.columns.filter((_, index) => index !== targetIndex),
+    rows: table.rows.map((row) => ({
+      ...row,
+      cells: row.cells.filter((_, index) => index !== targetIndex),
+    })),
+  };
+}
+
 export function HisReplayPage({ client }: HisReplayPageProps) {
   const navigate = useNavigate();
   const resource = usePageData("his-replay", client);
@@ -203,7 +221,8 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     emptyMessage: "选中任务没有持仓记录，可能已清仓或尚未执行到持仓阶段。",
   };
   const tradeRows = withCodeName(snapshot.trades.rows, 2);
-  const signalRows = withCodeName(snapshot.signals.rows, 2);
+  const signalTable = removeExecutionResultColumn(snapshot.signals);
+  const signalRows = withCodeName(signalTable.rows, 2);
   const tradeActionOptions = Array.from(
     new Set(
       snapshot.trades.rows
@@ -213,7 +232,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   );
   const signalActionOptions = Array.from(
     new Set(
-      snapshot.signals.rows
+      signalTable.rows
         .map((row) => normalizeAction(String(row.cells[3] ?? "")))
         .filter(Boolean),
     ),
@@ -248,7 +267,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     rows: filteredTradeRows.slice((tradePage - 1) * PAGE_SIZE, tradePage * PAGE_SIZE),
   };
   const pagedSignals = {
-    ...snapshot.signals,
+    ...signalTable,
     rows: filteredSignalRows.slice((signalPage - 1) * PAGE_SIZE, signalPage * PAGE_SIZE),
   };
   const toolbarControlHeight = "40px";

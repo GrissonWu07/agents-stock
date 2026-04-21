@@ -224,6 +224,7 @@
   "Signal detail": "信号详情",
   "Decision:auto": "自动决策",
   "Decision:dual_track_hold": "双轨持有",
+  "Decision:dual_track_resonance": "双轨共振",
   "Decision:dual_track_convergence": "双轨共振",
   "Decision:dual_track_divergence": "双轨背离",
   "Decision:dual_track_buy": "双轨看多",
