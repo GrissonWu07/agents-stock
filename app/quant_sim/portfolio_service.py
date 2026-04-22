@@ -137,6 +137,8 @@ class PortfolioService:
         if price <= 0:
             return 0
         summary = self.get_account_summary()
+        scheduler_config = self.db.get_scheduler_config()
+        commission_rate = max(float(scheduler_config.get("commission_rate") or 0), 0.0)
         position_size_pct = float(signal.get("position_size_pct") or 0)
         if position_size_pct <= 0:
             return 0
@@ -144,9 +146,10 @@ class PortfolioService:
             float(summary["available_cash"]),
             float(summary["total_equity"]) * position_size_pct / 100.0,
         )
-        if target_cash < price * self.A_SHARE_LOT_SIZE:
+        lot_cost_with_fee = price * self.A_SHARE_LOT_SIZE * (1 + commission_rate)
+        if target_cash < lot_cost_with_fee:
             return 0
-        lots = floor(target_cash / (price * self.A_SHARE_LOT_SIZE))
+        lots = floor(target_cash / lot_cost_with_fee)
         return int(lots * self.A_SHARE_LOT_SIZE)
 
     def _resolve_signal_price(self, signal: dict, fallback: Optional[dict] = None) -> float:

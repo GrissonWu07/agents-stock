@@ -48,6 +48,14 @@ function normalizeTimeframe(value: string) {
   return TIMEFRAME_OPTIONS.find((option) => option.value === normalized)?.value ?? "30m";
 }
 
+function parseRatePercent(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
 function normalizeStrategyMode(value: string) {
   const normalized = String(value).trim().toLowerCase();
   if (normalized === "aggressive" || normalized.includes("激进")) return "aggressive";
@@ -128,6 +136,8 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   const [timeframe, setTimeframe] = useState("30m");
   const [market, setMarket] = useState<(typeof MARKET_OPTIONS)[number]>("CN");
   const [strategyMode, setStrategyMode] = useState("auto");
+  const [commissionRatePct, setCommissionRatePct] = useState(0.03);
+  const [sellTaxRatePct, setSellTaxRatePct] = useState(0.1);
   const [replayUntilNow, setReplayUntilNow] = useState(false);
   const [overwriteLive, setOverwriteLive] = useState(false);
   const [autoStartScheduler, setAutoStartScheduler] = useState(true);
@@ -153,6 +163,8 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     setTimeframe(normalizeTimeframe(snapshot.config.timeframe));
     setMarket(normalizeMarket(snapshot.config.market) as (typeof MARKET_OPTIONS)[number]);
     setStrategyMode(normalizeStrategyMode(snapshot.config.strategyMode));
+    setCommissionRatePct(parseRatePercent(snapshot.config.commissionRatePct, 0.03));
+    setSellTaxRatePct(parseRatePercent(snapshot.config.sellTaxRatePct, 0.1));
     setReplayUntilNow(false);
     setOverwriteLive(false);
     setAutoStartScheduler(true);
@@ -453,6 +465,30 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                   ))}
                 </select>
               </label>
+              <label className="field">
+                <span className="field__label">手续费率(%)</span>
+                <input
+                  className="input"
+                  min={0}
+                  max={5}
+                  step={0.001}
+                  type="number"
+                  value={commissionRatePct}
+                  onChange={(event) => setCommissionRatePct(Math.max(0, Number(event.target.value) || 0))}
+                />
+              </label>
+              <label className="field">
+                <span className="field__label">卖出税费率(%)</span>
+                <input
+                  className="input"
+                  min={0}
+                  max={10}
+                  step={0.001}
+                  type="number"
+                  value={sellTaxRatePct}
+                  onChange={(event) => setSellTaxRatePct(Math.max(0, Number(event.target.value) || 0))}
+                />
+              </label>
               <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
                 <input type="checkbox" checked={replayUntilNow} onChange={(event) => setReplayUntilNow(event.target.checked)} />
                 <span className="field__label" style={{ marginBottom: 0 }}>
@@ -489,6 +525,8 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                     timeframe,
                     market,
                     strategyMode,
+                    commissionRatePct,
+                    sellTaxRatePct,
                     overwriteLive,
                     autoStartScheduler,
                   })

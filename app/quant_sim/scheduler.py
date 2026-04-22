@@ -84,6 +84,8 @@ class QuantSimScheduler:
         strategy_mode: str | None = None,
         start_date: str | None = None,
         market: str | None = None,
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
     ) -> None:
         self.db.update_scheduler_config(
             enabled=enabled,
@@ -94,6 +96,8 @@ class QuantSimScheduler:
             strategy_mode=strategy_mode,
             start_date=start_date,
             market=market,
+            commission_rate=commission_rate,
+            sell_tax_rate=sell_tax_rate,
         )
         if self.running:
             config = self.db.get_scheduler_config()
@@ -116,6 +120,8 @@ class QuantSimScheduler:
             "strategy_mode": config["strategy_mode"],
             "start_date": config["start_date"],
             "market": config["market"],
+            "commission_rate": config["commission_rate"],
+            "sell_tax_rate": config["sell_tax_rate"],
             "last_run_at": config["last_run_at"],
             "next_run": next_run,
         }

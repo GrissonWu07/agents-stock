@@ -36,11 +36,13 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
     "run-strategy": "/api/v1/discover/actions/run-strategy",
     "batch-watchlist": "/api/v1/discover/actions/batch-watchlist",
     "item-watchlist": "/api/v1/discover/actions/item-watchlist",
+    "reset-list": "/api/v1/discover/actions/reset-list",
   },
   research: {
     "run-module": "/api/v1/research/actions/run-module",
     "batch-watchlist": "/api/v1/research/actions/batch-watchlist",
     "item-watchlist": "/api/v1/research/actions/item-watchlist",
+    "reset-list": "/api/v1/research/actions/reset-list",
   },
   portfolio: {
     analyze: "/api/v1/portfolio_v2/actions/analyze",

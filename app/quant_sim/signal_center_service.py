@@ -26,6 +26,7 @@ class SignalCenterService:
         payload = self._normalize_decision_payload(decision)
         payload = self._apply_position_constraints(candidate, payload)
         payload = self._apply_ai_overlay(candidate, payload)
+        payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
         status = "pending" if action in {"BUY", "SELL"} else "observed"
         signal_id = self.db.add_signal(
@@ -97,6 +98,80 @@ class SignalCenterService:
         if action == "SELL" and stock_code and not self.db.has_open_position(stock_code):
             normalized = self._downgrade_sell_without_position(normalized)
 
+        return normalized
+
+    def _apply_transaction_cost_constraints(self, candidate: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        action = str(normalized.get("action") or "HOLD").upper()
+        if action not in {"BUY", "SELL"}:
+            return normalized
+
+        scheduler_config = self.db.get_scheduler_config()
+        commission_rate = max(self._safe_float(scheduler_config.get("commission_rate"), 0.0) or 0.0, 0.0)
+        sell_tax_rate = max(self._safe_float(scheduler_config.get("sell_tax_rate"), 0.0) or 0.0, 0.0)
+        roundtrip_cost_pct = round((commission_rate * 2.0 + sell_tax_rate) * 100.0, 4)
+        sell_side_cost_pct = round((commission_rate + sell_tax_rate) * 100.0, 4)
+        min_buy_edge_pct = round(roundtrip_cost_pct + 0.2, 4)
+
+        strategy_profile = normalized.get("strategy_profile")
+        if not isinstance(strategy_profile, dict):
+            strategy_profile = {}
+        thresholds = strategy_profile.get("effective_thresholds")
+        if not isinstance(thresholds, dict):
+            thresholds = {}
+        thresholds["commission_rate"] = round(commission_rate, 8)
+        thresholds["sell_tax_rate"] = round(sell_tax_rate, 8)
+        thresholds["roundtrip_cost_pct"] = roundtrip_cost_pct
+        thresholds["sell_side_cost_pct"] = sell_side_cost_pct
+        strategy_profile["effective_thresholds"] = thresholds
+        strategy_profile["cost_model"] = {
+            "commission_rate": round(commission_rate, 8),
+            "sell_tax_rate": round(sell_tax_rate, 8),
+            "roundtrip_cost_pct": roundtrip_cost_pct,
+            "sell_side_cost_pct": sell_side_cost_pct,
+            "buy_min_edge_pct": min_buy_edge_pct,
+        }
+        normalized["strategy_profile"] = strategy_profile
+
+        reasoning = str(normalized.get("reasoning") or "").strip()
+        confidence = self._safe_float(normalized.get("confidence"), 0.0) or 0.0
+
+        if action == "BUY":
+            take_profit_pct = self._safe_float(normalized.get("take_profit_pct"), 0.0) or 0.0
+            if take_profit_pct > 0 and take_profit_pct <= min_buy_edge_pct:
+                normalized["action"] = "HOLD"
+                normalized["position_size_pct"] = 0.0
+                normalized["confidence"] = round(self._clamp(confidence * 0.6, 0.0, 100.0))
+                normalized["reasoning"] = (
+                    f"{reasoning} 交易成本校正：双边成本约 {roundtrip_cost_pct:.3f}% ，高于可用止盈空间 "
+                    f"{take_profit_pct:.3f}% ，转为HOLD观察。".strip()
+                )
+                return normalized
+
+            normalized["confidence"] = round(self._clamp(confidence - min(8.0, roundtrip_cost_pct * 8.0), 0.0, 100.0))
+            normalized["reasoning"] = f"{reasoning} 已计入交易成本：双边成本约 {roundtrip_cost_pct:.3f}% 。".strip()
+            return normalized
+
+        stock_code = str(candidate.get("stock_code") or "").strip()
+        current_position = None
+        if stock_code:
+            for position in self.db.get_positions():
+                if str(position.get("stock_code") or "").strip() == stock_code:
+                    current_position = position
+                    break
+        unrealized_pnl_pct = self._safe_float((current_position or {}).get("unrealized_pnl_pct"), None)
+        if unrealized_pnl_pct is not None and unrealized_pnl_pct >= 0 and unrealized_pnl_pct < sell_side_cost_pct and confidence < 80:
+            normalized["action"] = "HOLD"
+            normalized["position_size_pct"] = 0.0
+            normalized["confidence"] = round(self._clamp(confidence * 0.7, 0.0, 100.0))
+            normalized["reasoning"] = (
+                f"{reasoning} 交易成本校正：当前浮盈 {unrealized_pnl_pct:.3f}% 尚未覆盖卖出成本 "
+                f"{sell_side_cost_pct:.3f}% ，转为HOLD等待更优退出。".strip()
+            )
+            return normalized
+
+        normalized["confidence"] = round(self._clamp(confidence - min(6.0, sell_side_cost_pct * 8.0), 0.0, 100.0))
+        normalized["reasoning"] = f"{reasoning} 已计入卖出成本：预计单次退出成本约 {sell_side_cost_pct:.3f}% 。".strip()
         return normalized
 
     @staticmethod

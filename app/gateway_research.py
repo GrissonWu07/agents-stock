@@ -24,7 +24,7 @@ from app.gateway_common import (
 from app.i18n import t
 from app.research_watchlist_integration import add_research_stock_to_watchlist, add_research_stocks_to_watchlist
 from app.sector_strategy_engine import SectorStrategyEngine
-from app.selector_result_store import load_latest_result, save_latest_result
+from app.selector_result_store import delete_latest_result, load_latest_result, save_latest_result
 from app.stock_refresh_scheduler import load_stock_runtime_entries
 from app.watchlist_selector_integration import normalize_stock_code
 
@@ -218,6 +218,19 @@ def _normalize_research_module_selection(payload: dict[str, Any]) -> list[str]:
     return selected or ["sector", "longhubang", "news", "macro", "cycle"]
 
 
+def _resolve_research_top_n(context: Any) -> int:
+    default_top_n = 10
+    config_manager = getattr(context, "config_manager", None)
+    if config_manager is None:
+        return default_top_n
+    try:
+        config = config_manager.read_env()
+    except Exception:
+        return default_top_n
+    configured = _int(config.get("RESEARCH_TOP_N"), default_top_n) if isinstance(config, dict) else default_top_n
+    return max(1, min(configured or default_top_n, 200))
+
+
 def _run_research_module_sector(context: Any) -> dict[str, Any]:
     fetcher = _research_cls("SectorStrategyDataFetcher")()
     data = fetcher.get_cached_data_with_fallback()
@@ -339,6 +352,8 @@ def _run_research_modules(
     progress_callback: Callable[[str, str, int | None], None] | None = None,
 ) -> dict[str, Any]:
     body = payload if isinstance(payload, dict) else {}
+    default_top_n = _resolve_research_top_n(context)
+    top_n = max(1, min(_int(body.get("topN"), default_top_n) or default_top_n, 200))
     selected_modules = set(_normalize_research_module_selection(body))
     module_runners: list[tuple[str, Callable[[Any], dict[str, Any]]]] = [
         ("sector", _run_research_module_sector),
@@ -440,6 +455,8 @@ def _run_research_modules(
                         )
                     continue
                 try:
+                    module_rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+                    limited_rows = module_rows[:top_n]
                     module_results.append(
                         {
                             "name": _txt(result.get("name"), module_key),
@@ -447,7 +464,7 @@ def _run_research_modules(
                             "output": _txt(result.get("output") or t("Analysis completed")),
                         }
                     )
-                    stock_rows.extend(result.get("rows") or [])
+                    stock_rows.extend(limited_rows)
                     market_view.extend(result.get("marketView") or [])
                     progress_message = t("Module {module} completed", module=module_key)
                 except Exception as exc:
@@ -685,14 +702,22 @@ def _action_research_run_module(context: Any, payload: dict[str, Any]) -> dict[s
     return snapshot
 
 
+def _action_research_reset(context: Any, payload: Any) -> dict[str, Any]:
+    _ = payload
+    delete_latest_result(context.research_result_key, base_dir=context.selector_result_dir)
+    return _snapshot_research(context)
+
+
 snapshot_research = _snapshot_research
 action_research_item = _action_research_item
 action_research_batch = _action_research_batch
 action_research_run_module = _action_research_run_module
+action_research_reset = _action_research_reset
 
 __all__ = [
     "action_research_batch",
     "action_research_item",
+    "action_research_reset",
     "action_research_run_module",
     "research_task_manager",
     "snapshot_research",

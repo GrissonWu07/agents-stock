@@ -167,6 +167,8 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
     ) -> dict:
         context = self._prepare_replay_context(
             start_datetime=start_datetime,
@@ -174,6 +176,8 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            commission_rate=commission_rate,
+            sell_tax_rate=sell_tax_rate,
         )
         run_id = self._create_replay_run(
             mode="historical_range",
@@ -200,6 +204,8 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
         overwrite_live: bool = False,
         auto_start_scheduler: bool = True,
     ) -> dict:
@@ -210,6 +216,8 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            commission_rate=commission_rate,
+            sell_tax_rate=sell_tax_rate,
         )
         run_id = self._create_replay_run(
             mode="continuous_to_live",
@@ -238,6 +246,8 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
     ) -> int:
         context = self._prepare_replay_context(
             start_datetime=start_datetime,
@@ -245,6 +255,8 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            commission_rate=commission_rate,
+            sell_tax_rate=sell_tax_rate,
         )
         self._ensure_no_active_replay()
         run_id = self._create_replay_run(
@@ -290,6 +302,8 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
         overwrite_live: bool = False,
         auto_start_scheduler: bool = True,
     ) -> int:
@@ -300,6 +314,8 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            commission_rate=commission_rate,
+            sell_tax_rate=sell_tax_rate,
         )
         self._ensure_no_active_replay()
         run_id = self._create_replay_run(
@@ -345,6 +361,8 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str,
+        commission_rate: float | None = None,
+        sell_tax_rate: float | None = None,
     ) -> dict:
         start_dt = self._to_datetime(start_datetime)
         end_dt = self._resolve_end_datetime(end_datetime)
@@ -359,6 +377,15 @@ class QuantSimReplayService:
         checkpoints = self.timepoint_generator.generate(start_dt, end_dt, timeframe)
         if not checkpoints:
             raise ValueError("指定区间内没有可用的交易检查点")
+        scheduler_config = self.db.get_scheduler_config()
+        resolved_commission_rate = float(
+            (scheduler_config.get("commission_rate") if commission_rate is None else commission_rate)
+            or 0.0
+        )
+        resolved_sell_tax_rate = float(
+            (scheduler_config.get("sell_tax_rate") if sell_tax_rate is None else sell_tax_rate)
+            or 0.0
+        )
 
         return {
             "start_dt": start_dt,
@@ -366,6 +393,8 @@ class QuantSimReplayService:
             "timeframe": timeframe,
             "market": market,
             "strategy_mode": strategy_mode,
+            "commission_rate": resolved_commission_rate,
+            "sell_tax_rate": resolved_sell_tax_rate,
             "candidates": candidates,
             "stock_codes": stock_codes,
             "checkpoints": checkpoints,
@@ -399,6 +428,8 @@ class QuantSimReplayService:
             metadata={
                 "candidate_count": len(context["candidates"]),
                 "strategy_mode": context["strategy_mode"],
+                "commission_rate": float(context.get("commission_rate") or 0),
+                "sell_tax_rate": float(context.get("sell_tax_rate") or 0),
             },
         )
 
@@ -426,6 +457,8 @@ class QuantSimReplayService:
         timeframe = context["timeframe"]
         market = context["market"]
         strategy_mode = context["strategy_mode"]
+        commission_rate = float(context.get("commission_rate") or 0)
+        sell_tax_rate = float(context.get("sell_tax_rate") or 0)
         candidates = context["candidates"]
         stock_codes = context["stock_codes"]
         checkpoints = context["checkpoints"]
@@ -452,6 +485,10 @@ class QuantSimReplayService:
             last_checkpoint_text = ""
 
             temp_portfolio.configure_account(float(account_summary["initial_cash"]))
+            temp_db.update_scheduler_config(
+                commission_rate=commission_rate,
+                sell_tax_rate=sell_tax_rate,
+            )
             for candidate in candidates:
                 temp_candidate_service.add_candidate(
                     stock_code=str(candidate["stock_code"]),
@@ -601,6 +638,8 @@ class QuantSimReplayService:
                     trading_hours_only=bool(status["trading_hours_only"]),
                     analysis_timeframe=timeframe,
                     market=market,
+                    commission_rate=commission_rate,
+                    sell_tax_rate=sell_tax_rate,
                 )
                 if auto_start_scheduler:
                     scheduler.start()

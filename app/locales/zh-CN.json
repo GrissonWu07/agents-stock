@@ -28,6 +28,8 @@
   "Data fetch failed": "数据获取失败",
   "Delete": "删除",
   "Default model name (OpenAI-compatible)": "默认模型名称（支持OpenAI兼容模型）",
+  "Default discover candidate count": "发现股票默认候选数量",
+  "Default research stock output count": "研究情报默认股票输出数量",
   "Discovery strategies": "发现策略",
   "Discovery strategy aggregate": "发现策略聚合结果",
   "Discovery task completed. Current candidates: {count}.": "发现任务完成，当前候选 {count} 只。",

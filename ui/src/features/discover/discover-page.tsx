@@ -107,6 +107,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
   const [search, setSearch] = useState("");
   const [batching, setBatching] = useState(false);
   const [runningStrategy, setRunningStrategy] = useState(false);
+  const [resettingList, setResettingList] = useState(false);
   const [runStrategySelection, setRunStrategySelection] = useState<string>("all");
   const [runFeedback, setRunFeedback] = useState<string>("");
   const [analysisFeedback, setAnalysisFeedback] = useState<string>("");
@@ -243,10 +244,13 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
   };
 
   const handleRunStrategy = async () => {
-    if (runningStrategy || strategyBusy) return;
+    if (runningStrategy || strategyBusy || resettingList) return;
     setRunningStrategy(true);
     setRunFeedback(t("Submitting discover task..."));
-    const runPayload = runStrategySelection === "all" ? {} : { strategy: runStrategySelection };
+    const runPayload: Record<string, unknown> = {};
+    if (runStrategySelection !== "all") {
+      runPayload.strategy = runStrategySelection;
+    }
     const pollTask = async (taskId: string) => {
       for (let index = 0; index < 180; index += 1) {
         const latest = (await taskClient.getTaskStatus(taskId)) as DiscoverSnapshot["taskJob"];
@@ -283,6 +287,20 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
       }
     } finally {
       setRunningStrategy(false);
+    }
+  };
+
+  const handleResetList = async () => {
+    if (resettingList || runningStrategy || strategyBusy) return;
+    setResettingList(true);
+    try {
+      await resource.runAction("reset-list");
+      selection.clear();
+      setSearch("");
+      setCurrentPage(0);
+      setRunFeedback(t("Discover list reset completed."));
+    } finally {
+      setResettingList(false);
     }
   };
 
@@ -348,7 +366,7 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
               data-size="compact-select"
               value={runStrategySelection}
               onChange={(event) => setRunStrategySelection(event.target.value)}
-              disabled={runningStrategy || strategyBusy}
+              disabled={runningStrategy || strategyBusy || resettingList}
             >
               {runStrategyOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -356,8 +374,11 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                 </option>
               ))}
             </select>
-            <button className="button button--primary discover-run-button" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy}>
+            <button className="button button--primary discover-run-button" type="button" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy || resettingList}>
               {runningStrategy || strategyBusy ? t("Running...") : t("Run strategy")}
+            </button>
+            <button className="button button--secondary discover-run-button" type="button" onClick={() => void handleResetList()} disabled={runningStrategy || strategyBusy || resettingList}>
+              {resettingList ? t("Resetting...") : t("Reset list")}
             </button>
           </div>
         }
@@ -429,7 +450,8 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
               {t("Selected / candidate {selected} / {total}", { selected: selection.selectedCount, total: filteredRows.length })}
             </span>
             <div className="discover-candidate-toolbar__actions">
-              <IconButton icon="↻" label={t("Refresh discover result")} tone="neutral" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy} />
+              <IconButton icon="↻" label={t("Refresh discover result")} tone="neutral" onClick={() => void handleRunStrategy()} disabled={runningStrategy || strategyBusy || resettingList} />
+              <IconButton icon="🗑" label={resettingList ? t("Resetting...") : t("Reset list")} tone="danger" onClick={() => void handleResetList()} disabled={runningStrategy || strategyBusy || resettingList} />
               <IconButton icon="✕" label={t("Clear selection")} tone="neutral" onClick={selection.clear} />
             </div>
           </div>

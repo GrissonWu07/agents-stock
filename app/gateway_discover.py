@@ -603,10 +603,25 @@ def _build_main_force_discover_result(stocks_df: Any, top_n: int) -> dict[str, A
     }
 
 
+def _resolve_default_top_n(context: Any) -> int:
+    default_top_n = 10
+    config_manager = getattr(context, "config_manager", None)
+    if config_manager is None:
+        return default_top_n
+    try:
+        config = config_manager.read_env()
+    except Exception:
+        return default_top_n
+    configured = _int(config.get("DISCOVER_TOP_N"), default_top_n) if isinstance(config, dict) else default_top_n
+    return max(1, min(configured or default_top_n, 200))
+
+
 def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
     selected = set(_normalize_discover_strategy_selection(payload))
     selected_at = _now()
-    top_n = max(_int(payload.get("topN"), 5) or 5, 1)
+    default_top_n = _resolve_default_top_n(context)
+    top_n = max(1, min(_int(payload.get("topN"), default_top_n) or default_top_n, 200))
+    ai_top_n = max(1, min(_int(payload.get("aiTopN"), top_n) or top_n, 200))
     completed: list[str] = []
     failed: list[dict[str, str]] = []
 
@@ -636,7 +651,7 @@ def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> dict[str,
 
     if "ai_scanner" in selected:
         try:
-            scanner_df = _run_ai_scanner_strategy(context, payload, top_n=top_n)
+            scanner_df = _run_ai_scanner_strategy(context, payload, top_n=ai_top_n)
             if scanner_df is not None and not getattr(scanner_df, "empty", False):
                 save_simple_selector_state(
                     strategy_key="ai_scanner",
@@ -654,7 +669,7 @@ def _run_discover_strategies(context: Any, payload: dict[str, Any]) -> dict[str,
         ("low_price_bull", lambda: _selector_cls("LowPriceBullSelector")().get_low_price_stocks(top_n=top_n)),
         ("small_cap", lambda: _selector_cls("SmallCapSelector")().get_small_cap_stocks(top_n=top_n)),
         ("profit_growth", lambda: _selector_cls("ProfitGrowthSelector")().get_profit_growth_stocks(top_n=top_n)),
-        ("value_stock", lambda: _selector_cls("ValueStockSelector")().get_value_stocks(top_n=max(top_n, 10))),
+        ("value_stock", lambda: _selector_cls("ValueStockSelector")().get_value_stocks(top_n=top_n)),
     ]
     for strategy_key, runner in simple_strategies:
         if strategy_key not in selected:
@@ -890,14 +905,26 @@ def _action_discover_run_strategy(context: Any, payload: Any) -> dict[str, Any]:
     return snapshot
 
 
+def _action_discover_reset(context: Any, payload: Any) -> dict[str, Any]:
+    _ = payload
+    base_dir = Path(context.selector_result_dir)
+    for strategy_key in ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]:
+        file_path = base_dir / f"{strategy_key}.json"
+        if file_path.exists():
+            file_path.unlink()
+    return _snapshot_discover(context)
+
+
 snapshot_discover = _snapshot_discover
 action_discover_item = _action_discover_item
 action_discover_batch = _action_discover_batch
 action_discover_run_strategy = _action_discover_run_strategy
+action_discover_reset = _action_discover_reset
 
 __all__ = [
     "action_discover_batch",
     "action_discover_item",
+    "action_discover_reset",
     "action_discover_run_strategy",
     "discover_task_manager",
     "snapshot_discover",

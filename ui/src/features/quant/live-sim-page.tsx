@@ -55,6 +55,14 @@ function parseAutoExecute(value: string) {
   return normalized === "true" || normalized === "1" || normalized.includes("开");
 }
 
+function parseRatePercent(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
 function normalizeSignalAction(value: string) {
   return String(value ?? "").trim().toUpperCase();
 }
@@ -74,6 +82,8 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   const [market, setMarket] = useState<(typeof MARKET_OPTIONS)[number]>("CN");
   const [autoExecute, setAutoExecute] = useState(true);
   const [initialCash, setInitialCash] = useState(100000);
+  const [commissionRatePct, setCommissionRatePct] = useState(0.03);
+  const [sellTaxRatePct, setSellTaxRatePct] = useState(0.1);
   const [actionPending, setActionPending] = useState<"save" | "reset" | "start" | "stop" | null>(null);
   const [signalTable, setSignalTable] = useState<TableSection>({
     columns: ["信号ID", "时间", "代码", "动作", "策略", "状态"],
@@ -96,6 +106,8 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
     setMarket(normalizeMarket(snapshot.config.market) as (typeof MARKET_OPTIONS)[number]);
     setAutoExecute(parseAutoExecute(snapshot.config.autoExecute));
     setInitialCash(Number.parseFloat(String(snapshot.config.initialCapital)) || 100000);
+    setCommissionRatePct(parseRatePercent(snapshot.config.commissionRatePct, 0.03));
+    setSellTaxRatePct(parseRatePercent(snapshot.config.sellTaxRatePct, 0.1));
   }, [snapshotVersion]);
 
   useEffect(() => {
@@ -284,6 +296,14 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                 <div className="mini-metric__label">策略模式</div>
                 <div className="mini-metric__value">{snapshot.config.strategyMode}</div>
               </div>
+              <div className="mini-metric">
+                <div className="mini-metric__label">手续费</div>
+                <div className="mini-metric__value">{`${parseRatePercent(snapshot.config.commissionRatePct, commissionRatePct).toFixed(4)}%`}</div>
+              </div>
+              <div className="mini-metric">
+                <div className="mini-metric__label">卖出税费</div>
+                <div className="mini-metric__value">{`${parseRatePercent(snapshot.config.sellTaxRatePct, sellTaxRatePct).toFixed(4)}%`}</div>
+              </div>
             </div>
             <div className="card-divider" />
             <div className="summary-list">
@@ -344,6 +364,30 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                   onChange={(event) => setInitialCash(Number(event.target.value) || 100000)}
                 />
               </label>
+              <label className="field">
+                <span className="field__label">手续费率(%)</span>
+                <input
+                  className="input"
+                  min={0}
+                  max={5}
+                  step={0.001}
+                  type="number"
+                  value={commissionRatePct}
+                  onChange={(event) => setCommissionRatePct(Math.max(0, Number(event.target.value) || 0))}
+                />
+              </label>
+              <label className="field">
+                <span className="field__label">卖出税费率(%)</span>
+                <input
+                  className="input"
+                  min={0}
+                  max={10}
+                  step={0.001}
+                  type="number"
+                  value={sellTaxRatePct}
+                  onChange={(event) => setSellTaxRatePct(Math.max(0, Number(event.target.value) || 0))}
+                />
+              </label>
               <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
                 <input type="checkbox" checked={autoExecute} onChange={(event) => setAutoExecute(event.target.checked)} />
                 <span className="field__label" style={{ marginBottom: 0 }}>
@@ -366,6 +410,8 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                       strategyMode,
                       market,
                       autoExecute,
+                      commissionRatePct,
+                      sellTaxRatePct,
                     });
                   } finally {
                     setActionPending(null);
@@ -418,6 +464,8 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                       strategyMode,
                       market,
                       autoExecute,
+                      commissionRatePct,
+                      sellTaxRatePct,
                     });
                   } finally {
                     setActionPending(null);

@@ -6,16 +6,47 @@ import { WorkbenchCard } from "../../components/ui/workbench-card";
 import { PageEmptyState, PageErrorState, PageLoadingState } from "../../components/ui/page-state";
 import { usePageData } from "../../lib/use-page-data";
 import type { ConfigSettingItem } from "../../lib/page-models";
+import { t } from "../../lib/i18n";
 
 type SettingsPageProps = {
   client?: ApiClient;
 };
 
-const VALUE_HINT = "当前值";
-
 type EditableConfigField = ConfigSettingItem & {
   key: string;
   value: string;
+};
+
+const PINNED_RUNTIME_KEYS = ["DISCOVER_TOP_N", "RESEARCH_TOP_N"] as const;
+
+const SETTINGS_KEY_LABELS: Record<string, string> = {
+  AI_API_KEY: "AI API key",
+  AI_API_BASE_URL: "AI API URL",
+  DEFAULT_MODEL_NAME: "Default model",
+  DISCOVER_TOP_N: "Discover candidate count",
+  RESEARCH_TOP_N: "Research stock output count",
+  TUSHARE_TOKEN: "Tushare token",
+  MINIQMT_ENABLED: "Enable MiniQMT",
+  MINIQMT_ACCOUNT_ID: "MiniQMT account ID",
+  MINIQMT_HOST: "MiniQMT host",
+  MINIQMT_PORT: "MiniQMT port",
+  EMAIL_ENABLED: "Enable email notification",
+  SMTP_SERVER: "SMTP server",
+  SMTP_PORT: "SMTP port",
+  EMAIL_FROM: "Sender email",
+  EMAIL_PASSWORD: "Email auth code",
+  EMAIL_TO: "Recipient email",
+  WEBHOOK_ENABLED: "Enable webhook notification",
+  WEBHOOK_TYPE: "Webhook type",
+  WEBHOOK_URL: "Webhook URL",
+  WEBHOOK_KEYWORD: "Webhook keyword",
+};
+
+const resolveFieldLabel = (item: EditableConfigField): string => {
+  const mapped = SETTINGS_KEY_LABELS[item.key];
+  if (mapped) return t(mapped);
+  if (item.title?.trim()) return t(item.title);
+  return item.key;
 };
 
 const parseValue = (item: ConfigSettingItem): string => {
@@ -23,17 +54,20 @@ const parseValue = (item: ConfigSettingItem): string => {
     return item.value;
   }
 
-  if (!item.body) {
+  const body = item.body ?? "";
+  if (!body.trim()) {
     return "";
   }
 
-  const marker = `${VALUE_HINT}:`;
-  const markerIndex = item.body.lastIndexOf(marker);
-  if (markerIndex < 0) {
-    return "";
+  const legacyMarkers = ["当前值:", "Current value:", "Value:"];
+  for (const marker of legacyMarkers) {
+    const markerIndex = body.lastIndexOf(marker);
+    if (markerIndex >= 0) {
+      return body.slice(markerIndex + marker.length).trim();
+    }
   }
 
-  return item.body.slice(markerIndex + marker.length).trim();
+  return "";
 };
 
 const normalizeField = (item: ConfigSettingItem, index: number): EditableConfigField => ({
@@ -43,10 +77,10 @@ const normalizeField = (item: ConfigSettingItem, index: number): EditableConfigF
 });
 
 const toInputType = (field: EditableConfigField): "text" | "password" | "number" => {
-  const t = `${field.type ?? "text"}`;
-  if (t === "password") return "password";
-  if (t === "number") return "number";
-  if (t === "boolean") return "text";
+  const typeName = `${field.type ?? "text"}`;
+  if (typeName === "password") return "password";
+  if (typeName === "number") return "number";
+  if (typeName === "boolean") return "text";
   return "text";
 };
 
@@ -77,8 +111,8 @@ const renderFieldControl = (
         value={toBooleanOptions(value)}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="true">true</option>
-        <option value="false">false</option>
+        <option value="true">{t("Bool:true")}</option>
+        <option value="false">{t("Bool:false")}</option>
       </select>
     );
   }
@@ -104,32 +138,30 @@ const renderFieldControl = (
   return <input className="input" id={id} type={inputType} value={value} onChange={(event) => onChange(event.target.value)} />;
 };
 
-const renderSection = (
+const renderFields = (
   sectionTitle: string,
   items: EditableConfigField[],
   values: Record<string, string>,
   onChange: (key: string, value: string) => void,
 ): ReactElement => {
   if (items.length === 0) {
-    return <SectionEmptyState title={`${sectionTitle}暂无数据`} description={`当前没有${sectionTitle}配置。`} />;
+    return <SectionEmptyState title={t("{section} has no data", { section: t(sectionTitle) })} description={t("No settings found for this section.")} />;
   }
 
   return (
-    <div className="summary-list">
+    <div className="settings-fields-grid">
       {items.map((item) => {
         const fieldValue = values[item.key] ?? "";
+        const fieldLabel = resolveFieldLabel(item);
         return (
-          <div className="summary-item" key={item.key}>
-            <div className="summary-item__title">{item.title}</div>
-            <div className="summary-item__body">{item.body}</div>
-            <div className="field">
+          <div className="settings-field-card" key={item.key}>
+            <div className="settings-field-card__header">
               <label className="field__label" htmlFor={`setting-${item.key}`}>
-                配置值
+                {fieldLabel}
               </label>
-              <div>
-                {renderFieldControl(item, `setting-${item.key}`, fieldValue, (next) => onChange(item.key, next))}
-              </div>
+              {item.required ? <span className="badge badge--warning">{t("Required")}</span> : null}
             </div>
+            {renderFieldControl(item, `setting-${item.key}`, fieldValue, (next) => onChange(item.key, next))}
           </div>
         );
       })}
@@ -158,6 +190,16 @@ export function SettingsPage({ client }: SettingsPageProps) {
         (item, index) => normalizeField(item, index + (resource.data?.dataSources?.length ?? 0) + (resource.data?.modelConfig?.length ?? 0)),
       ),
     [resource.data?.dataSources?.length, resource.data?.modelConfig?.length, resource.data?.runtimeParams],
+  );
+
+  const pinnedRuntimeParams = useMemo(
+    () => runtimeParams.filter((item) => PINNED_RUNTIME_KEYS.includes(item.key as (typeof PINNED_RUNTIME_KEYS)[number])),
+    [runtimeParams],
+  );
+
+  const runtimeParamsRemaining = useMemo(
+    () => runtimeParams.filter((item) => !PINNED_RUNTIME_KEYS.includes(item.key as (typeof PINNED_RUNTIME_KEYS)[number])),
+    [runtimeParams],
   );
 
   useEffect(() => {
@@ -192,15 +234,15 @@ export function SettingsPage({ client }: SettingsPageProps) {
   }, [savedValues, values]);
 
   if (resource.status === "loading" && !resource.data) {
-    return <PageLoadingState title="环境配置加载中" description="正在读取数据源和运行参数。" />;
+    return <PageLoadingState title={t("Settings loading...")} description={t("Loading model, data source, and runtime params.")} />;
   }
 
   if (resource.status === "error" && !resource.data) {
     return (
       <PageErrorState
-        title="环境配置加载失败"
-        description={resource.error ?? "无法加载环境配置数据，请稍后重试。"}
-        actionLabel="重新加载"
+        title={t("Settings failed to load")}
+        description={resource.error ?? t("Unable to load settings. Please retry later.")}
+        actionLabel={t("Reload")}
         onAction={resource.refresh}
       />
     );
@@ -208,7 +250,7 @@ export function SettingsPage({ client }: SettingsPageProps) {
 
   const snapshot = resource.data;
   if (!snapshot) {
-    return <PageEmptyState title="环境配置暂无数据" description="后台尚未返回环境配置信息。" actionLabel="刷新" onAction={resource.refresh} />;
+    return <PageEmptyState title={t("Settings has no data")} description={t("Backend has not returned a settings snapshot yet.")} actionLabel={t("Refresh")} onAction={resource.refresh} />;
   }
 
   const submit = () => {
@@ -225,41 +267,46 @@ export function SettingsPage({ client }: SettingsPageProps) {
   return (
     <div>
       <PageHeader
-        eyebrow="Settings"
-        title="环境配置"
-        description="数据源、模型配置和运行参数统一在这个页面管理。"
+        eyebrow={t("Settings")}
+        title={t("Environment settings")}
+        description={t("Edit and save model, data source, and runtime configuration.")}
       />
 
       <div className="stack">
-        <div className="toolbar">
+        <div className="toolbar settings-toolbar">
           <span className="toolbar__spacer" />
-          <button className="button button--secondary" type="button" onClick={resource.refresh}>
-            刷新配置
+          <button className="button button--secondary settings-toolbar__button" type="button" onClick={resource.refresh}>
+            {t("Refresh settings")}
           </button>
           <button
-            className="button button--primary"
+            className="button button--primary settings-toolbar__button"
             type="button"
             disabled={!dirty}
             onClick={submit}
           >
-            保存配置
+            {t("Save all settings")}
           </button>
         </div>
 
-        <div className="section-grid">
-          <WorkbenchCard>
-            <h2 className="section-card__title">模型配置</h2>
-            {renderSection("模型配置", modelConfig, values, onChange)}
+        <WorkbenchCard className="settings-card settings-card--highlight">
+          <h2 className="section-card__title settings-card__title">{t("Output count settings")}</h2>
+          {renderFields("Output count settings", pinnedRuntimeParams, values, onChange)}
+        </WorkbenchCard>
+
+        <div className="settings-layout">
+          <WorkbenchCard className="settings-card">
+            <h2 className="section-card__title settings-card__title">{t("Model config")}</h2>
+            {renderFields("Model config", modelConfig, values, onChange)}
           </WorkbenchCard>
 
-          <WorkbenchCard>
-            <h2 className="section-card__title">数据源</h2>
-            {renderSection("数据源", dataSources, values, onChange)}
+          <WorkbenchCard className="settings-card">
+            <h2 className="section-card__title settings-card__title">{t("Data sources")}</h2>
+            {renderFields("Data sources", dataSources, values, onChange)}
           </WorkbenchCard>
 
-          <WorkbenchCard className="section-grid__full">
-            <h2 className="section-card__title">运行参数</h2>
-            {renderSection("运行参数", runtimeParams, values, onChange)}
+          <WorkbenchCard className="settings-card settings-card--full">
+            <h2 className="section-card__title settings-card__title">{t("Runtime parameters")}</h2>
+            {renderFields("Runtime parameters", runtimeParamsRemaining, values, onChange)}
           </WorkbenchCard>
         </div>
       </div>

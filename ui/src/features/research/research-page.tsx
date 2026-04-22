@@ -217,6 +217,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
   const [search, setSearch] = useState("");
   const [batching, setBatching] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [resettingList, setResettingList] = useState(false);
   const [runFeedback, setRunFeedback] = useState("");
   const [taskJob, setTaskJob] = useState<ResearchSnapshot["taskJob"]>(null);
   const [selectedModuleName, setSelectedModuleName] = useState("");
@@ -332,7 +333,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
   };
 
   const handleRunModule = async (moduleName?: string) => {
-    if (isRegenerating || researchBusy) return;
+    if (isRegenerating || researchBusy || resettingList) return;
     setIsRegenerating(true);
     setRunFeedback(t("Submitting research task..."));
     const pollTask = async (taskId: string) => {
@@ -388,6 +389,20 @@ export function ResearchPage({ client }: ResearchPageProps) {
     }
   };
 
+  const handleResetList = async () => {
+    if (resettingList || isRegenerating || researchBusy) return;
+    setResettingList(true);
+    try {
+      await resource.runAction("reset-list");
+      selection.clear();
+      setSearch("");
+      setSelectedModuleName("");
+      setRunFeedback(t("Research list reset completed."));
+    } finally {
+      setResettingList(false);
+    }
+  };
+
   useEffect(() => {
     if (selectAllRef.current) {
       selectAllRef.current.indeterminate = selection.someSelected;
@@ -432,10 +447,13 @@ export function ResearchPage({ client }: ResearchPageProps) {
         description={localizeResearchText("Aggregate sector strategy, dragon-tiger list, news flow, macro analysis, and macro cycle in one page.")}
         actions={
           <>
-          <button className="button button--secondary" type="button" onClick={() => void handleRunModule()} disabled={isRegenerating || researchBusy}>
-            {isRegenerating || researchBusy ? t("Regenerating...") : t("Regenerate")}
-          </button>
-            <button className="button button--primary" type="button" onClick={() => void handleBatchWatchlist()} disabled={!canBatchWatchlist || batching}>
+            <button className="button button--secondary" type="button" onClick={() => void handleRunModule()} disabled={isRegenerating || researchBusy || resettingList}>
+              {isRegenerating || researchBusy ? t("Regenerating...") : t("Regenerate")}
+            </button>
+            <button className="button button--secondary" type="button" onClick={() => void handleResetList()} disabled={isRegenerating || researchBusy || resettingList}>
+              {resettingList ? t("Resetting...") : t("Reset list")}
+            </button>
+            <button className="button button--primary" type="button" onClick={() => void handleBatchWatchlist()} disabled={!canBatchWatchlist || batching || resettingList}>
               {t("Add selected to watchlist")}
             </button>
           </>
@@ -630,15 +648,22 @@ export function ResearchPage({ client }: ResearchPageProps) {
               icon="↻"
               label={isRegenerating ? t("Running...") : t("Refresh research")}
               tone="neutral"
-              disabled={isRegenerating || researchBusy}
+              disabled={isRegenerating || researchBusy || resettingList}
               onClick={() => void handleRunModule(selectedModule?.name)}
+            />
+            <IconButton
+              icon="🗑"
+              label={resettingList ? t("Resetting...") : t("Reset list")}
+              tone="danger"
+              onClick={() => void handleResetList()}
+              disabled={isRegenerating || researchBusy || resettingList}
             />
             <IconButton
               icon="⭐"
               label={t("Add selected to watchlist")}
               tone="accent"
               onClick={() => void handleBatchWatchlist()}
-              disabled={!canBatchWatchlist || batching}
+              disabled={!canBatchWatchlist || batching || resettingList}
             />
             <IconButton icon="✕" label={t("Clear selection")} tone="neutral" onClick={selection.clear} />
             <span className="toolbar__status">{t("Selected {count} stocks", { count: selection.selectedCount })}</span>

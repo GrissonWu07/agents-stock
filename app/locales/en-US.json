@@ -28,6 +28,8 @@
   "Data fetch failed": "Data fetch failed",
   "Delete": "Delete",
   "Default model name (OpenAI-compatible)": "Default model name (OpenAI-compatible)",
+  "Default discover candidate count": "Default discover candidate count",
+  "Default research stock output count": "Default research stock output count",
   "Discovery strategies": "Discovery strategies",
   "Discovery strategy aggregate": "Discovery strategy aggregate",
   "Discovery task completed. Current candidates: {count}.": "Discovery task completed. Current candidates: {count}.",

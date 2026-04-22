@@ -138,6 +138,18 @@ class ConfigManager:
                 "required": False,
                 "type": "text",
             },
+            "DISCOVER_TOP_N": {
+                "value": "10",
+                "description": t("Default discover candidate count"),
+                "required": False,
+                "type": "number",
+            },
+            "RESEARCH_TOP_N": {
+                "value": "10",
+                "description": t("Default research stock output count"),
+                "required": False,
+                "type": "number",
+            },
         }
 
         self._init_db()

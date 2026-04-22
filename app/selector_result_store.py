@@ -35,6 +35,15 @@ def load_latest_result(strategy_key: str, base_dir: str | Path = DEFAULT_SELECTO
     return _decode_value(json.loads(file_path.read_text(encoding="utf-8")))
 
 
+def delete_latest_result(strategy_key: str, base_dir: str | Path = DEFAULT_SELECTOR_RESULT_DIR) -> bool:
+    """Delete the latest selector result for a strategy."""
+    file_path = Path(base_dir) / f"{strategy_key}.json"
+    if not file_path.exists():
+        return False
+    file_path.unlink()
+    return True
+
+
 def _encode_value(value: Any) -> Any:
     if isinstance(value, pd.DataFrame):
         return {

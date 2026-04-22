@@ -390,6 +390,68 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.settings-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-card {
+  padding: 18px;
+}
+
+.settings-card--highlight {
+  border-color: rgba(79, 110, 247, 0.26);
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.settings-card--full {
+  grid-column: 1 / -1;
+}
+
+.settings-card__title {
+  margin-bottom: 12px;
+}
+
+.settings-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-field-card {
+  border: 1px solid var(--soft-line);
+  border-radius: 14px;
+  background: #f8fbff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-field-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-field-card__hint {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.settings-field-card__meta {
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.settings-toolbar__button {
+  min-width: 116px;
+}
+
 .section-grid--sidebar {
   grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
 }
@@ -1877,6 +1939,10 @@ a {
     gap: 12px;
   }
 
+  .settings-fields-grid {
+    grid-template-columns: 1fr;
+  }
+
   .table-shell {
     overflow-x: auto;
     overflow-y: visible;
@@ -1998,6 +2064,7 @@ a {
   .section-grid,
   .section-grid--three,
   .section-grid--sidebar,
+  .settings-layout,
   .mini-metric-grid {
     grid-template-columns: 1fr;
   }

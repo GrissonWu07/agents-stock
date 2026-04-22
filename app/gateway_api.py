@@ -31,6 +31,7 @@ from app.gateway_common import (
 from app.gateway_discover import (
     action_discover_batch as _action_discover_batch,
     action_discover_item as _action_discover_item,
+    action_discover_reset as _action_discover_reset,
     action_discover_run_strategy as _action_discover_run_strategy,
     discover_task_manager,
     snapshot_discover as _snapshot_discover,
@@ -38,6 +39,7 @@ from app.gateway_discover import (
 from app.gateway_research import (
     action_research_batch as _action_research_batch,
     action_research_item as _action_research_item,
+    action_research_reset as _action_research_reset,
     action_research_run_module as _action_research_run_module,
     research_task_manager,
     snapshot_research as _snapshot_research,
@@ -57,7 +59,11 @@ from app.monitor_db import monitor_db
 from app.portfolio_db import portfolio_db
 from app.portfolio_rebalance_tasks import portfolio_rebalance_task_manager
 from app.quant_sim.candidate_pool_service import CandidatePoolService
-from app.quant_sim.db import QuantSimDB
+from app.quant_sim.db import (
+    DEFAULT_COMMISSION_RATE,
+    DEFAULT_SELL_TAX_RATE,
+    QuantSimDB,
+)
 from app.quant_sim.engine import QuantSimEngine
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.replay_service import QuantSimReplayService
@@ -634,6 +640,8 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
             "autoExecute": "开启" if scheduler.get("auto_execute") else "关闭",
             "market": _txt(scheduler.get("market"), "CN"),
             "initialCapital": _txt(account.get("initial_cash"), "0"),
+            "commissionRatePct": _fee_rate_pct_text(scheduler.get("commission_rate"), DEFAULT_COMMISSION_RATE),
+            "sellTaxRatePct": _fee_rate_pct_text(scheduler.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
         },
         "status": {
             "running": "运行中" if scheduler.get("running") else "已停止",
@@ -715,6 +723,7 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
 
 def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
     db = context.quant_db()
+    scheduler_status = context.scheduler().get_status()
     runs = db.get_sim_runs(limit=20)
     run = runs[0] if runs else None
     candidate_rows = [
@@ -741,6 +750,8 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
                 "timeframe": "30m",
                 "market": "CN",
                 "strategyMode": "auto",
+                "commissionRatePct": _fee_rate_pct_text(scheduler_status.get("commission_rate"), DEFAULT_COMMISSION_RATE),
+                "sellTaxRatePct": _fee_rate_pct_text(scheduler_status.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
             },
             "metrics": [
                 _metric("回放结果", "--"),
@@ -956,6 +967,16 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
             }
         )
 
+    run_metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+    replay_commission_rate = _normalize_fee_rate(
+        run_metadata.get("commission_rate"),
+        _normalize_fee_rate(scheduler_status.get("commission_rate"), DEFAULT_COMMISSION_RATE),
+    )
+    replay_sell_tax_rate = _normalize_fee_rate(
+        run_metadata.get("sell_tax_rate"),
+        _normalize_fee_rate(scheduler_status.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
+    )
+
     return {
         "updatedAt": _now(),
         "config": {
@@ -964,6 +985,8 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
             "timeframe": _txt(run.get("timeframe"), "30m"),
             "market": _txt(run.get("market"), "CN"),
             "strategyMode": _txt(run.get("selected_strategy_mode") or run.get("strategy_mode"), "auto"),
+            "commissionRatePct": _fee_rate_pct_text(replay_commission_rate, DEFAULT_COMMISSION_RATE),
+            "sellTaxRatePct": _fee_rate_pct_text(replay_sell_tax_rate, DEFAULT_SELL_TAX_RATE),
         },
         "metrics": [
             _metric("回放结果", _pct(run.get("total_return_pct"))),
@@ -2144,21 +2167,17 @@ def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
         for key in keys:
             meta = info.get(key, {})
             raw_value = _txt(meta.get("value"))
-            display_value = raw_value
-            if _txt(meta.get("type")) == "password":
-                if raw_value:
-                    display_value = f"{raw_value[:4]}***{raw_value[-4:]}" if len(raw_value) > 8 else "***"
-                else:
-                    display_value = "--"
+            description = _txt(meta.get("description"))
             item = _insight(
                 key,
-                f"{meta.get('description', '')} 当前值: {_txt(display_value, '--')}",
+                description,
                 "warning" if meta.get("required") else "neutral",
             )
             item["key"] = key
             item["value"] = raw_value
             item["required"] = bool(meta.get("required"))
             item["type"] = _txt(meta.get("type"), "text")
+            item["hint"] = description
             options = meta.get("options")
             if isinstance(options, list):
                 item["options"] = [str(option) for option in options]
@@ -2166,7 +2185,7 @@ def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
         return items
     model_keys = ["AI_API_KEY", "AI_API_BASE_URL", "DEFAULT_MODEL_NAME"]
     source_keys = ["TUSHARE_TOKEN", "MINIQMT_ENABLED", "MINIQMT_ACCOUNT_ID", "MINIQMT_HOST", "MINIQMT_PORT"]
-    runtime_keys = ["EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO", "WEBHOOK_ENABLED", "WEBHOOK_TYPE", "WEBHOOK_URL", "WEBHOOK_KEYWORD"]
+    runtime_keys = ["DISCOVER_TOP_N", "RESEARCH_TOP_N", "EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO", "WEBHOOK_ENABLED", "WEBHOOK_TYPE", "WEBHOOK_URL", "WEBHOOK_KEYWORD"]
     return {"updatedAt": _now(), "metrics": [_metric("模型配置", len(model_keys)), _metric("数据源", len(source_keys)), _metric("运行参数", len(runtime_keys)), _metric("通知通道", 2)], "modelConfig": pick(model_keys), "dataSources": pick(source_keys), "runtimeParams": pick(runtime_keys), "paths": [str(context.data_dir / "watchlist.db"), str(context.quant_sim_db_file), str(context.portfolio_db_file), str(context.monitor_db_file), str(context.smart_monitor_db_file), str(context.stock_analysis_db_file), str(context.main_force_batch_db_file), str(context.selector_result_dir), str(LOGS_DIR)]}
 
 
@@ -2178,19 +2197,58 @@ def _action_settings_save(context: UIApiContext, payload: dict[str, Any]) -> dic
         raise HTTPException(status_code=500, detail="保存配置失败")
     context.config_manager.reload_config()
     return _snapshot_settings(context)
+def _normalize_fee_rate(value: Any, default: float) -> float:
+    rate = _float(value, default)
+    if rate is None:
+        rate = default
+    parsed = float(rate)
+    if parsed < 0:
+        parsed = 0.0
+    if parsed > 1:
+        parsed = parsed / 100.0
+    if parsed > 0.2:
+        parsed = 0.2
+    return round(parsed, 8)
 
 
+def _fee_rate_pct_text(value: Any, default: float) -> str:
+    return f"{_normalize_fee_rate(value, default) * 100:.4f}"
+
+
+def _payload_fee_rate(
+    body: dict[str, Any],
+    *,
+    pct_key: str,
+    camel_key: str,
+    snake_key: str,
+    default: float,
+) -> tuple[bool, float]:
+    if pct_key in body:
+        pct_value = _float(body.get(pct_key), default * 100)
+        ratio = 0.0 if pct_value is None else float(pct_value) / 100.0
+        return True, _normalize_fee_rate(ratio, default)
+    if camel_key in body:
+        return True, _normalize_fee_rate(body.get(camel_key), default)
+    if snake_key in body:
+        return True, _normalize_fee_rate(body.get(snake_key), default)
+    return False, _normalize_fee_rate(default, default)
 
 
 def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
+    scheduler_cfg = context.quant_db().get_scheduler_config()
+    default_commission_rate = _normalize_fee_rate(scheduler_cfg.get("commission_rate"), DEFAULT_COMMISSION_RATE)
+    default_sell_tax_rate = _normalize_fee_rate(scheduler_cfg.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE)
     latest = next(iter(context.quant_db().get_sim_runs(limit=20)), None)
     if latest:
+        metadata = latest.get("metadata") if isinstance(latest.get("metadata"), dict) else {}
         return {
             "start_datetime": _txt(latest.get("start_datetime"), "--"),
             "end_datetime": latest.get("end_datetime"),
             "timeframe": _txt(latest.get("timeframe"), "30m"),
             "market": _txt(latest.get("market"), "CN"),
             "strategy_mode": _txt(latest.get("selected_strategy_mode") or latest.get("strategy_mode"), "auto"),
+            "commission_rate": _normalize_fee_rate(metadata.get("commission_rate"), default_commission_rate),
+            "sell_tax_rate": _normalize_fee_rate(metadata.get("sell_tax_rate"), default_sell_tax_rate),
         }
     end_at = datetime.now().replace(second=0, microsecond=0)
     start_at = end_at - timedelta(days=30)
@@ -2200,11 +2258,27 @@ def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
         "timeframe": "30m",
         "market": "CN",
         "strategy_mode": "auto",
+        "commission_rate": default_commission_rate,
+        "sell_tax_rate": default_sell_tax_rate,
     }
 
 
 def _scheduler_update_kwargs(payload: Any) -> dict[str, Any]:
     body = _payload_dict(payload)
+    commission_present, commission_rate = _payload_fee_rate(
+        body,
+        pct_key="commissionRatePct",
+        camel_key="commissionRate",
+        snake_key="commission_rate",
+        default=DEFAULT_COMMISSION_RATE,
+    )
+    sell_tax_present, sell_tax_rate = _payload_fee_rate(
+        body,
+        pct_key="sellTaxRatePct",
+        camel_key="sellTaxRate",
+        snake_key="sell_tax_rate",
+        default=DEFAULT_SELL_TAX_RATE,
+    )
     mapping = {
         "strategy_mode": body.get("strategyMode") if "strategyMode" in body else body.get("strategy_mode"),
         "analysis_timeframe": body.get("analysisTimeframe") if "analysisTimeframe" in body else body.get("timeframe"),
@@ -2214,6 +2288,10 @@ def _scheduler_update_kwargs(payload: Any) -> dict[str, Any]:
         "market": body.get("market"),
         "start_date": body.get("startDate") if "startDate" in body else body.get("start_date"),
     }
+    if commission_present:
+        mapping["commission_rate"] = commission_rate
+    if sell_tax_present:
+        mapping["sell_tax_rate"] = sell_tax_rate
     return {key: value for key, value in mapping.items() if value is not None}
 
 
@@ -2291,12 +2369,28 @@ def _action_live_sim_bulk_quant(context: UIApiContext, payload: Any) -> dict[str
 def _action_his_replay_start(context: UIApiContext, payload: Any) -> dict[str, Any]:
     defaults = _latest_replay_defaults(context)
     body = _payload_dict(payload)
+    _, commission_rate = _payload_fee_rate(
+        body,
+        pct_key="commissionRatePct",
+        camel_key="commissionRate",
+        snake_key="commission_rate",
+        default=float(defaults["commission_rate"]),
+    )
+    _, sell_tax_rate = _payload_fee_rate(
+        body,
+        pct_key="sellTaxRatePct",
+        camel_key="sellTaxRate",
+        snake_key="sell_tax_rate",
+        default=float(defaults["sell_tax_rate"]),
+    )
     context.replay_service().enqueue_historical_range(
         start_datetime=body.get("startDateTime") or body.get("start_datetime") or defaults["start_datetime"],
         end_datetime=body.get("endDateTime") or body.get("end_datetime") or defaults["end_datetime"],
         timeframe=body.get("timeframe") or defaults["timeframe"],
         market=body.get("market") or defaults["market"],
         strategy_mode=body.get("strategyMode") or body.get("strategy_mode") or defaults["strategy_mode"],
+        commission_rate=commission_rate,
+        sell_tax_rate=sell_tax_rate,
     )
     return _snapshot_his_replay(context)
 
@@ -2304,12 +2398,28 @@ def _action_his_replay_start(context: UIApiContext, payload: Any) -> dict[str, A
 def _action_his_replay_continue(context: UIApiContext, payload: Any) -> dict[str, Any]:
     defaults = _latest_replay_defaults(context)
     body = _payload_dict(payload)
+    _, commission_rate = _payload_fee_rate(
+        body,
+        pct_key="commissionRatePct",
+        camel_key="commissionRate",
+        snake_key="commission_rate",
+        default=float(defaults["commission_rate"]),
+    )
+    _, sell_tax_rate = _payload_fee_rate(
+        body,
+        pct_key="sellTaxRatePct",
+        camel_key="sellTaxRate",
+        snake_key="sell_tax_rate",
+        default=float(defaults["sell_tax_rate"]),
+    )
     context.replay_service().enqueue_past_to_live(
         start_datetime=body.get("startDateTime") or body.get("start_datetime") or defaults["start_datetime"],
         end_datetime=body.get("endDateTime") or body.get("end_datetime") or defaults["end_datetime"],
         timeframe=body.get("timeframe") or defaults["timeframe"],
         market=body.get("market") or defaults["market"],
         strategy_mode=body.get("strategyMode") or body.get("strategy_mode") or defaults["strategy_mode"],
+        commission_rate=commission_rate,
+        sell_tax_rate=sell_tax_rate,
         overwrite_live=bool(body.get("overwriteLive", False) or body.get("overwrite_live", False)),
         auto_start_scheduler=body.get("autoStartScheduler", True) if "autoStartScheduler" in body else body.get("auto_start_scheduler", True),
     )
@@ -2343,6 +2453,8 @@ def _action_history_rerun(context: UIApiContext, payload: Any) -> dict[str, Any]
         timeframe=defaults["timeframe"],
         market=defaults["market"],
         strategy_mode=defaults["strategy_mode"],
+        commission_rate=float(defaults["commission_rate"]),
+        sell_tax_rate=float(defaults["sell_tax_rate"]),
     )
     return _snapshot_history(context)
 
@@ -2592,9 +2704,11 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("discover", "run-strategy"): _action_discover_run_strategy,
     ("discover", "batch-watchlist"): _action_discover_batch,
     ("discover", "item-watchlist"): _action_discover_item,
+    ("discover", "reset-list"): _action_discover_reset,
     ("research", "run-module"): _action_research_run_module,
     ("research", "batch-watchlist"): _action_research_batch,
     ("research", "item-watchlist"): _action_research_item,
+    ("research", "reset-list"): _action_research_reset,
     ("portfolio", "analyze"): _action_portfolio_analyze,
     ("portfolio", "refresh-portfolio"): _action_portfolio_refresh,
     ("portfolio", "schedule-save"): _action_portfolio_schedule_save,
@@ -2728,9 +2842,11 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         ("/api/v1/discover/actions/item-watchlist", "discover", "item-watchlist"),
         ("/api/v1/discover/actions/batch-watchlist", "discover", "batch-watchlist"),
         ("/api/v1/discover/actions/run-strategy", "discover", "run-strategy"),
+        ("/api/v1/discover/actions/reset-list", "discover", "reset-list"),
         ("/api/v1/research/actions/item-watchlist", "research", "item-watchlist"),
         ("/api/v1/research/actions/batch-watchlist", "research", "batch-watchlist"),
         ("/api/v1/research/actions/run-module", "research", "run-module"),
+        ("/api/v1/research/actions/reset-list", "research", "reset-list"),
         ("/api/v1/portfolio/actions/analyze", "portfolio", "analyze"),
         ("/api/v1/portfolio/actions/refresh-portfolio", "portfolio", "refresh-portfolio"),
         ("/api/v1/portfolio/actions/schedule-save", "portfolio", "schedule-save"),

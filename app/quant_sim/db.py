@@ -20,6 +20,8 @@ DEFAULT_ANALYSIS_TIMEFRAME = "30m"
 SUPPORTED_ANALYSIS_TIMEFRAMES = {"30m", "1d", "1d+30m"}
 DEFAULT_STRATEGY_MODE = "auto"
 SUPPORTED_STRATEGY_MODES = {"auto", "aggressive", "neutral", "defensive"}
+DEFAULT_COMMISSION_RATE = 0.0003
+DEFAULT_SELL_TAX_RATE = 0.001
 
 
 class QuantSimDB:
@@ -185,6 +187,8 @@ class QuantSimDB:
                 strategy_mode TEXT DEFAULT 'auto',
                 start_date TEXT,
                 market TEXT DEFAULT 'CN',
+                commission_rate REAL DEFAULT 0.0003,
+                sell_tax_rate REAL DEFAULT 0.001,
                 last_run_at TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -348,6 +352,8 @@ class QuantSimDB:
         )
         self._ensure_column(cursor, "sim_scheduler_config", "strategy_mode", "TEXT DEFAULT 'auto'")
         self._ensure_column(cursor, "sim_scheduler_config", "start_date", "TEXT")
+        self._ensure_column(cursor, "sim_scheduler_config", "commission_rate", f"REAL DEFAULT {DEFAULT_COMMISSION_RATE}")
+        self._ensure_column(cursor, "sim_scheduler_config", "sell_tax_rate", f"REAL DEFAULT {DEFAULT_SELL_TAX_RATE}")
         self._ensure_column(cursor, "sim_runs", "progress_current", "INTEGER DEFAULT 0")
         self._ensure_column(cursor, "sim_runs", "progress_total", "INTEGER DEFAULT 0")
         self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
@@ -1336,6 +1342,8 @@ class QuantSimDB:
             "strategy_mode": self._normalize_strategy_mode(row["strategy_mode"]),
             "start_date": self._normalize_start_date(row["start_date"]),
             "market": row["market"] or "CN",
+            "commission_rate": self._normalize_fee_rate(row["commission_rate"], default=DEFAULT_COMMISSION_RATE),
+            "sell_tax_rate": self._normalize_fee_rate(row["sell_tax_rate"], default=DEFAULT_SELL_TAX_RATE),
             "last_run_at": row["last_run_at"],
             "updated_at": row["updated_at"],
         }
@@ -1351,6 +1359,8 @@ class QuantSimDB:
         strategy_mode: Optional[str] = None,
         start_date: Optional[str | date | datetime] = None,
         market: Optional[str] = None,
+        commission_rate: Optional[float] = None,
+        sell_tax_rate: Optional[float] = None,
         last_run_at: Optional[str] = None,
     ) -> None:
         existing = self.get_scheduler_config()
@@ -1367,6 +1377,14 @@ class QuantSimDB:
             ),
             "start_date": self._normalize_start_date(existing["start_date"] if start_date is None else start_date),
             "market": existing["market"] if market is None else str(market),
+            "commission_rate": self._normalize_fee_rate(
+                existing["commission_rate"] if commission_rate is None else commission_rate,
+                default=DEFAULT_COMMISSION_RATE,
+            ),
+            "sell_tax_rate": self._normalize_fee_rate(
+                existing["sell_tax_rate"] if sell_tax_rate is None else sell_tax_rate,
+                default=DEFAULT_SELL_TAX_RATE,
+            ),
             "last_run_at": existing["last_run_at"] if last_run_at is None else last_run_at,
         }
         if payload["interval_minutes"] <= 0:
@@ -1378,7 +1396,8 @@ class QuantSimDB:
             """
             UPDATE sim_scheduler_config
             SET enabled = ?, auto_execute = ?, interval_minutes = ?, trading_hours_only = ?,
-                analysis_timeframe = ?, strategy_mode = ?, start_date = ?, market = ?, last_run_at = ?, updated_at = ?
+                analysis_timeframe = ?, strategy_mode = ?, start_date = ?, market = ?,
+                commission_rate = ?, sell_tax_rate = ?, last_run_at = ?, updated_at = ?
             WHERE id = 1
             """,
             (
@@ -1390,6 +1409,8 @@ class QuantSimDB:
                 payload["strategy_mode"],
                 payload["start_date"],
                 payload["market"],
+                payload["commission_rate"],
+                payload["sell_tax_rate"],
                 payload["last_run_at"],
                 self._now(),
             ),
@@ -1798,7 +1819,10 @@ class QuantSimDB:
         executed_at: datetime,
     ) -> dict[str, Any]:
         executed_at_text = self._format_datetime(executed_at)
-        amount = round(price * quantity, 4)
+        cost_cfg = self._current_trade_cost_config(cursor)
+        gross_amount = round(price * quantity, 4)
+        commission_fee = round(gross_amount * cost_cfg["commission_rate"], 4)
+        amount = round(gross_amount + commission_fee, 4)
         available_cash = self._get_available_cash(cursor)
         if amount > available_cash:
             raise ValueError("insufficient available cash")
@@ -1809,7 +1833,7 @@ class QuantSimDB:
         if position:
             current_quantity = int(position["quantity"])
             new_quantity = current_quantity + quantity
-            total_cost = float(position["avg_price"]) * current_quantity + price * quantity
+            total_cost = float(position["avg_price"]) * current_quantity + amount
             avg_price = round(total_cost / new_quantity, 4)
             market_value = round(new_quantity * price, 4)
             cursor.execute(
@@ -1834,6 +1858,7 @@ class QuantSimDB:
             )
             position_id = int(position["id"])
         else:
+            avg_price = round(amount / quantity, 4)
             market_value = round(quantity * price, 4)
             cursor.execute(
                 """
@@ -1844,10 +1869,11 @@ class QuantSimDB:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'holding', ?, ?)
                 """,
-                (stock_code, stock_name, quantity, price, price, market_value, executed_at_text, executed_at_text),
+                (stock_code, stock_name, quantity, avg_price, price, market_value, executed_at_text, executed_at_text),
             )
             position_id = int(cursor.lastrowid)
 
+        lot_entry_price = round(amount / quantity, 4)
         unlock_date = self._next_trading_day(executed_at.date()).isoformat()
         cursor.execute(
             """
@@ -1864,7 +1890,7 @@ class QuantSimDB:
                 stock_code,
                 quantity,
                 quantity,
-                price,
+                lot_entry_price,
                 executed_at_text,
                 executed_at.date().isoformat(),
                 unlock_date,
@@ -1902,6 +1928,7 @@ class QuantSimDB:
 
         remaining_to_sell = quantity
         executed_at_text = self._format_datetime(executed_at)
+        cost_cfg = self._current_trade_cost_config(cursor)
         realized_pnl = 0.0
         for row, lot in lots:
             if remaining_to_sell <= 0:
@@ -1940,7 +1967,10 @@ class QuantSimDB:
             (stock_code,),
         )
         remaining_cost = float(cursor.fetchone()["remaining_cost"] or 0)
-        proceeds = round(price * quantity, 4)
+        gross_proceeds = round(price * quantity, 4)
+        sell_fee = round(gross_proceeds * (cost_cfg["commission_rate"] + cost_cfg["sell_tax_rate"]), 4)
+        proceeds = round(gross_proceeds - sell_fee, 4)
+        realized_pnl = round(realized_pnl - sell_fee, 4)
         self._set_available_cash(cursor, self._get_available_cash(cursor) + proceeds)
 
         if remaining_quantity > 0:
@@ -1967,7 +1997,7 @@ class QuantSimDB:
             return {
                 "candidate_status": "holding",
                 "amount": proceeds,
-                "realized_pnl": round(realized_pnl, 4),
+                "realized_pnl": realized_pnl,
             }
 
         cursor.execute(
@@ -1983,7 +2013,7 @@ class QuantSimDB:
         return {
             "candidate_status": "active",
             "amount": proceeds,
-            "realized_pnl": round(realized_pnl, 4),
+            "realized_pnl": realized_pnl,
         }
 
     def _build_account_summary(self, cursor: sqlite3.Cursor) -> dict[str, Any]:
@@ -2113,11 +2143,19 @@ class QuantSimDB:
                 INSERT INTO sim_scheduler_config
                 (
                     id, enabled, auto_execute, interval_minutes, trading_hours_only,
-                    analysis_timeframe, strategy_mode, start_date, market, last_run_at, updated_at
+                    analysis_timeframe, strategy_mode, start_date, market,
+                    commission_rate, sell_tax_rate, last_run_at, updated_at
                 )
-                VALUES (1, 0, 0, 15, 1, ?, ?, ?, 'CN', NULL, ?)
+                VALUES (1, 0, 0, 15, 1, ?, ?, ?, 'CN', ?, ?, NULL, ?)
                 """,
-                (DEFAULT_ANALYSIS_TIMEFRAME, DEFAULT_STRATEGY_MODE, date.today().isoformat(), self._now()),
+                (
+                    DEFAULT_ANALYSIS_TIMEFRAME,
+                    DEFAULT_STRATEGY_MODE,
+                    date.today().isoformat(),
+                    DEFAULT_COMMISSION_RATE,
+                    DEFAULT_SELL_TAX_RATE,
+                    self._now(),
+                ),
             )
         else:
             cursor.execute(
@@ -2143,6 +2181,22 @@ class QuantSimDB:
                 WHERE id = 1
                 """,
                 (date.today().isoformat(),),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET commission_rate = COALESCE(commission_rate, ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_COMMISSION_RATE,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET sell_tax_rate = COALESCE(sell_tax_rate, ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_SELL_TAX_RATE,),
             )
 
     @staticmethod
@@ -2173,6 +2227,20 @@ class QuantSimDB:
             return value.isoformat()
         return date.fromisoformat(str(value)).isoformat()
 
+    @staticmethod
+    def _normalize_fee_rate(value: Any, *, default: float = 0.0) -> float:
+        try:
+            parsed = float(default if value in (None, "") else value)
+        except (TypeError, ValueError):
+            parsed = float(default)
+        if parsed < 0:
+            parsed = 0.0
+        if parsed > 1:
+            parsed = parsed / 100.0
+        if parsed > 0.2:
+            parsed = 0.2
+        return round(parsed, 8)
+
     def _get_available_cash(self, cursor: sqlite3.Cursor) -> float:
         cursor.execute("SELECT available_cash FROM sim_account WHERE id = 1")
         row = cursor.fetchone()
@@ -2187,6 +2255,28 @@ class QuantSimDB:
             """,
             (round(value, 4), self._now()),
         )
+
+    def _current_trade_cost_config(self, cursor: sqlite3.Cursor) -> dict[str, float]:
+        cursor.execute(
+            """
+            SELECT commission_rate, sell_tax_rate
+            FROM sim_scheduler_config
+            WHERE id = 1
+            """
+        )
+        row = cursor.fetchone()
+        commission_rate = self._normalize_fee_rate(
+            row["commission_rate"] if row is not None else DEFAULT_COMMISSION_RATE,
+            default=DEFAULT_COMMISSION_RATE,
+        )
+        sell_tax_rate = self._normalize_fee_rate(
+            row["sell_tax_rate"] if row is not None else DEFAULT_SELL_TAX_RATE,
+            default=DEFAULT_SELL_TAX_RATE,
+        )
+        return {
+            "commission_rate": commission_rate,
+            "sell_tax_rate": sell_tax_rate,
+        }
 
     def _candidate_row_to_dict(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict[str, Any]:
         payload = self._row_to_dict(row)

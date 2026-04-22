@@ -28,6 +28,7 @@ export type Insight = {
 export type ConfigSettingItem = Insight & {
   key?: string;
   value?: string;
+  hint?: string;
   required?: boolean;
   type?: "text" | "password" | "boolean" | "select" | string;
   options?: string[];
@@ -267,6 +268,8 @@ export type LiveSimSnapshot = {
     autoExecute: string;
     market: string;
     initialCapital: string;
+    commissionRatePct?: string;
+    sellTaxRatePct?: string;
   };
   status: {
     running: string;
@@ -295,6 +298,8 @@ export type ReplaySnapshot = {
     timeframe: string;
     market: string;
     strategyMode: string;
+    commissionRatePct?: string;
+    sellTaxRatePct?: string;
   };
   metrics: SummaryMetric[];
   candidatePool: TableSection;
