@@ -219,17 +219,19 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
     </div>
   );
   const renderSignalToolbar = () => (
-    <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap" }}>
+    <div className="table-toolbar-compact">
       <input
         className="input"
-        style={{ width: "160px", height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        style={{ height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        data-size="compact-input"
         placeholder="按代码/名称过滤"
         value={signalStockFilter}
         onChange={(event) => setSignalStockFilter(event.target.value)}
       />
       <select
         className="input"
-        style={{ width: "120px", height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        style={{ height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        data-size="compact-select"
         value={signalActionFilter}
         onChange={(event) => setSignalActionFilter(event.target.value)}
       >
@@ -242,7 +244,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
         ))}
       </select>
       {renderSignalPager()}
-      <span className="summary-item__body" style={{ margin: 0, whiteSpace: "nowrap" }}>
+      <span className="summary-item__body table-toolbar-compact__count" style={{ margin: 0 }}>
         {signalLoading ? "加载中..." : `筛选后 ${filteredSignalRows.length} 条`}
       </span>
     </div>
@@ -453,6 +455,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
             }
             meta={[`表内 ${snapshot.candidatePool.rows.length} 只`, `待量化 ${candidateCount}`]}
             actionsHead="操作"
+            compactConfig={{ coreColumnIndexes: [0, 1, 3], detailColumnIndexes: [2] }}
             onRowAction={(row, action) => {
               void resource.runAction(action.action ?? "analyze-candidate", row.id);
             }}
@@ -464,6 +467,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
             emptyTitle={snapshot.holdings.emptyLabel ?? "当前持仓暂无数据"}
             emptyDescription={snapshot.holdings.emptyMessage ?? "模拟账户当前还没有形成持仓，待下一轮信号触发后会在这里补充。"}
             actionsHead="操作"
+            compactConfig={{ coreColumnIndexes: [0, 1, 4], detailColumnIndexes: [2, 3, 5, 6] }}
             onRowAction={(row, action) => {
               void resource.runAction(action.action ?? "delete-position", row.id);
             }}
@@ -473,6 +477,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
             table={snapshot.trades}
             emptyTitle={snapshot.trades.emptyLabel ?? "成交记录暂无数据"}
             emptyDescription={snapshot.trades.emptyMessage ?? "如果调度还没有生成新的成交，这里会先保持为空。"}
+            compactConfig={{ coreColumnIndexes: [0, 2, 3, 5], detailColumnIndexes: [1, 4, 6] }}
           />
 
           <WorkbenchCard>
@@ -511,6 +516,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
             actionsHead="操作"
             actionVariant="chip"
             tableLayout="auto"
+            compactConfig={{ coreColumnIndexes: [1, 2, 3, 5], detailColumnIndexes: [0, 4] }}
             toolbar={renderSignalToolbar()}
             onRowAction={(row, action) => {
               const actionKey = String(action.action ?? "").trim().toLowerCase();

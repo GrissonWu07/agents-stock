@@ -341,10 +341,11 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
         title={t("Discover")}
         description={localizeDiscoverText("Aggregate multiple selection strategies in one page and add outputs into watchlist.")}
         actions={
-          <div className="chip-row" style={{ gap: "8px", flexWrap: "nowrap", alignItems: "center" }}>
+          <div className="table-toolbar-compact">
             <select
               className="input discover-strategy-select"
               style={{ minWidth: "180px" }}
+              data-size="compact-select"
               value={runStrategySelection}
               onChange={(event) => setRunStrategySelection(event.target.value)}
               disabled={runningStrategy || strategyBusy}

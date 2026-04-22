@@ -318,17 +318,19 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     filteredCountText: string,
     includeTradePreset: boolean = false,
   ) => (
-    <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap" }}>
+    <div className="table-toolbar-compact">
       <input
         className="input"
-        style={{ width: "160px", height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        style={{ height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        data-size="compact-input"
         placeholder="按代码/名称过滤"
         value={stockFilter}
         onChange={(event) => setStockFilter(event.target.value)}
       />
       <select
         className="input"
-        style={{ width: "120px", height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        style={{ height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
+        data-size="compact-select"
         value={actionFilter}
         onChange={(event) => setActionFilter(event.target.value)}
       >
@@ -341,7 +343,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
         ))}
       </select>
       {renderPager(page, pages, setPage)}
-      <span className="summary-item__body" style={{ margin: 0, whiteSpace: "nowrap" }}>
+      <span className="summary-item__body table-toolbar-compact__count" style={{ margin: 0 }}>
         {filteredCountText}
       </span>
     </div>
@@ -546,7 +548,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                       <div className="summary-item__body">{`区间：${selectedTaskRange}`}</div>
                       <div className="summary-item__body">{`模式：${replayModeLabel} · 粒度：${snapshot.config.timeframe} · 策略模式：${snapshot.config.strategyMode}`}</div>
                     </div>
-                    <div className="mini-metric-grid" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "8px" }}>
+                    <div className="mini-metric-grid replay-task-metrics-grid" style={{ gap: "8px" }}>
                       <div className="mini-metric">
                         <div className="mini-metric__label">最终盈亏比例</div>
                         <div className="mini-metric__value">{selectedTask.returnPct || "--"}</div>
@@ -581,6 +583,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
             emptyTitle={selectedTaskHoldings.emptyLabel ?? "历史持仓暂无数据"}
             emptyDescription={selectedTaskHoldings.emptyMessage ?? "选中任务没有持仓记录。"}
             tableLayout="auto"
+            compactConfig={{ coreColumnIndexes: [0, 1, 4], detailColumnIndexes: [2, 3, 5, 6] }}
           />
 
           <QuantTableSectionCard
@@ -589,6 +592,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
             emptyTitle={snapshot.trades.emptyLabel ?? "成交明细暂无数据"}
             emptyDescription={snapshot.trades.emptyMessage ?? "历史回放执行后，所有成交会统一落在这里。"}
             tableLayout="auto"
+            compactConfig={{ coreColumnIndexes: [0, 2, 3, 5], detailColumnIndexes: [1, 4, 6] }}
             toolbar={renderFilterToolbar(
               tradeStockFilter,
               setTradeStockFilter,
@@ -616,6 +620,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
             actionsHead="操作"
             actionVariant="chip"
             tableLayout="auto"
+            compactConfig={{ coreColumnIndexes: [0, 2, 3, 4], detailColumnIndexes: [1, 5] }}
             toolbar={renderFilterToolbar(
               signalStockFilter,
               setSignalStockFilter,

@@ -8,6 +8,7 @@ import { NextStepsPanel } from "./next-steps-panel";
 import { StockAnalysisPanel } from "./stock-analysis-panel";
 import { WatchlistPanel } from "./watchlist-panel";
 import { t } from "../../lib/i18n";
+import { useCompactLayout } from "../../lib/use-compact-layout";
 
 type WorkbenchPageProps = {
   client?: ApiClient;
@@ -16,6 +17,7 @@ type WorkbenchPageProps = {
 const DEFAULT_ANALYSTS = ["technical", "fundamental", "fund_flow", "risk"];
 
 export function WorkbenchPage({ client }: WorkbenchPageProps) {
+  const isCompactLayout = useCompactLayout();
   const resource = usePageData("workbench", client);
   const snapshot = resource.data;
   const analysisJob = snapshot?.analysisJob ?? null;
@@ -217,8 +219,9 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
             onBatchAnalyze={handleBatchAnalyze}
             onClearInput={() => undefined}
           />
+          {isCompactLayout ? <NextStepsPanel steps={snapshot.nextSteps} /> : null}
         </div>
-        <NextStepsPanel steps={snapshot.nextSteps} />
+        {!isCompactLayout ? <NextStepsPanel steps={snapshot.nextSteps} /> : null}
       </div>
     </div>
   );

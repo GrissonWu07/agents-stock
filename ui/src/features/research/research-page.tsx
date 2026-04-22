@@ -616,6 +616,7 @@ export function ResearchPage({ client }: ResearchPageProps) {
               <span className="field__label">{t("Search output")}</span>
               <input
                 className="input"
+                data-size="compact-input"
                 placeholder={t("Input code, name, source, or reason")}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}

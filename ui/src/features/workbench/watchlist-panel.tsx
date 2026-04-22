@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { IconButton } from "../../components/ui/icon-button";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
 import type { TableSection } from "../../lib/page-models";
+import { useCompactLayout } from "../../lib/use-compact-layout";
 import { useSelection } from "../../lib/use-selection";
 import { t } from "../../lib/i18n";
 
@@ -37,6 +38,7 @@ export function WatchlistPanel({
   onClearSelection,
   onRemoveWatchlist,
 }: WatchlistPanelProps) {
+  const isCompactLayout = useCompactLayout();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [inlineAddOpen, setInlineAddOpen] = useState(false);
@@ -47,6 +49,8 @@ export function WatchlistPanel({
   const [portfolioCostPrice, setPortfolioCostPrice] = useState("");
   const [portfolioQuantity, setPortfolioQuantity] = useState("");
   const [portfolioSaving, setPortfolioSaving] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<string[]>([]);
+  const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
   const normalizedSearch = search.trim().toLowerCase();
   const filteredRows = useMemo(() => {
     if (!normalizedSearch) return watchlist.rows;
@@ -82,6 +86,26 @@ export function WatchlistPanel({
     setPage((current) => Math.min(current, pageCount));
   }, [pageCount]);
 
+  useEffect(() => {
+    if (!isCompactLayout || !openMenuRowId) return undefined;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".row-more")) return;
+      setOpenMenuRowId(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenMenuRowId(null);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isCompactLayout, openMenuRowId]);
+
   const selectedCodes = selection.selectedIds;
   const selectedRows = pageRows.filter((row) => selectedCodes.includes(row.id));
 
@@ -113,6 +137,16 @@ export function WatchlistPanel({
     const targetCodes = (selectedCodes.length > 0 ? selectedCodes : pageRows.map((row) => row.id)).filter(Boolean);
     if (targetCodes.length === 0) return;
     onRefresh(targetCodes);
+  };
+
+  const toggleExpandedRow = (rowId: string) => {
+    setExpandedRows((current) => {
+      const exists = current.includes(rowId);
+      if (exists && openMenuRowId === rowId) {
+        setOpenMenuRowId(null);
+      }
+      return exists ? current.filter((item) => item !== rowId) : [...current, rowId];
+    });
   };
 
   const submitInlineAdd = async () => {
@@ -150,6 +184,7 @@ export function WatchlistPanel({
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 style={{ width: "220px", minWidth: "180px", height: "40px" }}
+                data-size="compact-input"
               />
               <IconButton
                 icon="+"
@@ -282,16 +317,18 @@ export function WatchlistPanel({
         <div className="table-shell watchlist-table-shell">
           <div className="watchlist-table__viewport">
             <table className="table watchlist-table" data-testid="watchlist-table">
-            <colgroup>
-              <col className="watchlist-table__col watchlist-table__col--checkbox" />
-              <col className="watchlist-table__col watchlist-table__col--code" />
-              <col className="watchlist-table__col watchlist-table__col--name" />
-              <col className="watchlist-table__col watchlist-table__col--price" />
-              <col className="watchlist-table__col watchlist-table__col--source" />
-              <col className="watchlist-table__col watchlist-table__col--status" />
-              <col className="watchlist-table__col watchlist-table__col--quant" />
-              <col className="watchlist-table__col watchlist-table__col--actions" />
-            </colgroup>
+            {!isCompactLayout ? (
+              <colgroup>
+                <col className="watchlist-table__col watchlist-table__col--checkbox" />
+                <col className="watchlist-table__col watchlist-table__col--code" />
+                <col className="watchlist-table__col watchlist-table__col--name" />
+                <col className="watchlist-table__col watchlist-table__col--price" />
+                <col className="watchlist-table__col watchlist-table__col--source" />
+                <col className="watchlist-table__col watchlist-table__col--status" />
+                <col className="watchlist-table__col watchlist-table__col--quant" />
+                <col className="watchlist-table__col watchlist-table__col--actions" />
+              </colgroup>
+            ) : null}
             <thead>
               <tr>
                 <th className="table__checkbox-cell">
@@ -303,13 +340,20 @@ export function WatchlistPanel({
                     onChange={selection.toggleAll}
                   />
                 </th>
-                {watchlist.columns.map((column) => (
-                  <th key={column}>{t(column)}</th>
-                ))}
-              <th className="table__actions-head">{t("Actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
+                {isCompactLayout ? (
+                  <>
+                    <th>{t(String(watchlist.columns[0] ?? "Code"))}</th>
+                    <th>{t(String(watchlist.columns[1] ?? "Name"))}</th>
+                    <th>{t(String(watchlist.columns[4] ?? "Status"))}</th>
+                    <th className="table__compact-actions-head">{t("Detail")}</th>
+                  </>
+                ) : (
+                  watchlist.columns.map((column) => <th key={column}>{t(column)}</th>)
+                )}
+                <th className={isCompactLayout ? "table__compact-actions-head" : "table__actions-head"}>{t("Actions")}</th>
+              </tr>
+            </thead>
+            <tbody>
                 {inlineAddOpen ? (
                   <tr className="table__row--selected">
                     <td className="table__checkbox-cell" />
@@ -334,11 +378,9 @@ export function WatchlistPanel({
                         }}
                       />
                     </td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>-</td>
+                    <td>{isCompactLayout ? "-" : "-"}</td>
+                    <td>{isCompactLayout ? "-" : "-"}</td>
+                    {isCompactLayout ? <td>-</td> : <><td>-</td><td>-</td><td>-</td></>}
                     <td className="table__actions-cell">
                       <div className="table__actions">
                         <IconButton
@@ -369,61 +411,159 @@ export function WatchlistPanel({
                 ) : null}
                 {pageRows.length === 0 ? (
                 <tr>
-                  <td className="table__empty" colSpan={watchlist.columns.length + 2}>
+                  <td className="table__empty" colSpan={(isCompactLayout ? 6 : watchlist.columns.length + 2)}>
                     {filteredRows.length === 0
                       ? (watchlist.emptyLabel ? t(watchlist.emptyLabel) : t("My watchlist is empty"))
                       : t("Current page has no stocks. Switch page or adjust search.")}
                   </td>
                 </tr>
               ) : (
-                pageRows.map((row) => {
-                  const isSelected = selection.isSelected(row.id);
-                  return (
-                    <tr
-                      key={row.id}
-                      className={isSelected ? "table__row--selected" : undefined}
-                      onClick={() => selection.toggle(row.id)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <td className="table__checkbox-cell">
-                        <input
-                          type="checkbox"
-                          aria-label={t("Select {name}", { name: String(row.cells[1] ?? row.id) })}
-                          checked={isSelected}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={() => selection.toggle(row.id)}
-                        />
-                      </td>
-                      {row.cells.map((cell, index) => (
-                        <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {typeof cell === "string" ? t(cell) : cell}
-                        </td>
-                      ))}
-                      <td className="table__actions-cell">
-                        <div className="table__actions">
-                          <IconButton
-                            icon="🧪"
-                            label={t("Add quant candidate {code}", { code: row.id })}
-                            tone="neutral"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onBatchQuant([row.id]);
-                            }}
-                          />
-                          <IconButton
-                            icon="🗑"
-                            label={t("Delete {code}", { code: row.id })}
-                            tone="danger"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onRemoveWatchlist(row.id);
-                            }}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                isCompactLayout
+                  ? pageRows.flatMap((row) => {
+                      const isSelected = selection.isSelected(row.id);
+                      const isExpanded = expandedRows.includes(row.id);
+                      const compactMainRow = (
+                        <tr
+                          key={`${row.id}-main`}
+                          className={isSelected ? "table__row--selected table__compact-main-row" : "table__compact-main-row"}
+                          onClick={() => selection.toggle(row.id)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td className="table__checkbox-cell">
+                            <input
+                              type="checkbox"
+                              aria-label={t("Select {name}", { name: String(row.cells[1] ?? row.id) })}
+                              checked={isSelected}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={() => selection.toggle(row.id)}
+                            />
+                          </td>
+                          <td className="table__cell-strong">{typeof row.cells[0] === "string" ? t(String(row.cells[0])) : row.cells[0]}</td>
+                          <td>{typeof row.cells[1] === "string" ? t(String(row.cells[1])) : row.cells[1]}</td>
+                          <td>{typeof row.cells[4] === "string" ? t(String(row.cells[4])) : row.cells[4] ?? "-"}</td>
+                          <td className="table__compact-control-cell">
+                            <button
+                              className="button button--secondary button--small table__expand-button"
+                              type="button"
+                              aria-expanded={isExpanded}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleExpandedRow(row.id);
+                              }}
+                            >
+                              {isExpanded ? t("Collapse") : t("Expand")}
+                            </button>
+                          </td>
+                          <td className="table__compact-control-cell">
+                            <div className="row-more" onClick={(event) => event.stopPropagation()}>
+                              <button
+                                className="icon-button icon-button--neutral row-more__trigger"
+                                type="button"
+                                aria-haspopup="menu"
+                                aria-expanded={openMenuRowId === row.id}
+                                onClick={() => setOpenMenuRowId((current) => (current === row.id ? null : row.id))}
+                              >
+                                ⋯
+                              </button>
+                              {openMenuRowId === row.id ? (
+                                <div className="row-more__menu" role="menu">
+                                  <button
+                                    className="row-more__item row-more__item--neutral"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuRowId(null);
+                                      onBatchQuant([row.id]);
+                                    }}
+                                  >
+                                    <span aria-hidden="true">🧪</span>
+                                    <span>{t("Add to quant candidates")}</span>
+                                  </button>
+                                  <button
+                                    className="row-more__item row-more__item--danger"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuRowId(null);
+                                      onRemoveWatchlist(row.id);
+                                    }}
+                                  >
+                                    <span aria-hidden="true">🗑</span>
+                                    <span>{t("Delete")}</span>
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                      if (!isExpanded) {
+                        return [compactMainRow];
+                      }
+                      const compactDetailRow = (
+                        <tr key={`${row.id}-detail`} className="table__compact-detail-row">
+                          <td colSpan={6} className="table__compact-detail-cell">
+                            <div className="compact-detail-grid">
+                              {[2, 3, 5].map((index) => (
+                                <div className="compact-detail-item" key={`${row.id}-detail-${index}`}>
+                                  <div className="compact-detail-item__label">{t(String(watchlist.columns[index] ?? `col-${index}`))}</div>
+                                  <div className="compact-detail-item__value">{typeof row.cells[index] === "string" ? t(String(row.cells[index])) : row.cells[index] ?? "-"}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                      return [compactMainRow, compactDetailRow];
+                    })
+                  : pageRows.map((row) => {
+                      const isSelected = selection.isSelected(row.id);
+                      return (
+                        <tr
+                          key={row.id}
+                          className={isSelected ? "table__row--selected" : undefined}
+                          onClick={() => selection.toggle(row.id)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td className="table__checkbox-cell">
+                            <input
+                              type="checkbox"
+                              aria-label={t("Select {name}", { name: String(row.cells[1] ?? row.id) })}
+                              checked={isSelected}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={() => selection.toggle(row.id)}
+                            />
+                          </td>
+                          {row.cells.map((cell, index) => (
+                            <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                              {typeof cell === "string" ? t(cell) : cell}
+                            </td>
+                          ))}
+                          <td className="table__actions-cell">
+                            <div className="table__actions">
+                              <IconButton
+                                icon="🧪"
+                                label={t("Add quant candidate {code}", { code: row.id })}
+                                tone="neutral"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onBatchQuant([row.id]);
+                                }}
+                              />
+                              <IconButton
+                                icon="🗑"
+                                label={t("Delete {code}", { code: row.id })}
+                                tone="danger"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onRemoveWatchlist(row.id);
+                                }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
               )}
           </tbody>
             </table>

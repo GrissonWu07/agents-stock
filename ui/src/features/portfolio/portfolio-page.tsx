@@ -140,6 +140,7 @@ export function PortfolioPage({ client }: PortfolioPageProps) {
             <label className="field" style={{ minWidth: 220 }}>
               <input
                 className="input"
+                data-size="compact-input"
                 placeholder="按代码/名称/板块搜索"
                 value={query}
                 onChange={(event) => {
@@ -151,6 +152,7 @@ export function PortfolioPage({ client }: PortfolioPageProps) {
             <label className="field" style={{ width: 120 }}>
               <select
                 className="input"
+                data-size="compact-select"
                 value={safePageSize}
                 onChange={(event) => {
                   setPageSize(Number(event.target.value) || 50);

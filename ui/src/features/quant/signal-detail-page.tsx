@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { PageHeader } from "../../components/ui/page-header";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
 import { PageEmptyState, PageErrorState, PageLoadingState } from "../../components/ui/page-state";
 import { t } from "../../lib/i18n";
+import { useCompactLayout } from "../../lib/use-compact-layout";
 import { localizeDecisionCode, localizeStrategyMode } from "./quant-decision-localizer";
 
 type VoteRow = {
@@ -269,6 +270,113 @@ function tableRowEmpty(colSpan: number, text: string) {
         {text}
       </td>
     </tr>
+  );
+}
+
+type CompactDataRow = {
+  key: string;
+  cells: ReactNode[];
+};
+
+function CompactDataTable({
+  isCompactLayout,
+  headers,
+  rows,
+  coreIndexes,
+  emptyText,
+}: {
+  isCompactLayout: boolean;
+  headers: string[];
+  rows: CompactDataRow[];
+  coreIndexes: number[];
+  emptyText: string;
+}) {
+  const [expandedRows, setExpandedRows] = useState<string[]>([]);
+  const validCoreIndexes = coreIndexes.filter(
+    (index, position, all) => Number.isInteger(index) && index >= 0 && index < headers.length && all.indexOf(index) === position,
+  );
+  const finalCoreIndexes = validCoreIndexes.length > 0 ? validCoreIndexes : [0];
+  const detailIndexes = headers.map((_, index) => index).filter((index) => !finalCoreIndexes.includes(index));
+
+  if (!isCompactLayout) {
+    return (
+      <div className="table-shell">
+        <table className="table table--auto">
+          <thead>
+            <tr>
+              {headers.map((header) => (
+                <th key={header}>{header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? tableRowEmpty(headers.length, emptyText) : rows.map((row) => <tr key={row.key}>{row.cells.map((cell, idx) => <td key={`${row.key}-${idx}`}>{cell}</td>)}</tr>)}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  const toggleExpand = (rowKey: string) => {
+    setExpandedRows((current) => (current.includes(rowKey) ? current.filter((item) => item !== rowKey) : [...current, rowKey]));
+  };
+
+  return (
+    <div className="table-shell table-shell--compact">
+      <table className="table table--auto">
+        <thead>
+          <tr>
+            {finalCoreIndexes.map((index) => (
+              <th key={headers[index]}>{headers[index]}</th>
+            ))}
+            {detailIndexes.length > 0 ? <th className="table__actions-head">{t("Detail")}</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            tableRowEmpty(finalCoreIndexes.length + (detailIndexes.length > 0 ? 1 : 0), emptyText)
+          ) : (
+            rows.flatMap((row) => {
+              const expanded = expandedRows.includes(row.key);
+              const mainRow = (
+                <tr key={`${row.key}-main`} className="table__compact-main-row">
+                  {finalCoreIndexes.map((index, idx) => (
+                    <td key={`${row.key}-core-${index}`} className={idx === 0 ? "table__cell-strong" : undefined}>
+                      {row.cells[index]}
+                    </td>
+                  ))}
+                  {detailIndexes.length > 0 ? (
+                    <td className="table__compact-control-cell">
+                      <button className="button button--secondary button--small table__expand-button" type="button" aria-expanded={expanded} onClick={() => toggleExpand(row.key)}>
+                        {expanded ? t("Collapse") : t("Expand")}
+                      </button>
+                    </td>
+                  ) : null}
+                </tr>
+              );
+              if (!expanded || detailIndexes.length === 0) {
+                return [mainRow];
+              }
+              const detailRow = (
+                <tr key={`${row.key}-detail`} className="table__compact-detail-row">
+                  <td className="table__compact-detail-cell" colSpan={finalCoreIndexes.length + 1}>
+                    <div className="compact-detail-grid">
+                      {detailIndexes.map((index) => (
+                        <div className="compact-detail-item" key={`${row.key}-detail-${index}`}>
+                          <div className="compact-detail-item__label">{headers[index]}</div>
+                          <div className="compact-detail-item__value">{row.cells[index]}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+              return [mainRow, detailRow];
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -545,6 +653,7 @@ function _localizeDynamicText(rawText: string): string {
 }
 
 export function SignalDetailPage() {
+  const isCompactLayout = useCompactLayout();
   const navigate = useNavigate();
   const { signalId } = useParams();
   const [searchParams] = useSearchParams();
@@ -806,101 +915,80 @@ export function SignalDetailPage() {
 
           <div className="card-divider" />
           <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>投票明细</h3>
-          <div className="table-shell">
-            <table className="table table--auto">
-              <thead>
-                <tr>
-                  <th>维度</th>
-                  <th>投票主体</th>
-                  <th>投票</th>
-                  <th>信号分</th>
-                  <th>权重</th>
-                  <th>贡献分</th>
-                  <th>依据</th>
-                  <th>计算</th>
-                </tr>
-              </thead>
-              <tbody>
-                {voteRows.length === 0
-                  ? tableRowEmpty(8, "暂无投票明细")
-                  : voteRows.map((item, index) => (
-                      <tr key={`vote-${index}`}>
-                        <td>{item.track === "technical" ? "技术" : "环境"}</td>
-                        <td>{item.track === "context" ? _localizeEnvComponentName(item.voter) : _localizeDynamicText(item.voter)}</td>
-                        <td>{localizeDecisionCode(item.signal)}</td>
-                        <td>{item.score}</td>
-                        <td>{item.weight}</td>
-                        <td>{item.contribution}</td>
-                        <td>{_localizeDynamicText(item.reason)}</td>
-                        <td>{`单票贡献 = 信号分(${item.score}) × 权重(${item.weight}) = ${item.contribution}`}</td>
-                      </tr>
-                    ))}
-              </tbody>
-            </table>
-          </div>
+          <CompactDataTable
+            isCompactLayout={isCompactLayout}
+            headers={["维度", "投票主体", "投票", "信号分", "权重", "贡献分", "依据", "计算"]}
+            coreIndexes={[0, 1, 2, 5]}
+            emptyText="暂无投票明细"
+            rows={voteRows.map((item, index) => ({
+              key: `vote-${index}`,
+              cells: [
+                item.track === "technical" ? "技术" : "环境",
+                item.track === "context" ? _localizeEnvComponentName(item.voter) : _localizeDynamicText(item.voter),
+                localizeDecisionCode(item.signal),
+                item.score,
+                item.weight,
+                item.contribution,
+                _localizeDynamicText(item.reason),
+                `单票贡献 = 信号分(${item.score}) × 权重(${item.weight}) = ${item.contribution}`,
+              ],
+            }))}
+          />
 
           <div className="card-divider" />
           <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>决策指标</h3>
-          <div className="table-shell">
-            <table className="table table--auto">
-              <thead>
-                <tr><th>参数</th><th>值</th><th>来源</th><th>计算方式</th></tr>
-              </thead>
-              <tbody>
-                {decisionParameterRows.length === 0
-                  ? tableRowEmpty(4, "暂无决策指标")
-                  : decisionParameterRows.map((item, index) => (
-                      <tr key={`decision-${index}`}>
-                        <td>{_localizeDynamicText(item.name)}</td>
-                        <td>{_localizeValue(item.value)}</td>
-                        <td>{_localizeSourceLabel(item.source)}</td>
-                        <td>{_localizeDynamicText(item.derivation)}</td>
-                      </tr>
-                    ))}
-              </tbody>
-            </table>
-          </div>
+          <CompactDataTable
+            isCompactLayout={isCompactLayout}
+            headers={["参数", "值", "来源", "计算方式"]}
+            coreIndexes={[0, 1, 2]}
+            emptyText="暂无决策指标"
+            rows={decisionParameterRows.map((item, index) => ({
+              key: `decision-${index}`,
+              cells: [
+                _localizeDynamicText(item.name),
+                _localizeValue(item.value),
+                _localizeSourceLabel(item.source),
+                _localizeDynamicText(item.derivation),
+              ],
+            }))}
+          />
           {thresholdRows.length > 0 ? (
-            <div className="table-shell" style={{ marginTop: "10px" }}>
-              <table className="table table--auto">
-                <thead>
-                  <tr><th>阈值参数</th><th>值</th><th>来源</th><th>计算方式</th></tr>
-                </thead>
-                <tbody>
-                  {thresholdRows.map((item, index) => (
-                    <tr key={`threshold-${index}`}>
-                      <td>{_localizeThresholdName(item.name)}</td>
-                      <td>{_localizeValue(item.value)}</td>
-                      <td>{_localizeSourceLabel(item.source)}</td>
-                      <td>{_localizeDynamicText(item.derivation)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ marginTop: "10px" }}>
+              <CompactDataTable
+                isCompactLayout={isCompactLayout}
+                headers={["阈值参数", "值", "来源", "计算方式"]}
+                coreIndexes={[0, 1, 2]}
+                emptyText="暂无阈值参数"
+                rows={thresholdRows.map((item, index) => ({
+                  key: `threshold-${index}`,
+                  cells: [
+                    _localizeThresholdName(item.name),
+                    _localizeValue(item.value),
+                    _localizeSourceLabel(item.source),
+                    _localizeDynamicText(item.derivation),
+                  ],
+                }))}
+              />
             </div>
           ) : null}
 
           <div className="card-divider" />
           <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>技术指标</h3>
-          <div className="table-shell">
-            <table className="table table--auto">
-              <thead>
-                <tr><th>指标</th><th>数值</th><th>来源</th><th>说明/计算方式</th></tr>
-              </thead>
-              <tbody>
-                {mergedTechnicalRows.length === 0
-                  ? tableRowEmpty(4, "暂无技术指标")
-                  : mergedTechnicalRows.map((item, index) => (
-                      <tr key={`tech-${index}`}>
-                        <td>{_localizeDynamicText(item.name)}</td>
-                        <td>{_localizeValue(item.value)}</td>
-                        <td>{_localizeSourceLabel(item.source)}</td>
-                        <td>{_localizeDynamicText(item.detail || "--")}</td>
-                      </tr>
-                    ))}
-              </tbody>
-            </table>
-          </div>
+          <CompactDataTable
+            isCompactLayout={isCompactLayout}
+            headers={["指标", "数值", "来源", "说明/计算方式"]}
+            coreIndexes={[0, 1, 2]}
+            emptyText="暂无技术指标"
+            rows={mergedTechnicalRows.map((item, index) => ({
+              key: `tech-${index}`,
+              cells: [
+                _localizeDynamicText(item.name),
+                _localizeValue(item.value),
+                _localizeSourceLabel(item.source),
+                _localizeDynamicText(item.detail || "--"),
+              ],
+            }))}
+          />
           {techEvidence.length > 0 ? (
             <div className="summary-item" style={{ marginTop: "10px" }}>
               <div className="summary-item__title">关键技术证据</div>
@@ -927,43 +1015,35 @@ export function SignalDetailPage() {
                   <li key={item}>{_localizeComponentBreakdownLine(item)}</li>
                 ))}
               </ul>
-            ) : null}
+              ) : null}
           </div>
-          <div className="table-shell">
-            <table className="table table--auto">
-              <thead>
-                <tr><th>环境因子</th><th>分值</th><th>说明</th></tr>
-              </thead>
-              <tbody>
-                {environmentRows.length === 0
-                  ? tableRowEmpty(3, "暂无环境指标")
-                  : environmentRows.map((item, index) => (
-                      <tr key={`ctx-${index}`}>
-                        <td>{_localizeEnvComponentName(item.factor)}</td>
-                        <td>{item.score}</td>
-                        <td>{_localizeDynamicText(item.reason)}</td>
-                      </tr>
-                    ))}
-              </tbody>
-            </table>
-          </div>
+          <CompactDataTable
+            isCompactLayout={isCompactLayout}
+            headers={["环境因子", "分值", "说明"]}
+            coreIndexes={[0, 1]}
+            emptyText="暂无环境指标"
+            rows={environmentRows.map((item, index) => ({
+              key: `ctx-${index}`,
+              cells: [_localizeEnvComponentName(item.factor), item.score, _localizeDynamicText(item.reason)],
+            }))}
+          />
           {environmentParameterRows.length > 0 ? (
-            <div className="table-shell" style={{ marginTop: "10px" }}>
-              <table className="table table--auto">
-                <thead>
-                  <tr><th>环境参数</th><th>值</th><th>来源</th><th>计算方式</th></tr>
-                </thead>
-                <tbody>
-                  {environmentParameterRows.map((item, index) => (
-                    <tr key={`env-param-${index}`}>
-                      <td>{_localizeDynamicText(item.name)}</td>
-                      <td>{_localizeValue(item.value)}</td>
-                      <td>{_localizeSourceLabel(item.source)}</td>
-                      <td>{_localizeDynamicText(item.derivation)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div style={{ marginTop: "10px" }}>
+              <CompactDataTable
+                isCompactLayout={isCompactLayout}
+                headers={["环境参数", "值", "来源", "计算方式"]}
+                coreIndexes={[0, 1, 2]}
+                emptyText="暂无环境参数"
+                rows={environmentParameterRows.map((item, index) => ({
+                  key: `env-param-${index}`,
+                  cells: [
+                    _localizeDynamicText(item.name),
+                    _localizeValue(item.value),
+                    _localizeSourceLabel(item.source),
+                    _localizeDynamicText(item.derivation),
+                  ],
+                }))}
+              />
             </div>
           ) : null}
           {contextEvidence.length > 0 ? (
