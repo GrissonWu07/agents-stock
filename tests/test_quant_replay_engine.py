@@ -562,3 +562,60 @@ def test_run_checkpoint_updates_run_status_message_for_substeps(tmp_path):
 
     assert summary["cancelled"] is False
     assert "写入账户快照" in str(run["status_message"])
+
+
+def test_run_checkpoint_resolves_dynamic_binding_per_symbol(tmp_path, monkeypatch):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_candidate(
+        stock_code="300390",
+        stock_name="天华新能",
+        source="main_force",
+        latest_price=10.0,
+        notes="回放动态策略测试",
+    )
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=FakeSnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+    engine = QuantSimEngine(db_file=db_file, adapter=replay_service.adapter)
+    portfolio = PortfolioService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+    captured = []
+
+    def fake_resolve(
+        *,
+        strategy_profile_id,
+        ai_dynamic_strategy=None,
+        ai_dynamic_strength=None,
+        ai_dynamic_lookback=None,
+        stock_code=None,
+        stock_name=None,
+    ):
+        captured.append((stock_code, stock_name, ai_dynamic_strategy, ai_dynamic_strength, ai_dynamic_lookback))
+        return {
+            "profile_id": "aggressive_v23",
+            "profile_name": "积极",
+            "version_id": 1,
+            "version": 1,
+            "config": {},
+        }
+
+    monkeypatch.setattr(engine, "_resolve_strategy_binding", fake_resolve)
+
+    summary = replay_service._run_checkpoint(  # noqa: SLF001 - targeted dynamic binding coverage
+        checkpoint=datetime(2026, 1, 5, 10, 0),
+        timeframe="30m",
+        ai_dynamic_strategy="hybrid",
+        ai_dynamic_strength=0.5,
+        ai_dynamic_lookback=48,
+        engine=engine,
+        portfolio=portfolio,
+        signal_service=signal_service,
+    )
+
+    assert summary["cancelled"] is False
+    assert captured == [
+        ("300390", "天华新能", "hybrid", 0.5, 48),
+    ]

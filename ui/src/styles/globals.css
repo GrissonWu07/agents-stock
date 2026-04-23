@@ -2017,6 +2017,114 @@ a {
   font-size: 0.8rem;
 }
 
+.signal-detail-section-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.signal-detail-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.signal-detail-split-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.22fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.signal-detail-checklist {
+  display: grid;
+  gap: 10px;
+}
+
+.signal-detail-checklist--split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.signal-detail-checklist__item {
+  padding: 12px 14px;
+}
+
+.signal-detail-checklist__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signal-detail-checklist__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 10px;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.signal-detail-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.signal-detail-chip--pass {
+  background: rgba(63, 179, 126, 0.14);
+  color: #1f8557;
+}
+
+.signal-detail-chip--fail {
+  background: rgba(239, 83, 80, 0.14);
+  color: #c93d39;
+}
+
+.signal-detail-chip--neutral {
+  background: rgba(80, 102, 144, 0.12);
+  color: #44536b;
+}
+
+.signal-detail-driver-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.signal-detail-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signal-detail-collapsible__trigger {
+  flex: 0 0 auto;
+}
+
+.signal-detail-collapsible__body {
+  margin-top: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.signal-detail-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.signal-detail-audit-stack {
+  display: grid;
+  gap: 12px;
+}
+
 .research-modules-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2634,7 +2742,10 @@ a {
   .section-grid--three,
   .section-grid--sidebar,
   .settings-layout,
-  .mini-metric-grid {
+  .mini-metric-grid,
+  .signal-detail-driver-grid,
+  .signal-detail-split-layout,
+  .signal-detail-checklist--split {
     grid-template-columns: 1fr;
   }
 

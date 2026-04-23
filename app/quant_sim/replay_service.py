@@ -830,12 +830,19 @@ class QuantSimReplayService:
             if isinstance(strategy_profile_binding, dict)
             else None
         )
-        effective_strategy_profile_binding = engine._resolve_strategy_binding(
-            strategy_profile_id=base_profile_id,
-            ai_dynamic_strategy=ai_dynamic_strategy,
-            ai_dynamic_strength=ai_dynamic_strength,
-            ai_dynamic_lookback=ai_dynamic_lookback,
+        dynamic_mode = (
+            str(ai_dynamic_strategy).strip().lower()
+            if ai_dynamic_strategy is not None
+            else DEFAULT_AI_DYNAMIC_STRATEGY
         )
+        effective_strategy_profile_binding = None
+        if dynamic_mode == DEFAULT_AI_DYNAMIC_STRATEGY:
+            effective_strategy_profile_binding = engine._resolve_strategy_binding(
+                strategy_profile_id=base_profile_id,
+                ai_dynamic_strategy=ai_dynamic_strategy,
+                ai_dynamic_strength=ai_dynamic_strength,
+                ai_dynamic_lookback=ai_dynamic_lookback,
+            )
 
         for candidate_index, candidate in enumerate(candidates, start=1):
             if run_id is not None and self.db.is_sim_run_cancel_requested(run_id):
@@ -865,12 +872,22 @@ class QuantSimReplayService:
             )
             if not snapshot:
                 continue
+            candidate_binding = effective_strategy_profile_binding
+            if dynamic_mode != DEFAULT_AI_DYNAMIC_STRATEGY:
+                candidate_binding = engine._resolve_strategy_binding(
+                    strategy_profile_id=base_profile_id,
+                    ai_dynamic_strategy=ai_dynamic_strategy,
+                    ai_dynamic_strength=ai_dynamic_strength,
+                    ai_dynamic_lookback=ai_dynamic_lookback,
+                    stock_code=str(candidate.get("stock_code") or ""),
+                    stock_name=str(candidate.get("stock_name") or ""),
+                )
             decision = engine._evaluate_candidate_decision(
                 candidate,
                 market_snapshot=snapshot,
                 analysis_timeframe=timeframe,
                 strategy_mode=strategy_mode,
-                strategy_profile_binding=effective_strategy_profile_binding,
+                strategy_profile_binding=candidate_binding,
             )
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:
@@ -914,13 +931,23 @@ class QuantSimReplayService:
             )
             if not snapshot:
                 continue
+            position_binding = effective_strategy_profile_binding
+            if dynamic_mode != DEFAULT_AI_DYNAMIC_STRATEGY:
+                position_binding = engine._resolve_strategy_binding(
+                    strategy_profile_id=base_profile_id,
+                    ai_dynamic_strategy=ai_dynamic_strategy,
+                    ai_dynamic_strength=ai_dynamic_strength,
+                    ai_dynamic_lookback=ai_dynamic_lookback,
+                    stock_code=str(candidate.get("stock_code") or position.get("stock_code") or ""),
+                    stock_name=str(candidate.get("stock_name") or position.get("stock_name") or ""),
+                )
             decision = engine._evaluate_position_decision(
                 candidate,
                 position,
                 market_snapshot=snapshot,
                 analysis_timeframe=timeframe,
                 strategy_mode=strategy_mode,
-                strategy_profile_binding=effective_strategy_profile_binding,
+                strategy_profile_binding=position_binding,
             )
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:

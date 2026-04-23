@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -1195,6 +1196,9 @@ class KernelStrategyRuntime:
                 "version_id": strategy_profile_binding.get("version_id"),
                 "version": strategy_profile_binding.get("version"),
             }
+            dynamic_strategy = strategy_profile_binding.get("dynamic_strategy")
+            if isinstance(dynamic_strategy, dict):
+                profile["dynamic_strategy"] = json.loads(json.dumps(dynamic_strategy, ensure_ascii=False))
         profile["explainability"] = {
             "tech_votes": tech_votes,
             "context_votes": self._build_context_votes(contextual_score),

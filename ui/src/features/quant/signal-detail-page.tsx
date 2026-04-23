@@ -114,6 +114,64 @@ type AiMonitorPayload = {
   trades: AiMonitorTradeRow[];
 };
 
+type ExplainTrack = {
+  score?: number | string;
+  confidence?: number | string;
+  available?: boolean;
+  track_unavailable?: boolean;
+};
+
+type ExplainDimension = {
+  id?: string;
+  group?: string;
+  score?: number | string;
+  available?: boolean;
+  reason?: string;
+  track_contribution?: number | string;
+};
+
+type ExplainGroup = {
+  id?: string;
+  score?: number | string;
+  coverage?: number | string;
+  track_contribution?: number | string;
+};
+
+type FusionBreakdown = {
+  mode?: string;
+  fusion_score?: number | string;
+  fusion_confidence?: number | string;
+  buy_threshold_eff?: number | string;
+  sell_threshold_eff?: number | string;
+  weighted_threshold_action?: string;
+  weighted_action_raw?: string;
+  weighted_gate_fail_reasons?: string[];
+  tech_enabled?: boolean;
+  context_enabled?: boolean;
+  core_rule_action?: string;
+  final_action?: string;
+};
+
+type ExplainabilityPayload = {
+  technical_breakdown?: {
+    groups?: ExplainGroup[];
+    dimensions?: ExplainDimension[];
+    track?: ExplainTrack;
+  };
+  context_breakdown?: {
+    groups?: ExplainGroup[];
+    dimensions?: ExplainDimension[];
+    track?: ExplainTrack;
+  };
+  fusion_breakdown?: FusionBreakdown;
+  vetoes?: Array<Record<string, unknown>>;
+  decision_path?: Array<{ step?: string; matched?: string; detail?: string }>;
+};
+
+type StrategyProfileSnapshot = {
+  explainability?: ExplainabilityPayload;
+};
+
 type SignalDetailPayload = {
   updatedAt: string;
   analysis: string;
@@ -163,6 +221,12 @@ type SignalDetailPayload = {
     finalAction: string;
     finalReason: string;
     positionRatio: string;
+    configuredProfile: string;
+    appliedProfile: string;
+    aiDynamicStrategy: string;
+    aiDynamicStrength: string;
+    aiDynamicLookback: string;
+    aiProfileSwitched: string;
   };
   techVotes: VoteRow[];
   contextVotes: VoteRow[];
@@ -171,6 +235,7 @@ type SignalDetailPayload = {
   voteOverview?: VoteOverview;
   parameterDetails?: ParameterDetailRow[];
   aiMonitor?: AiMonitorPayload;
+  strategyProfile?: StrategyProfileSnapshot;
 };
 
 const emptyAiMonitor: AiMonitorPayload = {
@@ -245,6 +310,12 @@ const emptyDetail: SignalDetailPayload = {
     finalAction: "HOLD",
     finalReason: "--",
     positionRatio: "0",
+    configuredProfile: "--",
+    appliedProfile: "--",
+    aiDynamicStrategy: "--",
+    aiDynamicStrength: "--",
+    aiDynamicLookback: "--",
+    aiProfileSwitched: "否",
   },
   techVotes: [],
   contextVotes: [],
@@ -276,6 +347,25 @@ function tableRowEmpty(colSpan: number, text: string) {
 type CompactDataRow = {
   key: string;
   cells: ReactNode[];
+};
+
+type GateChecklistRow = {
+  key: string;
+  label: string;
+  current: string;
+  threshold: string;
+  status: boolean | null;
+  note: string;
+};
+
+type DriverSummaryRow = {
+  key: string;
+  track: "technical" | "context";
+  label: string;
+  contribution: number | null;
+  score: number | null;
+  coverage: number | null;
+  reason: string;
 };
 
 function CompactDataTable({
@@ -672,6 +762,118 @@ function _formatSigned(value: number | null, digits = 4): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
 }
 
+function _parseNumberish(raw: unknown): number | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? raw : null;
+  }
+  return _parseNumeric(String(raw));
+}
+
+function _gateStatusLabel(status: boolean | null): string {
+  if (status === true) {
+    return "通过";
+  }
+  if (status === false) {
+    return "未通过";
+  }
+  return "未提供";
+}
+
+function _gateStatusClass(status: boolean | null): string {
+  if (status === true) {
+    return "signal-detail-chip signal-detail-chip--pass";
+  }
+  if (status === false) {
+    return "signal-detail-chip signal-detail-chip--fail";
+  }
+  return "signal-detail-chip signal-detail-chip--neutral";
+}
+
+function _trackLabel(track: string): string {
+  return track === "context" ? "环境" : "技术";
+}
+
+function _formatContributionLabel(track: "technical" | "context", rawLabel: string): string {
+  return track === "context" ? _localizeEnvComponentName(rawLabel) : _localizeDynamicText(rawLabel);
+}
+
+const TRACK_GROUP_LABEL_MAP: Record<string, string> = {
+  trend: "趋势组",
+  momentum: "动量组",
+  volume_confirmation: "量能确认组",
+  volatility_risk: "波动风险组",
+  market_structure: "市场结构组",
+  risk_account: "风险账户组",
+  tradability_timing: "流动时段组",
+  source_execution: "来源执行组",
+};
+
+function _formatGroupLabel(track: "technical" | "context", rawLabel: string): string {
+  const normalized = String(rawLabel || "").trim().toLowerCase();
+  const mapped = TRACK_GROUP_LABEL_MAP[normalized];
+  if (mapped) {
+    return mapped;
+  }
+  return _formatContributionLabel(track, rawLabel);
+}
+
+const GATE_REASON_LABEL_MAP: Record<string, string> = {
+  fusion_confidence_below_min: "融合置信度低于最小门限",
+  tech_score_below_min_for_buy: "技术轨 BUY 门未过",
+  context_score_below_min_for_buy: "环境轨 BUY 门未过",
+  tech_confidence_below_min_for_buy: "技术轨置信度门未过",
+  context_confidence_below_min_for_buy: "环境轨置信度门未过",
+};
+
+function _humanizeGateReason(reason: string): string {
+  const normalized = String(reason || "").trim();
+  if (!normalized) {
+    return "--";
+  }
+  return GATE_REASON_LABEL_MAP[normalized] ?? _localizeDynamicText(normalized);
+}
+
+function CollapsibleSection({
+  title,
+  summary,
+  expandLabel,
+  collapseLabel,
+  children,
+}: {
+  title: string;
+  summary?: ReactNode;
+  expandLabel: string;
+  collapseLabel: string;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <section className="summary-item signal-detail-collapsible">
+      <div className="signal-detail-section-head">
+        <div>
+          <div className="summary-item__title" style={{ marginBottom: summary ? "6px" : 0 }}>
+            {title}
+          </div>
+          {summary ? <div className="summary-item__body">{summary}</div> : null}
+        </div>
+        <button
+          className="button button--secondary button--small signal-detail-collapsible__trigger"
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? collapseLabel : expandLabel}
+        </button>
+      </div>
+      {expanded ? <div className="signal-detail-collapsible__body">{children}</div> : null}
+    </section>
+  );
+}
+
 export function SignalDetailPage() {
   const isCompactLayout = useCompactLayout();
   const navigate = useNavigate();
@@ -683,6 +885,8 @@ export function SignalDetailPage() {
   const [detail, setDetail] = useState<SignalDetailPayload>(emptyDetail);
   const [marketRefreshSeq, setMarketRefreshSeq] = useState(0);
   const [marketRefreshPending, setMarketRefreshPending] = useState(false);
+  const [voteTrackFilter, setVoteTrackFilter] = useState<"all" | "technical" | "context">("all");
+  const [voteContributionFilter, setVoteContributionFilter] = useState<"all" | "positive" | "negative" | "actionable">("all");
 
   useEffect(() => {
     const id = String(signalId || "").trim();
@@ -928,6 +1132,195 @@ export function SignalDetailPage() {
       : String(decision.action || "").toUpperCase() === "SELL"
       ? "建议卖出比例(%)"
       : "仓位建议(%)";
+  const strategyExplainability = detail.strategyProfile?.explainability ?? {};
+  const technicalBreakdown = strategyExplainability.technical_breakdown ?? {};
+  const contextBreakdown = strategyExplainability.context_breakdown ?? {};
+  const fusionBreakdown = strategyExplainability.fusion_breakdown ?? {};
+  const vetoes = Array.isArray(strategyExplainability.vetoes) ? strategyExplainability.vetoes : [];
+  const weightedGateFailReasons = Array.isArray(fusionBreakdown.weighted_gate_fail_reasons)
+    ? fusionBreakdown.weighted_gate_fail_reasons
+    : [];
+  const buyThresholdValue = _parseNumberish(fusionBreakdown.buy_threshold_eff ?? buyThreshold);
+  const sellThresholdValue = _parseNumberish(fusionBreakdown.sell_threshold_eff ?? sellThreshold);
+  const minFusionConfidenceValue = _parseNumberish(findThreshold("min_fusion_confidence"));
+  const fusionScoreValue = _parseNumberish(fusionBreakdown.fusion_score ?? findThreshold("fusion_score"));
+  const fusionConfidenceValue = _parseNumberish(fusionBreakdown.fusion_confidence ?? decision.confidence);
+  const techTrackScoreValue = _parseNumberish(technicalBreakdown.track?.score ?? decision.techScore);
+  const contextTrackScoreValue = _parseNumberish(contextBreakdown.track?.score ?? decision.contextScore);
+  const techTrackEnabled = fusionBreakdown.tech_enabled !== false;
+  const contextTrackEnabled = fusionBreakdown.context_enabled !== false;
+  const technicalGroupRows: DriverSummaryRow[] = (Array.isArray(technicalBreakdown.groups) ? technicalBreakdown.groups : [])
+    .map((item, index) => ({
+      key: `tech-group-${index}`,
+      track: "technical" as const,
+      label: _formatGroupLabel("technical", String(item.id || "--")),
+      contribution: _parseNumberish(item.track_contribution),
+      score: _parseNumberish(item.score),
+      coverage: _parseNumberish(item.coverage),
+      reason: "",
+    }))
+    .sort((left, right) => Math.abs(right.contribution ?? 0) - Math.abs(left.contribution ?? 0));
+  const contextGroupRows: DriverSummaryRow[] = (Array.isArray(contextBreakdown.groups) ? contextBreakdown.groups : [])
+    .map((item, index) => ({
+      key: `context-group-${index}`,
+      track: "context" as const,
+      label: _formatGroupLabel("context", String(item.id || "--")),
+      contribution: _parseNumberish(item.track_contribution),
+      score: _parseNumberish(item.score),
+      coverage: _parseNumberish(item.coverage),
+      reason: "",
+    }))
+    .sort((left, right) => Math.abs(right.contribution ?? 0) - Math.abs(left.contribution ?? 0));
+  const dimensionRows: DriverSummaryRow[] = [
+    ...(Array.isArray(technicalBreakdown.dimensions) ? technicalBreakdown.dimensions : []).map((item, index) => ({
+      key: `tech-dim-${index}`,
+      track: "technical" as const,
+      label: _formatContributionLabel("technical", String(item.id || "--")),
+      contribution: _parseNumberish(item.track_contribution),
+      score: _parseNumberish(item.score),
+      coverage: null,
+      reason: _localizeDynamicText(String(item.reason || "--")),
+    })),
+    ...(Array.isArray(contextBreakdown.dimensions) ? contextBreakdown.dimensions : []).map((item, index) => ({
+      key: `context-dim-${index}`,
+      track: "context" as const,
+      label: _formatContributionLabel("context", String(item.id || "--")),
+      contribution: _parseNumberish(item.track_contribution),
+      score: _parseNumberish(item.score),
+      coverage: null,
+      reason: _localizeDynamicText(String(item.reason || "--")),
+    })),
+  ].filter((item) => item.contribution !== null);
+  const topPositiveDrivers = [...dimensionRows]
+    .filter((item) => (item.contribution ?? 0) > 0)
+    .sort((left, right) => (right.contribution ?? 0) - (left.contribution ?? 0))
+    .slice(0, 3);
+  const topNegativeDrivers = [...dimensionRows]
+    .filter((item) => (item.contribution ?? 0) < 0)
+    .sort((left, right) => (left.contribution ?? 0) - (right.contribution ?? 0))
+    .slice(0, 3);
+  const techGateReasons = weightedGateFailReasons.filter((item) => item.startsWith("tech_"));
+  const contextGateReasons = weightedGateFailReasons.filter((item) => item.startsWith("context_"));
+  const fusionConfidenceGateReasons = weightedGateFailReasons.filter((item) => item.includes("fusion_confidence"));
+  const gateRows: GateChecklistRow[] = [
+    {
+      key: "veto",
+      label: "Veto 否决",
+      current: vetoes.length > 0 ? _localizeDynamicText(String(vetoes[0]?.action || "--")) : "未命中",
+      threshold: "不命中",
+      status: vetoes.length === 0,
+      note:
+        vetoes.length === 0
+          ? "未命中 veto，继续进入规则与加权门控链路。"
+          : vetoes
+              .map((item) => `${String(item.id || "--")} · ${_localizeDynamicText(String(item.reason || "--"))}`)
+              .join("；"),
+    },
+    {
+      key: "buy-threshold",
+      label: "买入阈值门",
+      current: fusionScoreValue === null ? "--" : fusionScoreValue.toFixed(4),
+      threshold: buyThresholdValue === null ? "--" : buyThresholdValue.toFixed(4),
+      status:
+        fusionScoreValue !== null && buyThresholdValue !== null ? fusionScoreValue >= buyThresholdValue : null,
+      note: "fusion_score >= buy_threshold 才能形成 BUY。"
+    },
+    {
+      key: "sell-threshold",
+      label: "卖出阈值门",
+      current: fusionScoreValue === null ? "--" : fusionScoreValue.toFixed(4),
+      threshold: sellThresholdValue === null ? "--" : sellThresholdValue.toFixed(4),
+      status:
+        fusionScoreValue !== null && sellThresholdValue !== null ? fusionScoreValue <= sellThresholdValue : null,
+      note: "fusion_score <= sell_threshold 才能形成 SELL。"
+    },
+    {
+      key: "fusion-confidence",
+      label: "融合置信度门",
+      current: fusionConfidenceValue === null ? "--" : fusionConfidenceValue.toFixed(4),
+      threshold: minFusionConfidenceValue === null ? "--" : minFusionConfidenceValue.toFixed(4),
+      status: fusionConfidenceGateReasons.length > 0
+        ? false
+        : fusionConfidenceValue !== null && minFusionConfidenceValue !== null
+        ? fusionConfidenceValue >= minFusionConfidenceValue
+        : null,
+      note:
+        fusionConfidenceGateReasons.length > 0
+          ? fusionConfidenceGateReasons.map(_humanizeGateReason).join("；")
+          : minFusionConfidenceValue === null
+          ? "当前快照未提供最小融合置信度阈值。"
+          : "BUY 需要先通过融合置信度门。"
+    },
+    {
+      key: "tech-buy-gate",
+      label: "技术轨 BUY 条件",
+      current: techTrackScoreValue === null ? _localizeDynamicText(decision.techSignal) : _formatSigned(techTrackScoreValue),
+      threshold: techTrackEnabled ? "> 0" : "关闭",
+      status:
+        !techTrackEnabled
+          ? null
+          : techGateReasons.length > 0
+          ? false
+          : techTrackScoreValue !== null
+          ? techTrackScoreValue > 0
+          : String(decision.techSignal || "").toUpperCase() === "BUY",
+      note:
+        !techTrackEnabled
+          ? "技术轨 BUY 门已关闭。"
+          : techGateReasons.length > 0
+          ? techGateReasons.map(_humanizeGateReason).join("；")
+          : `当前技术信号 ${localizeDecisionCode(decision.techSignal)}。`
+    },
+    {
+      key: "context-buy-gate",
+      label: "环境轨 BUY 条件",
+      current: contextTrackScoreValue === null ? _localizeDynamicText(decision.contextSignal) : _formatSigned(contextTrackScoreValue),
+      threshold: contextTrackEnabled ? "> 0" : "关闭",
+      status:
+        !contextTrackEnabled
+          ? null
+          : contextGateReasons.length > 0
+          ? false
+          : contextTrackScoreValue !== null
+          ? contextTrackScoreValue > 0
+          : String(decision.contextSignal || "").toUpperCase() === "BUY",
+      note:
+        !contextTrackEnabled
+          ? "环境轨 BUY 门已关闭。"
+          : contextGateReasons.length > 0
+          ? contextGateReasons.map(_humanizeGateReason).join("；")
+          : `当前环境信号 ${localizeDecisionCode(decision.contextSignal)}。`
+    },
+  ];
+  const decisionSummaryLine =
+    fusionScoreValue !== null && buyThresholdValue !== null && sellThresholdValue !== null
+      ? fusionScoreValue < buyThresholdValue
+        ? `未买入：融合分 ${fusionScoreValue.toFixed(4)} < 买入阈值 ${buyThresholdValue.toFixed(4)}`
+        : fusionScoreValue <= sellThresholdValue
+        ? `已触发卖出：融合分 ${fusionScoreValue.toFixed(4)} <= 卖出阈值 ${sellThresholdValue.toFixed(4)}`
+        : `保持观望：融合分 ${fusionScoreValue.toFixed(4)} 位于阈值区间内`
+      : "当前快照缺少融合阈值，无法生成一句话门控结论";
+  const primaryNegativeDriver = topNegativeDrivers[0];
+  const driverSummaryLine =
+    primaryNegativeDriver && fusionScoreValue !== null && buyThresholdValue !== null
+      ? `技术轨有 ${signalCount.buy} 个正向投票，但最大负贡献 ${primaryNegativeDriver.label} ${_formatSigned(primaryNegativeDriver.contribution)} 将技术信号压到 ${localizeDecisionCode(decision.techSignal)}，最终融合分 ${fusionScoreValue.toFixed(4)} 仍低于买入阈值 ${buyThresholdValue.toFixed(4)}。`
+      : "通过分轨贡献和 Top 驱动查看技术票与环境票如何共同形成最终动作。";
+  const filteredVoteRows = voteRows.filter((item) => {
+    if (voteTrackFilter !== "all" && item.track !== voteTrackFilter) {
+      return false;
+    }
+    const contributionValue = _parseNumeric(item.contribution);
+    if (voteContributionFilter === "positive") {
+      return contributionValue !== null && contributionValue > 0;
+    }
+    if (voteContributionFilter === "negative") {
+      return contributionValue !== null && contributionValue < 0;
+    }
+    if (voteContributionFilter === "actionable") {
+      return String(item.signal || "").toUpperCase() !== "HOLD";
+    }
+    return true;
+  });
 
   return (
     <div>
@@ -964,233 +1357,362 @@ export function SignalDetailPage() {
 
       <div className="stack">
         <WorkbenchCard>
-          <h2 className="section-card__title">决策概览</h2>
+          <div className="signal-detail-section-stack">
+            <section>
+              <h2 className="section-card__title">决策结论</h2>
+              <div className="summary-item summary-item--accent">
+                <div className="summary-item__title">结论</div>
+                <div className="summary-item__body">
+                  {`${localizeDecisionCode(decision.finalAction)} · ${decision.stockCode} · 决策点 ${decision.checkpointAt}`}
+                </div>
+                <div className="summary-item__body">{decisionSummaryLine}</div>
+                <div className="summary-item__body">
+                  {`规则层：技术 ${localizeDecisionCode(decision.techSignal)} + 环境 ${localizeDecisionCode(decision.contextSignal)} -> ${localizeDecisionCode(decision.ruleHit)}。`}
+                </div>
+                <div className="summary-item__body">
+                  {`模板：配置 ${_localizeDynamicText(decision.configuredProfile)}，实际 ${_localizeDynamicText(decision.appliedProfile)}。`}
+                  {decision.aiProfileSwitched === "是" ? " 已触发模板切换。" : " 未触发模板切换。"}
+                </div>
+                <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>
+                  {_localizeDynamicText(explanation.summary || "暂无结构化结论")}
+                </div>
+              </div>
 
-          <div className="summary-item summary-item--accent">
-            <div className="summary-item__title">结论</div>
-            <div className="summary-item__body">
-              {`${localizeDecisionCode(decision.finalAction)} · ${localizeDecisionCode(decision.decisionType)} · 代码 ${decision.stockCode} · 决策点 ${decision.checkpointAt}`}
-            </div>
-            <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>
-              {_localizeDynamicText(explanation.summary || "暂无结构化结论")}
-            </div>
-          </div>
+              <div className="mini-metric-grid" style={{ marginTop: "14px" }}>
+                <div className="mini-metric"><div className="mini-metric__label">动作</div><div className="mini-metric__value">{localizeDecisionCode(decision.action)}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">融合分</div><div className="mini-metric__value">{fusionScoreValue === null ? "--" : fusionScoreValue.toFixed(4)}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">融合置信度</div><div className="mini-metric__value">{fusionConfidenceValue === null ? "--" : fusionConfidenceValue.toFixed(4)}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">技术分</div><div className="mini-metric__value">{decision.techScore}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">环境分</div><div className="mini-metric__value">{decision.contextScore}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">规则命中</div><div className="mini-metric__value">{localizeDecisionCode(decision.ruleHit)}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">策略模式</div><div className="mini-metric__value">{localizeStrategyMode(decision.strategyMode)}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">{positionMetricLabel}</div><div className="mini-metric__value">{decision.positionSizePct}</div></div>
+                <div className="mini-metric"><div className="mini-metric__label">建议保持仓位</div><div className="mini-metric__value">{keepPositionPct}</div></div>
+              </div>
+            </section>
 
-          <div className="mini-metric-grid" style={{ marginTop: "14px" }}>
-            <div className="mini-metric"><div className="mini-metric__label">动作</div><div className="mini-metric__value">{localizeDecisionCode(decision.action)}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">决策类型</div><div className="mini-metric__value">{localizeDecisionCode(decision.decisionType)}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">策略模式</div><div className="mini-metric__value">{localizeStrategyMode(decision.strategyMode)}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">置信度</div><div className="mini-metric__value">{decision.confidence}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">{positionMetricLabel}</div><div className="mini-metric__value">{decision.positionSizePct}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">建议保持仓位</div><div className="mini-metric__value">{keepPositionPct}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">技术分</div><div className="mini-metric__value">{decision.techScore}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">环境分</div><div className="mini-metric__value">{decision.contextScore}</div></div>
-            <div className="mini-metric"><div className="mini-metric__label">规则命中</div><div className="mini-metric__value">{localizeDecisionCode(decision.ruleHit)}</div></div>
-          </div>
-
-          <div className="card-divider" />
-          <div className="summary-item">
-            <div className="summary-item__title">依据与推导总览</div>
-            <ol className="insight-list">
-              <li>
-                市场与上下文：
-                {` 市场 ${_localizeValue(String(marketValue))}，市场状态 ${_localizeDynamicText(decision.marketRegime)}，策略模式 ${localizeStrategyMode(decision.strategyMode)}，分析粒度 ${_localizeDynamicText(decision.analysisTimeframe)}。`}
-              </li>
-              <li>
-                投票主体与权重：
-                {` 技术轨 ${totalTechnicalVotes} 个主体（轨内总权重 ${technicalWeightSum.toFixed(4)}），环境轨 ${totalContextVotes} 个主体（轨内总权重 ${contextWeightSum.toFixed(4)}）。`}
-                {` 这里的“总权重”仅用于各自轨道内部聚合，不代表双轨融合阶段的“技术/环境配比”。`}
-                {` 双轨融合阶段没有固定“技术x% + 环境x%”线性权重，而是先得到技术信号与环境信号，再由规则引擎（共振/背离/否决）决定最终动作与仓位。`}
-              </li>
-              <li>
-                技术轨权重：
-                {` 看多 ${signalCount.buy} 票、看空 ${signalCount.sell} 票、持有 ${signalCount.hold} 票（共 ${totalTechnicalVotes} 票）。`}
-                {` 单票贡献分 = 信号分 × 权重；技术贡献和 = 所有技术票贡献分求和 = ${_formatSigned(technicalContribution)}。`}
-                {` 解释：贡献和 > 0 代表技术偏多，< 0 代表技术偏空，= 0 代表技术中性。`}
-                {` 当前为 ${_formatSigned(technicalContribution)}，所以技术信号是 ${localizeDecisionCode(decision.techSignal)}。`}
-              </li>
-              <li>
-                环境轨权重：
-                {` 共 ${totalContextVotes} 个环境因子参与投票。环境贡献和 = 所有环境票贡献分求和 = ${_formatSigned(contextContribution)}。`}
-                {` 环境分 = 对环境贡献和按模型规则截断/映射后的分值（通常越大越偏多）。`}
-                {` 当前组件和 ${_formatSigned(contextComponentSum)}，截断后环境分 ${_formatSigned(contextFinalScore)}（页面显示 ${decision.contextScore}）。`}
-                {` 因此环境信号是 ${localizeDecisionCode(decision.contextSignal)}。`}
-                {contextScoreExplain.formula ? ` 计算公式：${_localizeDynamicText(contextScoreExplain.formula)}` : ""}
-              </li>
-              <li>
-                双轨融合：
-                {` 技术信号 ${localizeDecisionCode(decision.techSignal)} + 环境信号 ${localizeDecisionCode(decision.contextSignal)} `}
-                {`→ 共振 ${localizeDecisionCode(decision.resonanceType)} → 规则 ${localizeDecisionCode(decision.ruleHit)} `}
-                {`→ 最终 ${localizeDecisionCode(decision.finalAction)}`}
-              </li>
-              <li>
-                仓位计算：
-                {` 先根据最终动作与置信度给出 ${positionMetricLabel} ${decision.positionSizePct}，再叠加风控约束得到最终仓位建议。`}
-                {` 当前建议保持仓位 ${keepPositionPct}，置信度 ${decision.confidence}。`}
-                {` 风控参数含义：buy_threshold(${buyThreshold}) 为触发买入阈值；sell_threshold(${sellThreshold}) 为触发卖出阈值；`}
-                {`max_position_ratio(${maxPositionRatio}) 为单票仓位上限；allow_pyramiding(${allowPyramiding}) 是否允许加仓；confirmation(${confirmation}) 为信号确认条件。`}
-              </li>
-            </ol>
-            {voteActorLines.length > 0 ? (
-              <div className="summary-item__body" style={{ marginTop: "8px" }}>
-                <div className="summary-item__title" style={{ fontSize: "0.96rem", marginBottom: "4px" }}>投票主体明细（逐条）</div>
-                <ul className="insight-list">
-                  {voteActorLines.map((line, index) => (
-                    <li key={`vote-actor-line-${index}`}>{line}</li>
+            <section>
+              <div className="signal-detail-split-layout" data-testid="gate-split-layout">
+                <div>
+                  <div className="signal-detail-section-heading">
+                    <h2 className="section-card__title" style={{ marginBottom: 0 }}>门控检查</h2>
+                    <span className={_gateStatusClass(gateRows.every((item) => item.status !== false) ? true : false)}>
+                      {localizeDecisionCode(decision.ruleHit)}
+                    </span>
+                  </div>
+                  <div className="summary-item">
+                    <div className="summary-item__title">为什么停在这里</div>
+                    <div className="summary-item__body">{decisionSummaryLine}</div>
+                    <div className="summary-item__body">
+                      {`动作链路：技术 ${localizeDecisionCode(decision.techSignal)} + 环境 ${localizeDecisionCode(decision.contextSignal)} -> ${localizeDecisionCode(decision.ruleHit)} -> ${localizeDecisionCode(decision.finalAction)}。`}
+                    </div>
+                    <div className="summary-item__body">
+                      {`阈值区间：买入 ${buyThresholdValue === null ? "--" : buyThresholdValue.toFixed(4)} / 卖出 ${sellThresholdValue === null ? "--" : sellThresholdValue.toFixed(4)} / 融合置信度 ${fusionConfidenceValue === null ? "--" : fusionConfidenceValue.toFixed(4)}。`}
+                    </div>
+                  </div>
+                </div>
+                <div className="signal-detail-checklist signal-detail-checklist--split">
+                  {gateRows.map((item) => (
+                    <div className="summary-item signal-detail-checklist__item" key={item.key}>
+                      <div className="signal-detail-checklist__top">
+                        <div>
+                          <div className="summary-item__title" style={{ marginBottom: "4px" }}>{item.label}</div>
+                          <div className="summary-item__body">{item.note}</div>
+                        </div>
+                        <span className={_gateStatusClass(item.status)}>{_gateStatusLabel(item.status)}</span>
+                      </div>
+                      <div className="signal-detail-checklist__meta">
+                        <span>当前值 {item.current}</span>
+                        <span>阈值 {item.threshold}</span>
+                      </div>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </div>
-            ) : null}
-            {topContextDrivers.length > 0 ? (
-              <div className="summary-item__body" style={{ marginTop: "6px" }}>
-                关键环境因子：
-                {topContextDrivers
-                  .map(
-                    (item) =>
-                      `${_localizeEnvComponentName(item.factor)}(${_formatSigned(item.contribution)}) - ${_localizeDynamicText(item.reason || "--")}`,
-                  )
-                  .join("；")}
-              </div>
-            ) : null}
-            {basisList.length > 0 ? (
-              <div className="summary-item__body" style={{ marginTop: "6px" }}>
-                <div className="summary-item__title" style={{ fontSize: "0.96rem", marginBottom: "4px" }}>原始依据链路</div>
-                <ul className="insight-list">
-                  {basisList.map((item, index) => (
-                    <li key={`basis-line-${index}`}>{_localizeDynamicText(item)}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
+            </section>
 
-          <div className="card-divider" />
-          <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>决策指标</h3>
-          <CompactDataTable
-            isCompactLayout={isCompactLayout}
-            headers={["参数", "值", "来源", "计算方式"]}
-            coreIndexes={[0, 1, 2]}
-            emptyText="暂无决策指标"
-            rows={decisionParameterRows.map((item, index) => ({
-              key: `decision-${index}`,
-              cells: [
-                _localizeDynamicText(item.name),
-                _localizeValue(item.value),
-                _localizeSourceLabel(item.source),
-                _localizeDynamicText(item.derivation),
-              ],
-            }))}
-          />
-          {thresholdRows.length > 0 ? (
-            <div style={{ marginTop: "10px" }}>
+            <section>
+              <div className="signal-detail-split-layout" data-testid="contribution-split-layout">
+                <div>
+                  <h2 className="section-card__title">贡献拆解</h2>
+                  <div className="summary-item">
+                    <div className="summary-item__title">为何 5 票看多仍是 HOLD</div>
+                    <div className="summary-item__body">{driverSummaryLine}</div>
+                    <div className="summary-item__body">
+                      {`技术票：看多 ${signalCount.buy} / 看空 ${signalCount.sell} / 持有 ${signalCount.hold}，技术贡献和 ${_formatSigned(technicalContribution)}。`}
+                    </div>
+                    <div className="summary-item__body">
+                      {`环境贡献和 ${_formatSigned(contextContribution)}，环境分 ${_formatSigned(contextFinalScore)}。`}
+                    </div>
+                    {topContextDrivers.length > 0 ? (
+                      <div className="summary-item__body">
+                        {`关键环境因子：${topContextDrivers
+                          .map(
+                            (item) =>
+                              `${_localizeEnvComponentName(item.factor)}(${_formatSigned(item.contribution)})`,
+                          )
+                          .join("；")}`}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="signal-detail-driver-grid">
+                  <div className="summary-item">
+                    <div className="summary-item__title">技术组贡献</div>
+                    <ul className="insight-list">
+                      {technicalGroupRows.map((item) => (
+                        <li key={item.key}>
+                          {`${item.label} · 贡献 ${_formatSigned(item.contribution)} · 组分 ${_formatSigned(item.score)} · 覆盖 ${item.coverage === null ? "--" : `${(item.coverage * 100).toFixed(1)}%`}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="summary-item">
+                    <div className="summary-item__title">环境组贡献</div>
+                    <ul className="insight-list">
+                      {contextGroupRows.map((item) => (
+                        <li key={item.key}>
+                          {`${item.label} · 贡献 ${_formatSigned(item.contribution)} · 组分 ${_formatSigned(item.score)} · 覆盖 ${item.coverage === null ? "--" : `${(item.coverage * 100).toFixed(1)}%`}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="summary-item">
+                    <div className="summary-item__title">Top 3 正贡献</div>
+                    <ul className="insight-list">
+                      {topPositiveDrivers.map((item) => (
+                        <li key={item.key}>
+                          {`${_trackLabel(item.track)} · ${item.label} · ${_formatSigned(item.contribution)} · ${item.reason}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="summary-item">
+                    <div className="summary-item__title">Top 3 负贡献</div>
+                    <ul className="insight-list">
+                      {topNegativeDrivers.map((item) => (
+                        <li key={item.key}>
+                          {`${_trackLabel(item.track)} · ${item.label} · ${_formatSigned(item.contribution)} · ${item.reason}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <CollapsibleSection
+              title="投票明细"
+              summary={`${voteRows.length} 条投票，默认折叠，只在需要排查时展开。`}
+              expandLabel="展开投票明细"
+              collapseLabel="收起投票明细"
+            >
+              <div className="signal-detail-filter-row">
+                {[
+                  { key: "all", label: "全部" },
+                  { key: "technical", label: "技术" },
+                  { key: "context", label: "环境" },
+                ].map((option) => (
+                  <button
+                    key={option.key}
+                    className={`button button--small ${voteTrackFilter === option.key ? "" : "button--secondary"}`}
+                    type="button"
+                    onClick={() => setVoteTrackFilter(option.key as "all" | "technical" | "context")}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                {[
+                  { key: "all", label: "全部贡献" },
+                  { key: "positive", label: "正贡献" },
+                  { key: "negative", label: "负贡献" },
+                  { key: "actionable", label: "只看非 HOLD" },
+                ].map((option) => (
+                  <button
+                    key={option.key}
+                    className={`button button--small ${voteContributionFilter === option.key ? "" : "button--secondary"}`}
+                    type="button"
+                    onClick={() => setVoteContributionFilter(option.key as "all" | "positive" | "negative" | "actionable")}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <CompactDataTable
                 isCompactLayout={isCompactLayout}
-                headers={["阈值参数", "值", "来源", "计算方式"]}
-                coreIndexes={[0, 1, 2]}
-                emptyText="暂无阈值参数"
-                rows={thresholdRows.map((item, index) => ({
-                  key: `threshold-${index}`,
+                headers={["轨道", "主体", "信号", "权重", "贡献", "依据"]}
+                coreIndexes={[0, 1, 2, 4]}
+                emptyText="当前筛选下没有投票明细"
+                rows={filteredVoteRows.map((item, index) => ({
+                  key: `vote-row-${index}`,
                   cells: [
-                    _localizeThresholdName(item.name),
-                    _localizeValue(item.value),
-                    _localizeSourceLabel(item.source),
-                    _localizeDynamicText(item.derivation),
+                    _trackLabel(item.track),
+                    item.track === "context" ? _localizeEnvComponentName(item.voter) : _localizeDynamicText(item.voter),
+                    localizeDecisionCode(item.signal),
+                    item.weight,
+                    item.contribution,
+                    _localizeDynamicText(item.reason || "--"),
                   ],
                 }))}
               />
-            </div>
-          ) : null}
+            </CollapsibleSection>
 
-          <div className="card-divider" />
-          <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>技术指标</h3>
-          <CompactDataTable
-            isCompactLayout={isCompactLayout}
-            headers={["指标", "数值", "来源", "说明/计算方式"]}
-            coreIndexes={[0, 1, 2]}
-            emptyText="暂无技术指标"
-            rows={mergedTechnicalRows.map((item, index) => ({
-              key: `tech-${index}`,
-              cells: [
-                _localizeDynamicText(item.name),
-                _localizeValue(item.value),
-                _localizeSourceLabel(item.source),
-                _localizeDynamicText(item.detail || "--"),
-              ],
-            }))}
-          />
-          {techEvidence.length > 0 ? (
-            <div className="summary-item" style={{ marginTop: "10px" }}>
-              <div className="summary-item__title">关键技术证据</div>
-              <ul className="insight-list">
-                {techEvidence.map((item) => (
-                  <li key={item}>{_localizeDynamicText(item)}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="card-divider" />
-          <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>环境指标</h3>
-          <div className="summary-item">
-            <div className="summary-item__title">环境分计算</div>
-            <div className="summary-item__body">{_localizeDynamicText(contextScoreExplain.formula || "暂无环境分公式")}</div>
-            <div className="summary-item__body">{_localizeDynamicText(contextScoreExplain.confidenceFormula || "暂无环境置信度公式")}</div>
-            <div className="summary-item__body">
-              {`组件和=${String(contextScoreExplain.componentSum ?? "0")}，最终环境分=${contextScoreExplain.finalScore || decision.contextScore}`}
-            </div>
-            {(contextScoreExplain.componentBreakdown ?? []).length > 0 ? (
-              <ul className="insight-list">
-                {(contextScoreExplain.componentBreakdown ?? []).map((item) => (
-                  <li key={item}>{_localizeComponentBreakdownLine(item)}</li>
-                ))}
-              </ul>
+            <CollapsibleSection
+              title="审计模式"
+              summary={`${basisList.length} 条依据链路 · ${parameterDetails.length} 条全量参数 · 原始模型文本。`}
+              expandLabel="展开审计模式"
+              collapseLabel="收起审计模式"
+            >
+              {basisList.length > 0 ? (
+                <div className="summary-item">
+                  <div className="summary-item__title">原始依据链路</div>
+                  <ul className="insight-list">
+                    {basisList.map((item, index) => (
+                      <li key={`basis-line-${index}`}>{_localizeDynamicText(item)}</li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
-          </div>
-          <CompactDataTable
-            isCompactLayout={isCompactLayout}
-            headers={["环境因子", "分值", "说明"]}
-            coreIndexes={[0, 1]}
-            emptyText="暂无环境指标"
-            rows={environmentRows.map((item, index) => ({
-              key: `ctx-${index}`,
-              cells: [_localizeEnvComponentName(item.factor), item.score, _localizeDynamicText(item.reason)],
-            }))}
-          />
-          {environmentParameterRows.length > 0 ? (
-            <div style={{ marginTop: "10px" }}>
-              <CompactDataTable
-                isCompactLayout={isCompactLayout}
-                headers={["环境参数", "值", "来源", "计算方式"]}
-                coreIndexes={[0, 1, 2]}
-                emptyText="暂无环境参数"
-                rows={environmentParameterRows.map((item, index) => ({
-                  key: `env-param-${index}`,
-                  cells: [
-                    _localizeDynamicText(item.name),
-                    _localizeValue(item.value),
-                    _localizeSourceLabel(item.source),
-                    _localizeDynamicText(item.derivation),
-                  ],
-                }))}
-              />
-            </div>
-          ) : null}
-          {contextEvidence.length > 0 ? (
-            <div className="summary-item" style={{ marginTop: "10px" }}>
-              <div className="summary-item__title">关键环境证据</div>
-              <ul className="insight-list">
-                {contextEvidence.map((item) => (
-                  <li key={item}>{_localizeDynamicText(item)}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
 
-          <div className="card-divider" />
-          <div className="summary-item">
-            <div className="summary-item__title">原始模型文本</div>
-            <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>{_localizeDynamicText(originalAnalysis)}</div>
-            <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>{_localizeDynamicText(originalReasoning)}</div>
+              <div className="signal-detail-audit-stack">
+                <div>
+                  <h3 className="section-card__title" style={{ fontSize: "1.05rem" }}>决策指标</h3>
+                  <CompactDataTable
+                    isCompactLayout={isCompactLayout}
+                    headers={["参数", "值", "来源", "计算方式"]}
+                    coreIndexes={[0, 1, 2]}
+                    emptyText="暂无决策指标"
+                    rows={decisionParameterRows.map((item, index) => ({
+                      key: `decision-${index}`,
+                      cells: [
+                        _localizeDynamicText(item.name),
+                        _localizeValue(item.value),
+                        _localizeSourceLabel(item.source),
+                        _localizeDynamicText(item.derivation),
+                      ],
+                    }))}
+                  />
+                </div>
+
+                {thresholdRows.length > 0 ? (
+                  <div>
+                    <h3 className="section-card__title" style={{ fontSize: "1.05rem" }}>阈值参数</h3>
+                    <CompactDataTable
+                      isCompactLayout={isCompactLayout}
+                      headers={["阈值参数", "值", "来源", "计算方式"]}
+                      coreIndexes={[0, 1, 2]}
+                      emptyText="暂无阈值参数"
+                      rows={thresholdRows.map((item, index) => ({
+                        key: `threshold-${index}`,
+                        cells: [
+                          _localizeThresholdName(item.name),
+                          _localizeValue(item.value),
+                          _localizeSourceLabel(item.source),
+                          _localizeDynamicText(item.derivation),
+                        ],
+                      }))}
+                    />
+                  </div>
+                ) : null}
+
+                <div>
+                  <h3 className="section-card__title" style={{ fontSize: "1.05rem" }}>技术指标</h3>
+                  <CompactDataTable
+                    isCompactLayout={isCompactLayout}
+                    headers={["指标", "数值", "来源", "说明/计算方式"]}
+                    coreIndexes={[0, 1, 2]}
+                    emptyText="暂无技术指标"
+                    rows={mergedTechnicalRows.map((item, index) => ({
+                      key: `tech-${index}`,
+                      cells: [
+                        _localizeDynamicText(item.name),
+                        _localizeValue(item.value),
+                        _localizeSourceLabel(item.source),
+                        _localizeDynamicText(item.detail || "--"),
+                      ],
+                    }))}
+                  />
+                </div>
+
+                {techEvidence.length > 0 ? (
+                  <div className="summary-item">
+                    <div className="summary-item__title">关键技术证据</div>
+                    <ul className="insight-list">
+                      {techEvidence.map((item) => (
+                        <li key={item}>{_localizeDynamicText(item)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div>
+                  <h3 className="section-card__title" style={{ fontSize: "1.05rem" }}>环境指标</h3>
+                  <div className="summary-item" style={{ marginBottom: "10px" }}>
+                    <div className="summary-item__title">环境分计算</div>
+                    <div className="summary-item__body">{_localizeDynamicText(contextScoreExplain.formula || "暂无环境分公式")}</div>
+                    <div className="summary-item__body">{_localizeDynamicText(contextScoreExplain.confidenceFormula || "暂无环境置信度公式")}</div>
+                    <div className="summary-item__body">
+                      {`组件和=${String(contextScoreExplain.componentSum ?? "0")}，最终环境分=${contextScoreExplain.finalScore || decision.contextScore}`}
+                    </div>
+                    {(contextScoreExplain.componentBreakdown ?? []).length > 0 ? (
+                      <ul className="insight-list">
+                        {(contextScoreExplain.componentBreakdown ?? []).map((item) => (
+                          <li key={item}>{_localizeComponentBreakdownLine(item)}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                  <CompactDataTable
+                    isCompactLayout={isCompactLayout}
+                    headers={["环境因子", "分值", "说明"]}
+                    coreIndexes={[0, 1]}
+                    emptyText="暂无环境指标"
+                    rows={environmentRows.map((item, index) => ({
+                      key: `ctx-${index}`,
+                      cells: [_localizeEnvComponentName(item.factor), item.score, _localizeDynamicText(item.reason)],
+                    }))}
+                  />
+                </div>
+
+                {environmentParameterRows.length > 0 ? (
+                  <div>
+                    <h3 className="section-card__title" style={{ fontSize: "1.05rem" }}>环境参数</h3>
+                    <CompactDataTable
+                      isCompactLayout={isCompactLayout}
+                      headers={["环境参数", "值", "来源", "计算方式"]}
+                      coreIndexes={[0, 1, 2]}
+                      emptyText="暂无环境参数"
+                      rows={environmentParameterRows.map((item, index) => ({
+                        key: `env-param-${index}`,
+                        cells: [
+                          _localizeDynamicText(item.name),
+                          _localizeValue(item.value),
+                          _localizeSourceLabel(item.source),
+                          _localizeDynamicText(item.derivation),
+                        ],
+                      }))}
+                    />
+                  </div>
+                ) : null}
+
+                {contextEvidence.length > 0 ? (
+                  <div className="summary-item">
+                    <div className="summary-item__title">关键环境证据</div>
+                    <ul className="insight-list">
+                      {contextEvidence.map((item) => (
+                        <li key={item}>{_localizeDynamicText(item)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div className="summary-item">
+                  <div className="summary-item__title">原始模型文本</div>
+                  <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>{_localizeDynamicText(originalAnalysis)}</div>
+                  <div className="summary-item__body markdown-body" style={{ whiteSpace: "pre-wrap" }}>{_localizeDynamicText(originalReasoning)}</div>
+                </div>
+              </div>
+            </CollapsibleSection>
           </div>
         </WorkbenchCard>
       </div>

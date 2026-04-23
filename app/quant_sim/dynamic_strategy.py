@@ -24,6 +24,10 @@ BUILTIN_PROFILE_BY_TEMPLATE = {
     "stable": "stable_v23",
     "conservative": "conservative_v23",
 }
+TEMPLATE_BY_PROFILE_ID = {profile_id: variant for variant, profile_id in BUILTIN_PROFILE_BY_TEMPLATE.items()}
+TEMPLATE_ORDER = {"conservative": 0, "stable": 1, "aggressive": 2}
+MIN_SWITCH_COMPONENTS = 2
+MIN_COMPONENT_SIGNAL_SCORE = 0.08
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -97,6 +101,8 @@ class DynamicStrategyController:
         strength = self.normalize_strength(ai_dynamic_strength)
         lookback = self.normalize_lookback(ai_dynamic_lookback)
         binding = self._clone_binding(base_binding)
+        base_profile_id = str(base_binding.get("profile_id") or "")
+        base_template_variant = self._profile_template_variant(base_profile_id)
         if mode == "off":
             binding["dynamic_strategy"] = {
                 "mode": mode,
@@ -111,14 +117,40 @@ class DynamicStrategyController:
             stock_name=stock_name,
             lookback_hours=lookback,
         )
-        template_variant = self._select_template(signal["score"])
-        template_profile_id = BUILTIN_PROFILE_BY_TEMPLATE[template_variant]
+        recommended_template_variant = self._select_template(float(signal["score"]))
+        switch_plan = self._plan_template_switch(
+            base_template_variant=base_template_variant,
+            recommended_template_variant=recommended_template_variant,
+            signal_score=float(signal["score"]),
+            signal_confidence=float(signal["confidence"]),
+            strength=strength,
+            components=signal.get("components", []),
+        )
+        if mode == "weights":
+            switch_plan = {
+                "applied_template_variant": base_template_variant or recommended_template_variant,
+                "template_switch_applied": False,
+                "template_switch_reason": "weights_only",
+                "evidence": switch_plan["evidence"],
+            }
+        applied_template_variant = str(switch_plan["applied_template_variant"] or (base_template_variant or recommended_template_variant))
+        applied_template_profile_id = BUILTIN_PROFILE_BY_TEMPLATE.get(applied_template_variant)
 
-        if mode in {"template", "hybrid"} and template_profile_id:
+        if mode in {"template", "hybrid"} and bool(switch_plan["template_switch_applied"]) and applied_template_profile_id:
             try:
-                binding = self._clone_binding(self.db.resolve_strategy_profile_binding(template_profile_id))
+                binding = self._clone_binding(self.db.resolve_strategy_profile_binding(applied_template_profile_id))
             except Exception as exc:
                 self.logger.warning("dynamic strategy template fallback failed: %s", exc)
+                binding = self._clone_binding(base_binding)
+                applied_template_variant = base_template_variant or recommended_template_variant
+                applied_template_profile_id = str(binding.get("profile_id") or base_profile_id)
+                switch_plan["template_switch_applied"] = False
+                switch_plan["applied_template_variant"] = applied_template_variant
+                switch_plan["template_switch_reason"] = "template_load_failed"
+        else:
+            applied_template_profile_id = str(binding.get("profile_id") or base_profile_id)
+            applied_template_variant = self._profile_template_variant(applied_template_profile_id) or applied_template_variant
+            switch_plan["applied_template_variant"] = applied_template_variant
 
         if mode in {"weights", "hybrid"}:
             config_payload = binding.get("config")
@@ -137,8 +169,15 @@ class DynamicStrategyController:
             "lookback_hours": lookback,
             "score": round(float(signal["score"]), 4),
             "confidence": round(float(signal["confidence"]), 4),
-            "template_variant": template_variant,
-            "template_profile_id": template_profile_id,
+            "base_profile_id": base_profile_id,
+            "base_template_variant": base_template_variant,
+            "recommended_template_variant": recommended_template_variant,
+            "recommended_template_profile_id": BUILTIN_PROFILE_BY_TEMPLATE.get(recommended_template_variant),
+            "applied_template_variant": applied_template_variant,
+            "applied_template_profile_id": applied_template_profile_id,
+            "template_switch_applied": bool(switch_plan["template_switch_applied"]),
+            "template_switch_reason": str(switch_plan["template_switch_reason"]),
+            "evidence": switch_plan["evidence"],
             "components": signal.get("components", []),
         }
         return binding
@@ -167,7 +206,7 @@ class DynamicStrategyController:
         sector_component = self._sector_component(stock_name=stock_name, lookback_hours=lookback_hours)
         if sector_component:
             component_rows.append(sector_component)
-        news_component = self._news_component()
+        news_component = self._news_component(lookback_hours=lookback_hours)
         if news_component:
             component_rows.append(news_component)
         ai_component = self._ai_component(stock_code=stock_code, lookback_hours=lookback_hours)
@@ -219,9 +258,11 @@ class DynamicStrategyController:
                     "score": score,
                     "confidence": 0.75,
                     "reason": f"market_overview({len(scores)})",
+                    "fresh": True,
+                    "as_of": self._payload_timestamp(market),
                 }
         latest_snapshot = news_flow_db.get_latest_snapshot()
-        if isinstance(latest_snapshot, dict):
+        if isinstance(latest_snapshot, dict) and self._is_payload_recent(latest_snapshot, lookback_hours):
             total_score = _safe_float(latest_snapshot.get("total_score"), 500.0)
             score = _clamp((total_score - 500.0) / 500.0, -1.0, 1.0)
             return {
@@ -231,6 +272,8 @@ class DynamicStrategyController:
                 "score": score,
                 "confidence": 0.45,
                 "reason": "flow_total_score_fallback",
+                "fresh": True,
+                "as_of": self._payload_timestamp(latest_snapshot),
             }
         return None
 
@@ -265,19 +308,29 @@ class DynamicStrategyController:
             "score": score,
             "confidence": confidence,
             "reason": f"sector_news({len(sector_rows)})",
+            "fresh": True,
+            "as_of": self._payload_timestamp(news_payload),
         }
 
-    def _news_component(self) -> dict[str, Any] | None:
+    def _news_component(self, *, lookback_hours: int) -> dict[str, Any] | None:
         sentiment = news_flow_db.get_latest_sentiment()
         ai_analysis = news_flow_db.get_latest_ai_analysis()
+        if isinstance(sentiment, dict) and not self._is_payload_recent(sentiment, lookback_hours):
+            sentiment = None
+        if isinstance(ai_analysis, dict) and not self._is_payload_recent(ai_analysis, lookback_hours):
+            ai_analysis = None
         has_signal = False
         score_parts: list[float] = []
         confidence_parts: list[float] = []
+        as_of_candidates: list[str] = []
         if isinstance(sentiment, dict):
             has_signal = True
             index_value = _safe_float(sentiment.get("sentiment_index"), 50.0)
             score_parts.append(_clamp((index_value - 50.0) / 50.0, -1.0, 1.0))
             confidence_parts.append(0.7)
+            timestamp = self._payload_timestamp(sentiment)
+            if timestamp:
+                as_of_candidates.append(timestamp)
         if isinstance(ai_analysis, dict):
             has_signal = True
             confidence = _clamp(_safe_float(ai_analysis.get("confidence"), 50.0) / 100.0, 0.1, 1.0)
@@ -289,6 +342,9 @@ class DynamicStrategyController:
                 risk_score = 0.4
             score_parts.append(risk_score)
             confidence_parts.append(confidence)
+            timestamp = self._payload_timestamp(ai_analysis)
+            if timestamp:
+                as_of_candidates.append(timestamp)
         if not has_signal:
             return None
         score = sum(score_parts) / len(score_parts) if score_parts else 0.0
@@ -300,6 +356,8 @@ class DynamicStrategyController:
             "score": _clamp(score, -1.0, 1.0),
             "confidence": _clamp(confidence, 0.0, 1.0),
             "reason": "news_flow_sentiment+ai",
+            "fresh": True,
+            "as_of": max(as_of_candidates) if as_of_candidates else None,
         }
 
     def _ai_component(self, *, stock_code: str | None, lookback_hours: int) -> dict[str, Any] | None:
@@ -314,12 +372,15 @@ class DynamicStrategyController:
         score_sum = 0.0
         weight_sum = 0.0
         used = 0
+        latest_used_at: datetime | None = None
         for row in rows:
             if not isinstance(row, dict):
                 continue
             decision_time = _parse_datetime(row.get("decision_time") or row.get("created_at"))
             if decision_time is not None and decision_time < cutoff:
                 continue
+            if decision_time is not None and (latest_used_at is None or decision_time > latest_used_at):
+                latest_used_at = decision_time
             action = str(row.get("action") or "").strip().upper()
             base_score = 0.0
             if action in {"BUY", "BUG"}:
@@ -341,6 +402,8 @@ class DynamicStrategyController:
             "score": score,
             "confidence": confidence,
             "reason": f"ai_decisions({used})",
+            "fresh": True,
+            "as_of": latest_used_at.strftime("%Y-%m-%d %H:%M:%S") if latest_used_at is not None else None,
         }
 
     @staticmethod
@@ -350,6 +413,156 @@ class DynamicStrategyController:
         if score <= -0.2:
             return "conservative"
         return "stable"
+
+    @staticmethod
+    def _profile_template_variant(profile_id: Any) -> str | None:
+        normalized = str(profile_id or "").strip().lower()
+        if not normalized:
+            return None
+        if normalized in TEMPLATE_BY_PROFILE_ID:
+            return TEMPLATE_BY_PROFILE_ID[normalized]
+        for variant in ("aggressive", "stable", "conservative"):
+            if variant in normalized:
+                return variant
+        return None
+
+    @staticmethod
+    def _payload_timestamp(payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        timestamp = _parse_datetime(
+            payload.get("fetch_time")
+            or payload.get("decision_time")
+            or payload.get("created_at")
+            or payload.get("updated_at")
+        )
+        return timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp is not None else None
+
+    @staticmethod
+    def _is_payload_recent(payload: Any, lookback_hours: int) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        timestamp = _parse_datetime(
+            payload.get("fetch_time")
+            or payload.get("decision_time")
+            or payload.get("created_at")
+            or payload.get("updated_at")
+        )
+        if timestamp is None:
+            return True
+        return timestamp >= (datetime.now() - timedelta(hours=lookback_hours))
+
+    @staticmethod
+    def _soft_switch_score_threshold(strength: float) -> float:
+        return _clamp(0.28 - (0.10 * strength), 0.18, 0.32)
+
+    @staticmethod
+    def _hard_switch_score_threshold(strength: float) -> float:
+        return _clamp(0.48 - (0.16 * strength), 0.32, 0.58)
+
+    @staticmethod
+    def _soft_switch_confidence_threshold(strength: float) -> float:
+        return _clamp(0.60 - (0.10 * strength), 0.45, 0.70)
+
+    @staticmethod
+    def _hard_switch_confidence_threshold(strength: float) -> float:
+        return _clamp(0.74 - (0.10 * strength), 0.58, 0.82)
+
+    def _summarize_switch_evidence(
+        self,
+        *,
+        signal_score: float,
+        components: list[dict[str, Any]] | Any,
+    ) -> dict[str, Any]:
+        direction = 1 if signal_score > 0 else (-1 if signal_score < 0 else 0)
+        fresh_components: list[dict[str, Any]] = []
+        aligned_components: list[dict[str, Any]] = []
+        for item in components if isinstance(components, list) else []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("fresh", True) is False:
+                continue
+            fresh_components.append(item)
+            component_score = _safe_float(item.get("score"), 0.0)
+            if direction != 0 and (component_score * direction) >= MIN_COMPONENT_SIGNAL_SCORE:
+                aligned_components.append(item)
+        return {
+            "fresh_component_count": len(fresh_components),
+            "aligned_component_count": len(aligned_components),
+            "aligned_weight": round(sum(_clamp(_safe_float(item.get("weight"), 0.0), 0.0, 1.0) for item in aligned_components), 4),
+        }
+
+    def _plan_template_switch(
+        self,
+        *,
+        base_template_variant: str | None,
+        recommended_template_variant: str,
+        signal_score: float,
+        signal_confidence: float,
+        strength: float,
+        components: list[dict[str, Any]] | Any,
+    ) -> dict[str, Any]:
+        evidence = self._summarize_switch_evidence(signal_score=signal_score, components=components)
+        effective_base = base_template_variant or recommended_template_variant
+        if effective_base == recommended_template_variant:
+            return {
+                "applied_template_variant": recommended_template_variant,
+                "template_switch_applied": False,
+                "template_switch_reason": "base_aligned",
+                "evidence": evidence,
+            }
+
+        if evidence["aligned_component_count"] < MIN_SWITCH_COMPONENTS:
+            return {
+                "applied_template_variant": effective_base,
+                "template_switch_applied": False,
+                "template_switch_reason": "insufficient_evidence",
+                "evidence": evidence,
+            }
+
+        magnitude = abs(signal_score)
+        soft_score = self._soft_switch_score_threshold(strength)
+        hard_score = self._hard_switch_score_threshold(strength)
+        soft_confidence = self._soft_switch_confidence_threshold(strength)
+        hard_confidence = self._hard_switch_confidence_threshold(strength)
+        distance = abs(TEMPLATE_ORDER.get(recommended_template_variant, 1) - TEMPLATE_ORDER.get(effective_base, 1))
+
+        if distance >= 2:
+            if magnitude >= hard_score and signal_confidence >= hard_confidence:
+                return {
+                    "applied_template_variant": recommended_template_variant,
+                    "template_switch_applied": True,
+                    "template_switch_reason": "strong_opposite_signal",
+                    "evidence": evidence,
+                }
+            if magnitude >= soft_score and signal_confidence >= soft_confidence:
+                return {
+                    "applied_template_variant": "stable",
+                    "template_switch_applied": effective_base != "stable",
+                    "template_switch_reason": "moderate_opposite_signal",
+                    "evidence": evidence,
+                }
+            return {
+                "applied_template_variant": effective_base,
+                "template_switch_applied": False,
+                "template_switch_reason": "insufficient_evidence",
+                "evidence": evidence,
+            }
+
+        if magnitude >= soft_score and signal_confidence >= soft_confidence:
+            return {
+                "applied_template_variant": recommended_template_variant,
+                "template_switch_applied": recommended_template_variant != effective_base,
+                "template_switch_reason": "adjacent_signal_shift",
+                "evidence": evidence,
+            }
+
+        return {
+            "applied_template_variant": effective_base,
+            "template_switch_applied": False,
+            "template_switch_reason": "insufficient_evidence",
+            "evidence": evidence,
+        }
 
     def _apply_dynamic_weight_overlay(
         self,
