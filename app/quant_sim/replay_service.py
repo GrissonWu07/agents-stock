@@ -274,6 +274,7 @@ class QuantSimReplayService:
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
     ) -> int:
+        self._ensure_no_active_replay()
         context = self._prepare_replay_context(
             start_datetime=start_datetime,
             end_datetime=end_datetime,
@@ -287,7 +288,6 @@ class QuantSimReplayService:
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
-        self._ensure_no_active_replay()
         run_id = self._create_replay_run(
             mode="historical_range",
             handoff_to_live=False,
@@ -340,6 +340,7 @@ class QuantSimReplayService:
         overwrite_live: bool = False,
         auto_start_scheduler: bool = True,
     ) -> int:
+        self._ensure_no_active_replay()
         self._validate_live_handoff(overwrite_live=overwrite_live)
         context = self._prepare_replay_context(
             start_datetime=start_datetime,
@@ -354,7 +355,6 @@ class QuantSimReplayService:
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
-        self._ensure_no_active_replay()
         run_id = self._create_replay_run(
             mode="continuous_to_live",
             handoff_to_live=True,
@@ -892,7 +892,7 @@ class QuantSimReplayService:
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:
                 engine.candidate_pool.db.update_candidate_latest_price(candidate["stock_code"], decision_price)
-            signal = signal_service.create_signal(candidate, decision)
+            signal = signal_service.create_signal(candidate, decision, notify=False)
             signal["checkpoint_at"] = self._format_datetime(checkpoint)
             checkpoint_signals.append(signal)
             signals_created += 1
@@ -953,7 +953,7 @@ class QuantSimReplayService:
             if decision_price > 0:
                 portfolio.db.update_position_market_price(position["stock_code"], decision_price)
                 portfolio.db.update_candidate_latest_price(position["stock_code"], decision_price)
-            signal = signal_service.create_signal(candidate, decision)
+            signal = signal_service.create_signal(candidate, decision, notify=False)
             signal["checkpoint_at"] = self._format_datetime(checkpoint)
             checkpoint_signals.append(signal)
             signals_created += 1

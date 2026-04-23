@@ -1,4 +1,24 @@
+from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_sim.db import QuantSimDB
+
+
+def _resolve_profile(payload: dict, profile_kind: str) -> dict:
+    scoring = StrategyScoringConfig(
+        schema_version=str(payload["schema_version"]),
+        base=payload["base"],
+        profiles=payload["profiles"],
+    )
+    return scoring.resolve(profile_kind)
+
+
+def _piecewise_score(value: float, bands: list[float], scores: list[float]) -> float:
+    idx = 0
+    for band in bands:
+        if value <= band:
+            break
+        idx += 1
+    idx = min(idx, len(scores) - 1)
+    return float(scores[idx])
 
 
 def test_add_candidate_records_source_and_status(tmp_path):
@@ -78,6 +98,78 @@ def test_scheduler_config_persists_strategy_mode(tmp_path):
     db.update_scheduler_config(strategy_mode="defensive")
     config = db.get_scheduler_config()
     assert config["strategy_mode"] == "defensive"
+
+
+def test_builtin_strategy_profiles_use_lowered_fusion_buy_thresholds(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    configs = db._build_builtin_strategy_profile_configs()
+
+    assert configs["aggressive"]["profiles"]["candidate"]["dual_track"]["fusion_buy_threshold"] == 0.35
+    assert configs["aggressive"]["profiles"]["candidate"]["dual_track"]["fusion_sell_threshold"] == -0.30
+    assert configs["aggressive"]["profiles"]["position"]["dual_track"]["fusion_buy_threshold"] == 0.52
+    assert configs["aggressive"]["profiles"]["position"]["dual_track"]["fusion_sell_threshold"] == -0.24
+    assert configs["stable"]["profiles"]["candidate"]["dual_track"]["fusion_buy_threshold"] == 0.45
+    assert configs["stable"]["profiles"]["candidate"]["dual_track"]["fusion_sell_threshold"] == -0.26
+    assert configs["stable"]["profiles"]["position"]["dual_track"]["fusion_buy_threshold"] == 0.60
+    assert configs["stable"]["profiles"]["position"]["dual_track"]["fusion_sell_threshold"] == -0.20
+    assert configs["conservative"]["profiles"]["candidate"]["dual_track"]["fusion_buy_threshold"] == 0.55
+    assert configs["conservative"]["profiles"]["candidate"]["dual_track"]["fusion_sell_threshold"] == -0.22
+    assert configs["conservative"]["profiles"]["position"]["dual_track"]["fusion_buy_threshold"] == 0.68
+    assert configs["conservative"]["profiles"]["position"]["dual_track"]["fusion_sell_threshold"] == -0.16
+
+
+def test_aggressive_candidate_profile_downweights_low_value_missing_dimensions(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    aggressive_candidate = _resolve_profile(db._build_builtin_strategy_profile_configs()["aggressive"], "candidate")
+    context_weights = aggressive_candidate["context"]["dimension_weights"]
+    technical_weights = aggressive_candidate["technical"]["dimension_weights"]
+
+    assert context_weights["account_posture"] == 0.05
+    assert context_weights["execution_feedback"] == 0.05
+    assert technical_weights["kdj_cross"] == 0.35
+    assert technical_weights["obv_trend"] > technical_weights["kdj_cross"]
+    assert technical_weights["ma_slope"] > technical_weights["ma_alignment"]
+    assert technical_weights["atr_risk"] > technical_weights["boll_position"]
+
+
+def test_aggressive_profile_relaxes_upper_boll_penalty_while_other_profiles_stay_defensive(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    configs = db._build_builtin_strategy_profile_configs()
+    boll_position_value = 0.838634
+
+    aggressive_candidate = _resolve_profile(configs["aggressive"], "candidate")
+    aggressive_position = _resolve_profile(configs["aggressive"], "position")
+    stable_candidate = _resolve_profile(configs["stable"], "candidate")
+    conservative_candidate = _resolve_profile(configs["conservative"], "candidate")
+
+    aggressive_candidate_params = aggressive_candidate["technical"]["scorers"]["boll_position"]["params"]
+    aggressive_position_params = aggressive_position["technical"]["scorers"]["boll_position"]["params"]
+    stable_candidate_params = stable_candidate["technical"]["scorers"]["boll_position"]["params"]
+    conservative_candidate_params = conservative_candidate["technical"]["scorers"]["boll_position"]["params"]
+
+    assert _piecewise_score(
+        boll_position_value,
+        aggressive_candidate_params["position_bands"],
+        aggressive_candidate_params["position_scores"],
+    ) == 0.35
+    assert _piecewise_score(
+        boll_position_value,
+        aggressive_position_params["position_bands"],
+        aggressive_position_params["position_scores"],
+    ) == 0.35
+    assert _piecewise_score(
+        boll_position_value,
+        stable_candidate_params["position_bands"],
+        stable_candidate_params["position_scores"],
+    ) == -0.6
+    assert _piecewise_score(
+        boll_position_value,
+        conservative_candidate_params["position_bands"],
+        conservative_candidate_params["position_scores"],
+    ) == -0.6
 
 
 def test_confirm_buy_creates_simulated_position(tmp_path):

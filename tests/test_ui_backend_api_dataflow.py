@@ -207,6 +207,13 @@ def _seed_structured_signal_for_detail(context: gateway_api.UIApiContext) -> int
         "risk_style": {"label": "稳重"},
         "auto_inferred_risk_style": {"label": "稳重"},
         "selected_strategy_profile": {"id": "conservative_v23", "name": "保守 (conservative_v23)", "version": "2"},
+        "dual_track": {
+            "min_fusion_confidence": 0.62,
+            "min_tech_score_for_buy": 0.08,
+            "min_context_score_for_buy": 0.10,
+            "min_tech_confidence_for_buy": 0.58,
+            "min_context_confidence_for_buy": 0.62,
+        },
         "effective_thresholds": {
             "buy_threshold": 0.8773,
             "sell_threshold": -0.1562,
@@ -313,6 +320,9 @@ def test_signal_detail_prefers_canonical_breakdown_and_clean_audit_labels(tmp_pa
     assert rows["技术轨方向"]["value"] == "偏多"
     assert rows["环境轨方向"]["value"] == "偏多"
     assert rows["仓位建议"]["value"] == "不变"
+    assert rows["阈值.min_fusion_confidence"]["value"] == "0.62"
+    assert rows["阈值.min_tech_score_for_buy"]["value"] == "0.08"
+    assert rows["阈值.min_context_score_for_buy"]["value"] == "0.1"
     assert rows["AI动态调整模式"]["value"] == "hybrid"
     assert rows["双轨融合模式"]["value"] == "hybrid"
     assert "兼容派生" in rows["规则命中（兼容派生）"]["name"]

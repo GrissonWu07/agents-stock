@@ -168,6 +168,42 @@ const mockPayload = {
       source: "threshold",
       derivation: "confirmation",
     },
+    {
+      name: "阈值.min_fusion_confidence",
+      value: "0.6200",
+      source: "threshold",
+      derivation: "minimum fusion confidence for buy",
+    },
+    {
+      name: "阈值.min_tech_score_for_buy",
+      value: "0.0800",
+      source: "threshold",
+      derivation: "minimum tech score for buy",
+    },
+    {
+      name: "阈值.min_context_score_for_buy",
+      value: "0.1000",
+      source: "threshold",
+      derivation: "minimum context score for buy",
+    },
+    {
+      name: "阈值.min_tech_confidence_for_buy",
+      value: "0.5800",
+      source: "threshold",
+      derivation: "minimum tech confidence for buy",
+    },
+    {
+      name: "阈值.min_context_confidence_for_buy",
+      value: "0.6200",
+      source: "threshold",
+      derivation: "minimum context confidence for buy",
+    },
+    {
+      name: "阈值.divergence",
+      value: "0.0012",
+      source: "threshold",
+      derivation: "should not be shown in runtime threshold panel",
+    },
   ],
   aiMonitor: {
     available: false,
@@ -289,13 +325,14 @@ describe("SignalDetailPage", () => {
     renderSignalDetailPage();
 
     expect(await screen.findByText("门控检查")).toBeInTheDocument();
-    expect(screen.getByText("贡献拆解")).toBeInTheDocument();
+    expect(screen.getByText("阻断链路")).toBeInTheDocument();
     expect(screen.getByText("投票明细")).toBeInTheDocument();
     expect(screen.getByText("审计模式")).toBeInTheDocument();
     expect(screen.getAllByText(/未买入：融合分/).length).toBeGreaterThan(0);
     expect(screen.getByText("规则层：技术轨偏空 + 环境轨偏多。")).toBeInTheDocument();
-    expect(screen.getAllByText("动作链路：核心规则 Hold -> 加权阈值 Hold -> 加权门控 Hold -> 最终 Hold。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("动作链路：核心规则 Hold -> 加权阈值 Hold -> 加权门控 Hold -> 最终 Hold。")).toHaveLength(1);
     expect(screen.queryByText("0.0")).not.toBeInTheDocument();
+    expect(screen.queryByText("建议保持仓位")).not.toBeInTheDocument();
   });
 
   it("keeps vote details and audit text collapsed until expanded", async () => {
@@ -315,18 +352,45 @@ describe("SignalDetailPage", () => {
     expect(screen.getByText("环境轨方向")).toBeInTheDocument();
     expect(screen.getByText("AI动态调整模式")).toBeInTheDocument();
     expect(screen.getByText("双轨融合模式")).toBeInTheDocument();
+    expect(screen.getAllByText(/技术轨/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/环境轨/).length).toBeGreaterThan(0);
+    expect(screen.getByText("策略与运行态")).toBeInTheDocument();
+    expect(screen.getAllByText("执行阈值").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("买入门控阈值").length).toBeGreaterThan(0);
+    expect(screen.getByText(/BUY最小融合置信度/)).toBeInTheDocument();
+    expect(screen.queryByText("阈值.divergence")).not.toBeInTheDocument();
     expect(screen.queryByText("阈值参数")).not.toBeInTheDocument();
     expect(screen.queryByText("技术信号")).not.toBeInTheDocument();
     expect(screen.queryByText("环境信号")).not.toBeInTheDocument();
   });
 
-  it("uses split desktop layouts for gate and contribution sections", async () => {
+  it("uses split desktop layouts for decision, gate, and contribution sections", async () => {
     renderSignalDetailPage();
 
+    const decisionSplit = await screen.findByTestId("decision-split-layout");
     const gateSplit = await screen.findByTestId("gate-split-layout");
     const contributionSplit = screen.getByTestId("contribution-split-layout");
+    const decisionHeroPanel = screen.getByTestId("decision-hero-panel");
+    const decisionSummaryGrid = screen.getByTestId("decision-summary-grid");
+    const gateFocusPanel = screen.getByTestId("gate-focus-panel");
+    const gateCardGrid = screen.getByTestId("gate-card-grid");
+    const contributionOverviewPanel = screen.getByTestId("contribution-overview-panel");
+    const contributionTrackGrid = screen.getByTestId("contribution-track-grid");
 
+    expect(decisionSplit).toHaveClass("signal-detail-split-layout");
     expect(gateSplit).toHaveClass("signal-detail-split-layout");
     expect(contributionSplit).toHaveClass("signal-detail-split-layout");
+    expect(decisionHeroPanel).toHaveClass("signal-detail-focus-panel");
+    expect(decisionSummaryGrid).toHaveClass("signal-detail-summary-grid");
+    expect(gateFocusPanel).toHaveClass("signal-detail-focus-panel");
+    expect(gateCardGrid).toHaveClass("signal-detail-gate-grid");
+    expect(contributionOverviewPanel).toHaveClass("signal-detail-focus-panel");
+    expect(contributionTrackGrid).toHaveClass("signal-detail-contribution-grid");
+    expect(screen.getByText("技术轨聚合")).toBeInTheDocument();
+    expect(screen.getByText("环境轨聚合")).toBeInTheDocument();
+    expect(screen.getByText("双轨融合")).toBeInTheDocument();
+    expect(screen.getByText("最终门控")).toBeInTheDocument();
+    expect(screen.queryByText("Top 3 正贡献")).not.toBeInTheDocument();
+    expect(screen.queryByText("Top 3 负贡献")).not.toBeInTheDocument();
   });
 });

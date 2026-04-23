@@ -1472,9 +1472,17 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
                 "status": status_text,
                 "stage": _txt(item.get("status_message") or f"{item.get('checkpoint_count', 0)} 个检查点"),
                 "progress": progress_pct,
+                "progressCurrent": progress_current,
+                "progressTotal": progress_total,
+                "checkpointCount": int(_float(item.get("checkpoint_count"), 0.0) or 0.0),
+                "latestCheckpointAt": _txt(item.get("latest_checkpoint_at"), "--"),
                 "startAt": _txt(item.get("start_datetime"), "--"),
                 "endAt": _txt(item.get("end_datetime"), "--"),
                 "range": f"{_txt(item.get('start_datetime'), '--')} -> {_txt(item.get('end_datetime'), 'now')}",
+                "mode": _txt(item.get("mode"), "historical_range"),
+                "timeframe": _txt(item.get("timeframe"), "30m"),
+                "market": _txt(item.get("market"), "CN"),
+                "strategyMode": _txt(item.get("selected_strategy_mode") or item.get("strategy_mode"), "auto"),
                 "returnPct": _pct(item.get("total_return_pct")),
                 "finalEquity": _num(item.get("final_equity"), 0),
                 "tradeCount": _txt(item.get("trade_count"), "0"),
@@ -3066,10 +3074,20 @@ def _build_signal_detail_payload(
         context_breakdown=context_breakdown,
     )
     effective_thresholds = _safe_json_load(strategy_profile.get("effective_thresholds"))
+    dual_track_profile = _safe_json_load(strategy_profile.get("dual_track"))
     if _txt(fusion_breakdown.get("buy_threshold_eff")):
         effective_thresholds["buy_threshold"] = fusion_breakdown.get("buy_threshold_eff")
     if _txt(fusion_breakdown.get("sell_threshold_eff")):
         effective_thresholds["sell_threshold"] = fusion_breakdown.get("sell_threshold_eff")
+    for key in (
+        "min_fusion_confidence",
+        "min_tech_score_for_buy",
+        "min_context_score_for_buy",
+        "min_tech_confidence_for_buy",
+        "min_context_confidence_for_buy",
+    ):
+        if _txt(dual_track_profile.get(key)):
+            effective_thresholds[key] = dual_track_profile.get(key)
     for key in (
         "buy_threshold_base",
         "buy_threshold_eff",
@@ -4369,7 +4387,10 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
             handler = ACTION_BUILDERS.get((page, action))
             if not handler:
                 raise HTTPException(status_code=404, detail=f"Unsupported action: {page}/{action}")
-            return handler(api_context, payload)
+            try:
+                return handler(api_context, payload)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         action_handler.__name__ = f"post_{page.replace('-', '_').replace('/', '_')}_{action.replace('-', '_')}"
         app.post(path)(action_handler)
