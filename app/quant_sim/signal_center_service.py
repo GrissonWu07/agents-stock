@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from app.notification_service import notification_service
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.quant_kernel.models import Decision
 from app.smart_monitor_db import SmartMonitorDB, DEFAULT_DB_FILE as SMART_MONITOR_DB_FILE
@@ -25,10 +26,16 @@ class SignalCenterService:
     def create_signal(self, candidate: dict[str, Any], decision: dict[str, Any] | Decision) -> dict[str, Any]:
         payload = self._normalize_decision_payload(decision)
         payload = self._apply_position_constraints(candidate, payload)
-        payload = self._apply_ai_overlay(candidate, payload)
         payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
         status = "pending" if action in {"BUY", "SELL"} else "observed"
+        existing_pending_ids = {
+            int(item.get("id"))
+            for item in self.db.get_signals(stock_code=candidate["stock_code"], limit=50)
+            if str(item.get("status", "")).lower() == "pending"
+            and str(item.get("action", "")).upper() == action
+            and item.get("id") is not None
+        }
         signal_id = self.db.add_signal(
             {
                 "candidate_id": candidate.get("id"),
@@ -48,7 +55,10 @@ class SignalCenterService:
             }
         )
         self._mirror_signal_to_ai_decision(candidate, payload)
-        return self.db.get_signals(stock_code=candidate["stock_code"], limit=1)[0]
+        signal = self.db.get_signals(stock_code=candidate["stock_code"], limit=1)[0]
+        if status == "pending" and int(signal_id) not in existing_pending_ids:
+            self._dispatch_live_signal_notification(candidate, signal, payload)
+        return signal
 
     def list_pending_signals(self) -> list[dict[str, Any]]:
         self._sanitize_pending_sell_signals_without_position()
@@ -106,17 +116,20 @@ class SignalCenterService:
         if action not in {"BUY", "SELL"}:
             return normalized
 
+        strategy_profile = normalized.get("strategy_profile")
+        if not isinstance(strategy_profile, dict) or not strategy_profile:
+            return normalized
+
         scheduler_config = self.db.get_scheduler_config()
         commission_rate = max(self._safe_float(scheduler_config.get("commission_rate"), 0.0) or 0.0, 0.0)
         sell_tax_rate = max(self._safe_float(scheduler_config.get("sell_tax_rate"), 0.0) or 0.0, 0.0)
         roundtrip_cost_pct = round((commission_rate * 2.0 + sell_tax_rate) * 100.0, 4)
         sell_side_cost_pct = round((commission_rate + sell_tax_rate) * 100.0, 4)
         min_buy_edge_pct = round(roundtrip_cost_pct + 0.2, 4)
-
-        strategy_profile = normalized.get("strategy_profile")
-        if not isinstance(strategy_profile, dict):
-            strategy_profile = {}
         thresholds = strategy_profile.get("effective_thresholds")
+        cost_model = strategy_profile.get("cost_model")
+        if not isinstance(thresholds, dict) and not isinstance(cost_model, dict):
+            return normalized
         if not isinstance(thresholds, dict):
             thresholds = {}
         thresholds["commission_rate"] = round(commission_rate, 8)
@@ -444,5 +457,53 @@ class SignalCenterService:
                     },
                 }
             )
+        except Exception:
+            return
+
+    def _dispatch_live_signal_notification(
+        self,
+        candidate: dict[str, Any],
+        signal: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        action = str(signal.get("action") or payload.get("action") or "HOLD").upper()
+        if action not in {"BUY", "SELL"}:
+            return
+
+        stock_code = str(candidate.get("stock_code") or signal.get("stock_code") or "").strip()
+        if not stock_code:
+            return
+
+        stock_name = str(candidate.get("stock_name") or signal.get("stock_name") or stock_code)
+        latest_price = self._safe_float(candidate.get("latest_price"), None)
+        if latest_price is None:
+            latest_price = self._safe_float(signal.get("latest_price"), None)
+
+        position = None
+        for item in self.db.get_positions():
+            if str(item.get("stock_code") or "").strip() == stock_code:
+                position = item
+                break
+
+        triggered_at = str(signal.get("updated_at") or signal.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        message = str(signal.get("reasoning") or payload.get("reasoning") or "").strip()
+        if len(message) > 1000:
+            message = f"{message[:1000]}..."
+
+        notification_payload = {
+            "symbol": stock_code,
+            "name": stock_name,
+            "type": action,
+            "message": message or f"{stock_code} generated {action} signal.",
+            "triggered_at": triggered_at,
+            "current_price": f"{latest_price:.4f}" if latest_price is not None else "N/A",
+            "position_status": "holding" if position else "flat",
+            "position_cost": f"{float(position.get('avg_price') or 0):.4f}" if position else "N/A",
+            "profit_loss_pct": f"{float(position.get('unrealized_pnl_pct') or 0):.2f}" if position else "N/A",
+            "trading_session": "quant_live_sim",
+        }
+
+        try:
+            notification_service.send_notification(notification_payload)
         except Exception:
             return

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Mapping
 
 from .config import DualTrackConfig
 from .models import ContextualScore, Decision
+
+VETO_PRIORITY: dict[str, int] = {"risk_stop": 1, "hard_constraint": 2, "context_veto": 3}
 
 
 class DualTrackResolver:
@@ -208,3 +211,139 @@ class DualTrackResolver:
         if position_ratio >= 0.3:
             return "light_divergence"
         return "no_position"
+
+
+def resolve_v23_final_action(
+    *,
+    mode: str,
+    core_rule_action: str,
+    weighted_action_raw: str,
+    fusion_score: float,
+    sell_precedence_gate: float,
+    vetoes: list[Mapping[str, Any]] | None = None,
+    legacy_rule_action: str | None = None,
+) -> dict[str, Any]:
+    normalized_mode = str(mode or "rule_only")
+    normalized_core = str(core_rule_action or "HOLD")
+    normalized_weighted = str(weighted_action_raw or "HOLD")
+    selected_veto = _highest_priority_veto(vetoes or [])
+    decision_path: list[dict[str, str]] = []
+
+    if selected_veto is not None:
+        veto_action = str(selected_veto.get("action") or "HOLD")
+        decision_path.append(
+            {
+                "step": "veto_first",
+                "matched": "true",
+                "detail": f"{selected_veto.get('id')} => {veto_action}",
+            }
+        )
+        return {
+            "final_action": veto_action,
+            "veto_action": veto_action,
+            "decision_path": decision_path,
+            "matched_branch": "veto_first",
+        }
+
+    decision_path.append({"step": "veto_first", "matched": "false", "detail": "no_veto"})
+    if normalized_mode == "rule_only":
+        final = str(legacy_rule_action or normalized_core)
+        decision_path.append({"step": "mode", "matched": "rule_only", "detail": f"legacy_or_core={final}"})
+        return {
+            "final_action": final,
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "rule_only",
+        }
+    if normalized_mode == "weighted_only":
+        decision_path.append({"step": "mode", "matched": "weighted_only", "detail": f"weighted={normalized_weighted}"})
+        return {
+            "final_action": normalized_weighted,
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "weighted_only",
+        }
+    if normalized_mode != "hybrid":
+        raise ValueError(f"unsupported mode: {normalized_mode}")
+
+    decision_path.append({"step": "mode", "matched": "hybrid", "detail": "hybrid_matrix"})
+    if normalized_core == normalized_weighted:
+        decision_path.append({"step": "hybrid", "matched": "aligned", "detail": normalized_core})
+        return {
+            "final_action": normalized_core,
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "hybrid_aligned",
+        }
+    if normalized_core == "SELL":
+        decision_path.append({"step": "hybrid", "matched": "core_sell", "detail": "core_rule_action=SELL"})
+        return {
+            "final_action": "SELL",
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "hybrid_core_sell",
+        }
+    if normalized_weighted == "SELL":
+        if float(fusion_score) <= float(sell_precedence_gate):
+            decision_path.append(
+                {
+                    "step": "hybrid",
+                    "matched": "weighted_sell_precedence",
+                    "detail": f"fusion_score={fusion_score:.6f} <= gate={sell_precedence_gate:.6f}",
+                }
+            )
+            return {
+                "final_action": "SELL",
+                "veto_action": None,
+                "decision_path": decision_path,
+                "matched_branch": "hybrid_weighted_sell_precedence",
+            }
+        decision_path.append(
+            {
+                "step": "hybrid",
+                "matched": "weighted_sell_blocked",
+                "detail": f"fusion_score={fusion_score:.6f} > gate={sell_precedence_gate:.6f}",
+            }
+        )
+        return {
+            "final_action": "HOLD",
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "hybrid_weighted_sell_blocked",
+        }
+    if normalized_core == "BUY" and normalized_weighted == "HOLD":
+        decision_path.append({"step": "hybrid", "matched": "core_buy_weighted_hold", "detail": "downgrade_to_hold"})
+        return {
+            "final_action": "HOLD",
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "hybrid_core_buy_weighted_hold",
+        }
+    if normalized_core == "HOLD" and normalized_weighted == "BUY":
+        decision_path.append({"step": "hybrid", "matched": "core_hold_weighted_buy", "detail": "upgrade_to_buy"})
+        return {
+            "final_action": "BUY",
+            "veto_action": None,
+            "decision_path": decision_path,
+            "matched_branch": "hybrid_core_hold_weighted_buy",
+        }
+    decision_path.append({"step": "hybrid", "matched": "fallback", "detail": "hold"})
+    return {
+        "final_action": "HOLD",
+        "veto_action": None,
+        "decision_path": decision_path,
+        "matched_branch": "hybrid_fallback_hold",
+    }
+
+
+def _highest_priority_veto(vetoes: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    if not vetoes:
+        return None
+    ordered = sorted(
+        vetoes,
+        key=lambda item: (
+            int(item.get("priority")) if item.get("priority") is not None else VETO_PRIORITY.get(str(item.get("id") or ""), 999),
+            str(item.get("id") or ""),
+        ),
+    )
+    return ordered[0]

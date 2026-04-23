@@ -14,6 +14,11 @@ from app.data_source_manager import data_source_manager
 from app.quant_kernel import ReplayTimepointGenerator
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
+from app.quant_sim.dynamic_strategy import (
+    DEFAULT_AI_DYNAMIC_LOOKBACK,
+    DEFAULT_AI_DYNAMIC_STRENGTH,
+    DEFAULT_AI_DYNAMIC_STRATEGY,
+)
 from app.quant_sim.engine import QuantSimEngine
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.replay_runner import get_quant_sim_replay_runner
@@ -167,6 +172,10 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        strategy_profile_id: str | None = None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
     ) -> dict:
@@ -176,6 +185,10 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
@@ -204,6 +217,10 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        strategy_profile_id: str | None = None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
         overwrite_live: bool = False,
@@ -216,6 +233,10 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
@@ -246,6 +267,10 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        strategy_profile_id: str | None = None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
     ) -> int:
@@ -255,6 +280,10 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
@@ -302,6 +331,10 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str = "auto",
+        strategy_profile_id: str | None = None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
         overwrite_live: bool = False,
@@ -314,6 +347,10 @@ class QuantSimReplayService:
             timeframe=timeframe,
             market=market,
             strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
@@ -361,6 +398,10 @@ class QuantSimReplayService:
         timeframe: str,
         market: str,
         strategy_mode: str,
+        strategy_profile_id: str | None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
     ) -> dict:
@@ -378,14 +419,35 @@ class QuantSimReplayService:
         if not checkpoints:
             raise ValueError("指定区间内没有可用的交易检查点")
         scheduler_config = self.db.get_scheduler_config()
-        resolved_commission_rate = float(
-            (scheduler_config.get("commission_rate") if commission_rate is None else commission_rate)
-            or 0.0
-        )
-        resolved_sell_tax_rate = float(
-            (scheduler_config.get("sell_tax_rate") if sell_tax_rate is None else sell_tax_rate)
-            or 0.0
-        )
+        selected_profile_id = str(
+            strategy_profile_id
+            if strategy_profile_id not in (None, "")
+            else scheduler_config.get("strategy_profile_id")
+        ).strip() or None
+        strategy_profile_binding = self.db.resolve_strategy_profile_binding(selected_profile_id)
+        dynamic_strategy_mode = str(
+            ai_dynamic_strategy if ai_dynamic_strategy not in (None, "") else scheduler_config.get("ai_dynamic_strategy")
+        ).strip().lower() or DEFAULT_AI_DYNAMIC_STRATEGY
+        try:
+            dynamic_strength = float(
+                ai_dynamic_strength
+                if ai_dynamic_strength is not None
+                else scheduler_config.get("ai_dynamic_strength", DEFAULT_AI_DYNAMIC_STRENGTH)
+            )
+        except (TypeError, ValueError):
+            dynamic_strength = DEFAULT_AI_DYNAMIC_STRENGTH
+        dynamic_strength = max(0.0, min(1.0, dynamic_strength))
+        try:
+            dynamic_lookback = int(
+                ai_dynamic_lookback
+                if ai_dynamic_lookback is not None
+                else scheduler_config.get("ai_dynamic_lookback", DEFAULT_AI_DYNAMIC_LOOKBACK)
+            )
+        except (TypeError, ValueError):
+            dynamic_lookback = DEFAULT_AI_DYNAMIC_LOOKBACK
+        dynamic_lookback = max(6, min(336, dynamic_lookback))
+        resolved_commission_rate = float(commission_rate if commission_rate is not None else 0.0)
+        resolved_sell_tax_rate = float(sell_tax_rate if sell_tax_rate is not None else 0.0)
 
         return {
             "start_dt": start_dt,
@@ -393,6 +455,10 @@ class QuantSimReplayService:
             "timeframe": timeframe,
             "market": market,
             "strategy_mode": strategy_mode,
+            "strategy_profile_binding": strategy_profile_binding,
+            "ai_dynamic_strategy": dynamic_strategy_mode,
+            "ai_dynamic_strength": dynamic_strength,
+            "ai_dynamic_lookback": dynamic_lookback,
             "commission_rate": resolved_commission_rate,
             "sell_tax_rate": resolved_sell_tax_rate,
             "candidates": candidates,
@@ -412,6 +478,7 @@ class QuantSimReplayService:
         status: str,
         status_message: str,
     ) -> int:
+        profile_binding = context.get("strategy_profile_binding") if isinstance(context.get("strategy_profile_binding"), dict) else {}
         return self.db.create_sim_run(
             mode=mode,
             timeframe=timeframe,
@@ -425,9 +492,20 @@ class QuantSimReplayService:
             progress_current=0,
             progress_total=len(context["checkpoints"]),
             status_message=status_message,
+            selected_strategy_profile_id=str(profile_binding.get("profile_id") or ""),
+            selected_strategy_profile_name=str(profile_binding.get("profile_name") or ""),
+            selected_strategy_profile_version_id=int(profile_binding["version_id"]) if profile_binding.get("version_id") is not None else None,
+            strategy_profile_snapshot=profile_binding.get("config") if isinstance(profile_binding.get("config"), dict) else None,
             metadata={
                 "candidate_count": len(context["candidates"]),
                 "strategy_mode": context["strategy_mode"],
+                "strategy_profile_id": str(profile_binding.get("profile_id") or ""),
+                "strategy_profile_name": str(profile_binding.get("profile_name") or ""),
+                "strategy_profile_version_id": int(profile_binding["version_id"]) if profile_binding.get("version_id") is not None else None,
+                "strategy_profile_version": int(profile_binding["version"]) if profile_binding.get("version") is not None else None,
+                "ai_dynamic_strategy": context.get("ai_dynamic_strategy"),
+                "ai_dynamic_strength": context.get("ai_dynamic_strength"),
+                "ai_dynamic_lookback": context.get("ai_dynamic_lookback"),
                 "commission_rate": float(context.get("commission_rate") or 0),
                 "sell_tax_rate": float(context.get("sell_tax_rate") or 0),
             },
@@ -457,6 +535,10 @@ class QuantSimReplayService:
         timeframe = context["timeframe"]
         market = context["market"]
         strategy_mode = context["strategy_mode"]
+        strategy_profile_binding = context.get("strategy_profile_binding") if isinstance(context.get("strategy_profile_binding"), dict) else {}
+        ai_dynamic_strategy = str(context.get("ai_dynamic_strategy") or DEFAULT_AI_DYNAMIC_STRATEGY).strip().lower()
+        ai_dynamic_strength = float(context.get("ai_dynamic_strength") or DEFAULT_AI_DYNAMIC_STRENGTH)
+        ai_dynamic_lookback = int(context.get("ai_dynamic_lookback") or DEFAULT_AI_DYNAMIC_LOOKBACK)
         commission_rate = float(context.get("commission_rate") or 0)
         sell_tax_rate = float(context.get("sell_tax_rate") or 0)
         candidates = context["candidates"]
@@ -488,6 +570,10 @@ class QuantSimReplayService:
             temp_db.update_scheduler_config(
                 commission_rate=commission_rate,
                 sell_tax_rate=sell_tax_rate,
+                strategy_profile_id=str(strategy_profile_binding.get("profile_id") or "") or None,
+                ai_dynamic_strategy=ai_dynamic_strategy,
+                ai_dynamic_strength=ai_dynamic_strength,
+                ai_dynamic_lookback=ai_dynamic_lookback,
             )
             for candidate in candidates:
                 temp_candidate_service.add_candidate(
@@ -531,6 +617,10 @@ class QuantSimReplayService:
                     checkpoint=checkpoint,
                     timeframe=timeframe,
                     strategy_mode=strategy_mode,
+                    strategy_profile_binding=strategy_profile_binding,
+                    ai_dynamic_strategy=ai_dynamic_strategy,
+                    ai_dynamic_strength=ai_dynamic_strength,
+                    ai_dynamic_lookback=ai_dynamic_lookback,
                     engine=temp_engine,
                     portfolio=temp_portfolio,
                     signal_service=temp_signal_service,
@@ -638,6 +728,10 @@ class QuantSimReplayService:
                     trading_hours_only=bool(status["trading_hours_only"]),
                     analysis_timeframe=timeframe,
                     market=market,
+                    strategy_profile_id=str(strategy_profile_binding.get("profile_id") or "") or None,
+                    ai_dynamic_strategy=ai_dynamic_strategy,
+                    ai_dynamic_strength=ai_dynamic_strength,
+                    ai_dynamic_lookback=ai_dynamic_lookback,
                     commission_rate=commission_rate,
                     sell_tax_rate=sell_tax_rate,
                 )
@@ -714,6 +808,10 @@ class QuantSimReplayService:
         checkpoint: datetime,
         timeframe: str,
         strategy_mode: str = "auto",
+        strategy_profile_binding: dict | None = None,
+        ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
+        ai_dynamic_strength: float = DEFAULT_AI_DYNAMIC_STRENGTH,
+        ai_dynamic_lookback: int = DEFAULT_AI_DYNAMIC_LOOKBACK,
         engine: QuantSimEngine,
         portfolio: PortfolioService,
         signal_service: SignalCenterService,
@@ -727,6 +825,17 @@ class QuantSimReplayService:
         checkpoint_text = self._format_datetime(checkpoint)
         total_candidates = len(candidates)
         total_positions = len(positions)
+        base_profile_id = (
+            str(strategy_profile_binding.get("profile_id") or "").strip()
+            if isinstance(strategy_profile_binding, dict)
+            else None
+        )
+        effective_strategy_profile_binding = engine._resolve_strategy_binding(
+            strategy_profile_id=base_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
+        )
 
         for candidate_index, candidate in enumerate(candidates, start=1):
             if run_id is not None and self.db.is_sim_run_cancel_requested(run_id):
@@ -759,9 +868,10 @@ class QuantSimReplayService:
             decision = engine._evaluate_candidate_decision(
                 candidate,
                 market_snapshot=snapshot,
-                    analysis_timeframe=timeframe,
-                    strategy_mode=strategy_mode,
-                )
+                analysis_timeframe=timeframe,
+                strategy_mode=strategy_mode,
+                strategy_profile_binding=effective_strategy_profile_binding,
+            )
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:
                 engine.candidate_pool.db.update_candidate_latest_price(candidate["stock_code"], decision_price)
@@ -810,6 +920,7 @@ class QuantSimReplayService:
                 market_snapshot=snapshot,
                 analysis_timeframe=timeframe,
                 strategy_mode=strategy_mode,
+                strategy_profile_binding=effective_strategy_profile_binding,
             )
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:

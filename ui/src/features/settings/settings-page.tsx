@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
-import type { ApiClient } from "../../lib/api-client";
+import { apiClient, type ApiClient } from "../../lib/api-client";
 import { PageHeader } from "../../components/ui/page-header";
 import { SectionEmptyState } from "../../components/ui/section-empty";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
@@ -170,7 +170,8 @@ const renderFields = (
 };
 
 export function SettingsPage({ client }: SettingsPageProps) {
-  const resource = usePageData("settings", client);
+  const effectiveClient = client ?? apiClient;
+  const resource = usePageData("settings", effectiveClient);
   const [values, setValues] = useState<Record<string, string>>({});
   const [savedValues, setSavedValues] = useState<Record<string, string>>({});
 
@@ -210,12 +211,10 @@ export function SettingsPage({ client }: SettingsPageProps) {
       }),
       {} as Record<string, string>,
     );
-
     setValues((prev) => {
       const changed = JSON.stringify(prev) !== JSON.stringify(nextValues);
       return changed ? nextValues : prev;
     });
-
     setSavedValues(nextValues);
   }, [dataSources, modelConfig, runtimeParams]);
 
@@ -256,7 +255,9 @@ export function SettingsPage({ client }: SettingsPageProps) {
   const submit = () => {
     void resource.runAction(
       "save",
-      Object.fromEntries([...dataSources, ...modelConfig, ...runtimeParams].map((item) => [item.key, values[item.key] ?? item.value])),
+      {
+        env: Object.fromEntries([...dataSources, ...modelConfig, ...runtimeParams].map((item) => [item.key, values[item.key] ?? item.value])),
+      },
     );
   };
 
@@ -313,4 +314,3 @@ export function SettingsPage({ client }: SettingsPageProps) {
     </div>
   );
 }
-

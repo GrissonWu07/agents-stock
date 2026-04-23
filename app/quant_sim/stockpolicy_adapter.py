@@ -40,45 +40,57 @@ class StockPolicyAdapter:
     def now() -> datetime:
         return datetime.now()
 
+    @staticmethod
+    def _call_with_signature_fallback(method: Any, base_kwargs: dict[str, Any]) -> Decision:
+        drop_orders = [
+            (),
+            ("strategy_profile_binding",),
+            ("strategy_mode",),
+            ("strategy_mode", "strategy_profile_binding"),
+            ("analysis_timeframe",),
+            ("analysis_timeframe", "strategy_profile_binding"),
+            ("analysis_timeframe", "strategy_mode"),
+            ("analysis_timeframe", "strategy_mode", "strategy_profile_binding"),
+        ]
+        last_error: TypeError | None = None
+        for drop_keys in drop_orders:
+            kwargs = {key: value for key, value in base_kwargs.items() if key not in drop_keys}
+            try:
+                return method(**kwargs)
+            except TypeError as exc:
+                message = str(exc)
+                if "unexpected keyword argument" not in message:
+                    raise
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Kernel runtime evaluate call failed")
+
     def analyze_candidate(
         self,
         candidate: dict[str, Any],
         market_snapshot: Optional[dict[str, Any]] = None,
         analysis_timeframe: str = "1d",
         strategy_mode: str = "auto",
+        strategy_profile_binding: Optional[dict[str, Any]] = None,
     ) -> Decision:
         preferred_name = candidate.get("stock_name") or candidate.get("name")
         snapshot = market_snapshot or self.market_data_provider.get_comprehensive_data(
             candidate["stock_code"],
             preferred_name=preferred_name,
         )
-        try:
-            return self.runtime.evaluate_candidate(
-                candidate=candidate,
-                market_snapshot=snapshot,
-                current_time=self.now(),
-                analysis_timeframe=analysis_timeframe,
-                strategy_mode=strategy_mode,
-            )
-        except TypeError as exc:
-            first_message = str(exc)
-            if "strategy_mode" not in first_message and "analysis_timeframe" not in first_message:
-                raise
-            try:
-                return self.runtime.evaluate_candidate(
-                    candidate=candidate,
-                    market_snapshot=snapshot,
-                    current_time=self.now(),
-                    analysis_timeframe=analysis_timeframe,
-                )
-            except TypeError as retry_exc:
-                if "analysis_timeframe" not in str(retry_exc):
-                    raise
-                return self.runtime.evaluate_candidate(
-                    candidate=candidate,
-                    market_snapshot=snapshot,
-                    current_time=self.now(),
-                )
+        return self._call_with_signature_fallback(
+            self.runtime.evaluate_candidate,
+            {
+                "candidate": candidate,
+                "market_snapshot": snapshot,
+                "current_time": self.now(),
+                "analysis_timeframe": analysis_timeframe,
+                "strategy_mode": strategy_mode,
+                "strategy_profile_binding": strategy_profile_binding,
+            },
+        )
 
     def analyze_position(
         self,
@@ -87,39 +99,22 @@ class StockPolicyAdapter:
         market_snapshot: Optional[dict[str, Any]] = None,
         analysis_timeframe: str = "1d",
         strategy_mode: str = "auto",
+        strategy_profile_binding: Optional[dict[str, Any]] = None,
     ) -> Decision:
         preferred_name = position.get("stock_name") or candidate.get("stock_name") or candidate.get("name")
         snapshot = market_snapshot or self.market_data_provider.get_comprehensive_data(
             position["stock_code"],
             preferred_name=preferred_name,
         )
-        try:
-            return self.runtime.evaluate_position(
-                candidate=candidate,
-                position=position,
-                market_snapshot=snapshot,
-                current_time=self.now(),
-                analysis_timeframe=analysis_timeframe,
-                strategy_mode=strategy_mode,
-            )
-        except TypeError as exc:
-            first_message = str(exc)
-            if "strategy_mode" not in first_message and "analysis_timeframe" not in first_message:
-                raise
-            try:
-                return self.runtime.evaluate_position(
-                    candidate=candidate,
-                    position=position,
-                    market_snapshot=snapshot,
-                    current_time=self.now(),
-                    analysis_timeframe=analysis_timeframe,
-                )
-            except TypeError as retry_exc:
-                if "analysis_timeframe" not in str(retry_exc):
-                    raise
-                return self.runtime.evaluate_position(
-                    candidate=candidate,
-                    position=position,
-                    market_snapshot=snapshot,
-                    current_time=self.now(),
-                )
+        return self._call_with_signature_fallback(
+            self.runtime.evaluate_position,
+            {
+                "candidate": candidate,
+                "position": position,
+                "market_snapshot": snapshot,
+                "current_time": self.now(),
+                "analysis_timeframe": analysis_timeframe,
+                "strategy_mode": strategy_mode,
+                "strategy_profile_binding": strategy_profile_binding,
+            },
+        )

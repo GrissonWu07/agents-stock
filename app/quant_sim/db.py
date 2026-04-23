@@ -9,6 +9,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_kernel.replay_engine import ReplayTimepointGenerator
 from app.quant_kernel.portfolio_engine import LotStatus, PositionLot
 from app.runtime_paths import default_db_path
@@ -22,6 +23,33 @@ DEFAULT_STRATEGY_MODE = "auto"
 SUPPORTED_STRATEGY_MODES = {"auto", "aggressive", "neutral", "defensive"}
 DEFAULT_COMMISSION_RATE = 0.0003
 DEFAULT_SELL_TAX_RATE = 0.001
+DEFAULT_AI_DYNAMIC_STRATEGY = "off"
+SUPPORTED_AI_DYNAMIC_STRATEGIES = {"off", "template", "weights", "hybrid"}
+DEFAULT_AI_DYNAMIC_STRENGTH = 0.5
+DEFAULT_AI_DYNAMIC_LOOKBACK = 48
+DEFAULT_STRATEGY_PROFILE_ID = "aggressive_v23"
+DEFAULT_STRATEGY_PROFILE_NAME = "积极"
+LEGACY_DEFAULT_STRATEGY_PROFILE_ID = "default_v23"
+BUILTIN_STRATEGY_PROFILES: tuple[dict[str, str], ...] = (
+    {
+        "id": "aggressive_v23",
+        "name": "积极",
+        "description": "积极策略：技术轨权重更高，趋势/动量更敏感，买入阈值更低，适合进攻型交易。",
+        "variant": "aggressive",
+    },
+    {
+        "id": "stable_v23",
+        "name": "稳定",
+        "description": "稳定策略：技术与环境均衡，阈值居中，兼顾收益与回撤控制。",
+        "variant": "stable",
+    },
+    {
+        "id": "conservative_v23",
+        "name": "保守",
+        "description": "保守策略：环境与风控约束更强，买入阈值更高，优先控制回撤与仓位风险。",
+        "variant": "conservative",
+    },
+)
 
 
 class QuantSimDB:
@@ -185,6 +213,10 @@ class QuantSimDB:
                 trading_hours_only INTEGER DEFAULT 1,
                 analysis_timeframe TEXT DEFAULT '30m',
                 strategy_mode TEXT DEFAULT 'auto',
+                strategy_profile_id TEXT,
+                ai_dynamic_strategy TEXT DEFAULT 'off',
+                ai_dynamic_strength REAL DEFAULT 0.5,
+                ai_dynamic_lookback INTEGER DEFAULT 48,
                 start_date TEXT,
                 market TEXT DEFAULT 'CN',
                 commission_rate REAL DEFAULT 0.0003,
@@ -219,9 +251,40 @@ class QuantSimDB:
                 status_message TEXT,
                 cancel_requested INTEGER DEFAULT 0,
                 worker_pid INTEGER,
+                selected_strategy_profile_id TEXT,
+                selected_strategy_profile_name TEXT,
+                selected_strategy_profile_version_id INTEGER,
+                strategy_profile_snapshot_json TEXT,
                 metadata_json TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_profile_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                config_json TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(profile_id, version),
+                FOREIGN KEY(profile_id) REFERENCES strategy_profiles(id)
             )
             """
         )
@@ -340,6 +403,7 @@ class QuantSimDB:
         self._ensure_column(cursor, "strategy_signals", "tech_score", "REAL DEFAULT 0")
         self._ensure_column(cursor, "strategy_signals", "context_score", "REAL DEFAULT 0")
         self._ensure_column(cursor, "strategy_signals", "strategy_profile_json", "TEXT")
+        self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "closed_at", "TEXT")
@@ -351,6 +415,10 @@ class QuantSimDB:
             "TEXT DEFAULT '30m'",
         )
         self._ensure_column(cursor, "sim_scheduler_config", "strategy_mode", "TEXT DEFAULT 'auto'")
+        self._ensure_column(cursor, "sim_scheduler_config", "strategy_profile_id", "TEXT")
+        self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_strategy", "TEXT DEFAULT 'off'")
+        self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_strength", f"REAL DEFAULT {DEFAULT_AI_DYNAMIC_STRENGTH}")
+        self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_lookback", f"INTEGER DEFAULT {DEFAULT_AI_DYNAMIC_LOOKBACK}")
         self._ensure_column(cursor, "sim_scheduler_config", "start_date", "TEXT")
         self._ensure_column(cursor, "sim_scheduler_config", "commission_rate", f"REAL DEFAULT {DEFAULT_COMMISSION_RATE}")
         self._ensure_column(cursor, "sim_scheduler_config", "sell_tax_rate", f"REAL DEFAULT {DEFAULT_SELL_TAX_RATE}")
@@ -359,12 +427,17 @@ class QuantSimDB:
         self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
         self._ensure_column(cursor, "sim_runs", "cancel_requested", "INTEGER DEFAULT 0")
         self._ensure_column(cursor, "sim_runs", "worker_pid", "INTEGER")
+        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_id", "TEXT")
+        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_name", "TEXT")
+        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_version_id", "INTEGER")
+        self._ensure_column(cursor, "sim_runs", "strategy_profile_snapshot_json", "TEXT")
         self._ensure_column(cursor, "sim_run_trades", "signal_id", "INTEGER")
 
         self._backfill_candidate_sources(cursor)
         self._backfill_lot_defaults(cursor)
         self._ensure_sim_account(cursor)
         self._ensure_scheduler_config(cursor)
+        self._ensure_default_strategy_profile(cursor)
 
         conn.commit()
         conn.close()
@@ -674,6 +747,14 @@ class QuantSimDB:
         conn.close()
         return rows
 
+    def get_signal(self, signal_id: int) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM strategy_signals WHERE id = ?", (signal_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return self._signal_row_to_dict(row) if row is not None else None
+
     def get_pending_signals(self) -> list[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
@@ -806,6 +887,10 @@ class QuantSimDB:
         progress_current: int = 0,
         progress_total: int = 0,
         status_message: str | None = None,
+        selected_strategy_profile_id: str | None = None,
+        selected_strategy_profile_name: str | None = None,
+        selected_strategy_profile_version_id: int | None = None,
+        strategy_profile_snapshot: Optional[dict[str, Any]] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> int:
         conn = self._connect()
@@ -816,9 +901,11 @@ class QuantSimDB:
             (
                 mode, status, timeframe, market, auto_execute, handoff_to_live,
                 start_datetime, end_datetime, initial_cash, progress_current, progress_total,
-                status_message, metadata_json, created_at, updated_at
+                status_message, selected_strategy_profile_id, selected_strategy_profile_name,
+                selected_strategy_profile_version_id, strategy_profile_snapshot_json, metadata_json,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 mode,
@@ -833,6 +920,10 @@ class QuantSimDB:
                 int(progress_current),
                 int(progress_total),
                 status_message,
+                selected_strategy_profile_id,
+                selected_strategy_profile_name,
+                selected_strategy_profile_version_id,
+                self._dumps_metadata(strategy_profile_snapshot),
                 json.dumps(metadata or {}, ensure_ascii=False),
                 self._now(),
                 self._now(),
@@ -1327,6 +1418,310 @@ class QuantSimDB:
         conn.close()
         return rows
 
+    def get_sim_run_signal(self, signal_id: int) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sim_run_signals WHERE id = ?", (signal_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return self._signal_row_to_dict(row) if row is not None else None
+
+    def get_default_strategy_profile_id(self) -> str:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id
+            FROM strategy_profiles
+            WHERE is_default = 1
+            ORDER BY updated_at DESC, id ASC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row is not None and str(row["id"]).strip():
+            return str(row["id"]).strip()
+        return DEFAULT_STRATEGY_PROFILE_ID
+
+    def list_strategy_profiles(self, *, include_disabled: bool = False) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        if include_disabled:
+            cursor.execute(
+                """
+                SELECT * FROM strategy_profiles
+                ORDER BY is_default DESC, updated_at DESC, id ASC
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT * FROM strategy_profiles
+                WHERE enabled = 1
+                ORDER BY is_default DESC, updated_at DESC, id ASC
+                """
+            )
+        rows = [self._strategy_profile_row_to_dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def get_strategy_profile(self, profile_id: str) -> Optional[dict[str, Any]]:
+        profile_key = str(profile_id or "").strip()
+        if not profile_key:
+            return None
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM strategy_profiles WHERE id = ?", (profile_key,))
+        row = cursor.fetchone()
+        conn.close()
+        return self._strategy_profile_row_to_dict(row) if row is not None else None
+
+    def get_latest_strategy_profile_version(self, profile_id: str) -> Optional[dict[str, Any]]:
+        profile_key = str(profile_id or "").strip()
+        if not profile_key:
+            return None
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM strategy_profile_versions
+            WHERE profile_id = ?
+            ORDER BY version DESC, id DESC
+            LIMIT 1
+            """,
+            (profile_key,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return self._strategy_profile_version_row_to_dict(row) if row is not None else None
+
+    def list_strategy_profile_versions(self, profile_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        profile_key = str(profile_id or "").strip()
+        if not profile_key:
+            return []
+        safe_limit = max(1, min(int(limit or 20), 200))
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM strategy_profile_versions
+            WHERE profile_id = ?
+            ORDER BY version DESC, id DESC
+            LIMIT ?
+            """,
+            (profile_key, safe_limit),
+        )
+        rows = [self._strategy_profile_version_row_to_dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def get_strategy_profile_version(self, version_id: int) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM strategy_profile_versions WHERE id = ?", (int(version_id),))
+        row = cursor.fetchone()
+        conn.close()
+        return self._strategy_profile_version_row_to_dict(row) if row is not None else None
+
+    def validate_strategy_profile_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        normalized = self._validate_and_normalize_strategy_profile_config(config)
+        return {
+            "schema_version": normalized["schema_version"],
+            "base": normalized["base"],
+            "profiles": normalized["profiles"],
+        }
+
+    def create_strategy_profile(
+        self,
+        *,
+        profile_id: str | None,
+        name: str,
+        config: dict[str, Any],
+        description: str = "",
+        enabled: bool = True,
+        set_default: bool = False,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_profile_id = str(profile_id or "").strip() or f"profile-{uuid.uuid4().hex[:10]}"
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            raise ValueError("strategy profile name is required")
+        normalized_config = self._validate_and_normalize_strategy_profile_config(config)
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM strategy_profiles WHERE id = ?", (normalized_profile_id,))
+        if cursor.fetchone() is not None:
+            conn.close()
+            raise ValueError(f"strategy profile already exists: {normalized_profile_id}")
+        now_text = self._now()
+        if set_default:
+            cursor.execute("UPDATE strategy_profiles SET is_default = 0, updated_at = ?", (now_text,))
+        cursor.execute(
+            """
+            INSERT INTO strategy_profiles
+            (id, name, description, enabled, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_profile_id,
+                normalized_name,
+                str(description or "").strip(),
+                1 if enabled else 0,
+                1 if set_default else 0,
+                now_text,
+                now_text,
+            ),
+        )
+        version = self._insert_strategy_profile_version(
+            cursor,
+            profile_id=normalized_profile_id,
+            config=normalized_config,
+            note=note or "initial",
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "profile": self.get_strategy_profile(normalized_profile_id),
+            "version": version,
+        }
+
+    def update_strategy_profile(
+        self,
+        profile_id: str,
+        *,
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+        set_default: bool | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        profile_key = str(profile_id or "").strip()
+        if not profile_key:
+            raise ValueError("strategy profile id is required")
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM strategy_profiles WHERE id = ?", (profile_key,))
+        row = cursor.fetchone()
+        if row is None:
+            conn.close()
+            raise ValueError(f"strategy profile not found: {profile_key}")
+        updates: list[str] = []
+        params: list[Any] = []
+        if name is not None:
+            normalized_name = str(name).strip()
+            if not normalized_name:
+                conn.close()
+                raise ValueError("strategy profile name is required")
+            updates.append("name = ?")
+            params.append(normalized_name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(str(description).strip())
+        if enabled is not None:
+            updates.append("enabled = ?")
+            params.append(1 if bool(enabled) else 0)
+        if set_default is True:
+            cursor.execute("UPDATE strategy_profiles SET is_default = 0, updated_at = ? WHERE id <> ?", (self._now(), profile_key))
+            updates.append("is_default = ?")
+            params.append(1)
+            cursor.execute("UPDATE sim_scheduler_config SET strategy_profile_id = ? WHERE id = 1", (profile_key,))
+        elif set_default is False:
+            updates.append("is_default = ?")
+            params.append(0)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(self._now())
+            params.append(profile_key)
+            cursor.execute(f"UPDATE strategy_profiles SET {', '.join(updates)} WHERE id = ?", params)
+        version_payload = None
+        if config is not None:
+            normalized_config = self._validate_and_normalize_strategy_profile_config(config)
+            version_payload = self._insert_strategy_profile_version(
+                cursor,
+                profile_id=profile_key,
+                config=normalized_config,
+                note=note or "update",
+            )
+            cursor.execute("UPDATE strategy_profiles SET updated_at = ? WHERE id = ?", (self._now(), profile_key))
+        conn.commit()
+        conn.close()
+        return {
+            "profile": self.get_strategy_profile(profile_key),
+            "version": version_payload or self.get_latest_strategy_profile_version(profile_key),
+        }
+
+    def clone_strategy_profile(
+        self,
+        source_profile_id: str,
+        *,
+        name: str,
+        profile_id: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        source_key = str(source_profile_id or "").strip()
+        source_profile = self.get_strategy_profile(source_key)
+        if source_profile is None:
+            raise ValueError(f"strategy profile not found: {source_key}")
+        source_version = self.get_latest_strategy_profile_version(source_key)
+        if source_version is None:
+            raise ValueError(f"strategy profile has no versions: {source_key}")
+        return self.create_strategy_profile(
+            profile_id=profile_id,
+            name=name,
+            config=source_version["config"],
+            description=(description if description is not None else str(source_profile.get("description") or "").strip()),
+            enabled=bool(source_profile.get("enabled", True)),
+            set_default=False,
+            note=f"cloned_from:{source_key}@v{source_version.get('version')}",
+        )
+
+    def set_default_strategy_profile(self, profile_id: str) -> dict[str, Any]:
+        profile_key = str(profile_id or "").strip()
+        if not profile_key:
+            raise ValueError("strategy profile id is required")
+        profile = self.get_strategy_profile(profile_key)
+        if profile is None:
+            raise ValueError(f"strategy profile not found: {profile_key}")
+        if not bool(profile.get("enabled", True)):
+            raise ValueError("cannot set disabled strategy profile as default")
+        conn = self._connect()
+        cursor = conn.cursor()
+        now_text = self._now()
+        cursor.execute("UPDATE strategy_profiles SET is_default = 0, updated_at = ?", (now_text,))
+        cursor.execute(
+            "UPDATE strategy_profiles SET is_default = 1, updated_at = ? WHERE id = ?",
+            (now_text, profile_key),
+        )
+        cursor.execute(
+            "UPDATE sim_scheduler_config SET strategy_profile_id = ?, updated_at = ? WHERE id = 1",
+            (profile_key, now_text),
+        )
+        conn.commit()
+        conn.close()
+        return self.get_strategy_profile(profile_key) or {}
+
+    def resolve_strategy_profile_binding(self, profile_id: str | None = None) -> dict[str, Any]:
+        selected_profile_id = str(profile_id or "").strip() or self.get_default_strategy_profile_id()
+        profile = self.get_strategy_profile(selected_profile_id)
+        if profile is None:
+            raise ValueError(f"strategy profile not found: {selected_profile_id}")
+        if not bool(profile.get("enabled", True)):
+            raise ValueError(f"strategy profile is disabled: {selected_profile_id}")
+        latest_version = self.get_latest_strategy_profile_version(selected_profile_id)
+        if latest_version is None:
+            raise ValueError(f"strategy profile has no version snapshot: {selected_profile_id}")
+        return {
+            "profile_id": selected_profile_id,
+            "profile_name": str(profile.get("name") or selected_profile_id),
+            "version_id": int(latest_version["id"]),
+            "version": int(latest_version["version"]),
+            "config": latest_version["config"],
+        }
+
     def get_scheduler_config(self) -> dict[str, Any]:
         conn = self._connect()
         cursor = conn.cursor()
@@ -1340,6 +1735,10 @@ class QuantSimDB:
             "trading_hours_only": bool(row["trading_hours_only"]),
             "analysis_timeframe": self._normalize_analysis_timeframe(row["analysis_timeframe"]),
             "strategy_mode": self._normalize_strategy_mode(row["strategy_mode"]),
+            "strategy_profile_id": str(row["strategy_profile_id"] or "").strip(),
+            "ai_dynamic_strategy": self._normalize_ai_dynamic_strategy(row["ai_dynamic_strategy"]),
+            "ai_dynamic_strength": self._normalize_ai_dynamic_strength(row["ai_dynamic_strength"]),
+            "ai_dynamic_lookback": self._normalize_ai_dynamic_lookback(row["ai_dynamic_lookback"]),
             "start_date": self._normalize_start_date(row["start_date"]),
             "market": row["market"] or "CN",
             "commission_rate": self._normalize_fee_rate(row["commission_rate"], default=DEFAULT_COMMISSION_RATE),
@@ -1357,6 +1756,10 @@ class QuantSimDB:
         trading_hours_only: Optional[bool] = None,
         analysis_timeframe: Optional[str] = None,
         strategy_mode: Optional[str] = None,
+        strategy_profile_id: Optional[str] = None,
+        ai_dynamic_strategy: Optional[str] = None,
+        ai_dynamic_strength: Optional[float] = None,
+        ai_dynamic_lookback: Optional[int] = None,
         start_date: Optional[str | date | datetime] = None,
         market: Optional[str] = None,
         commission_rate: Optional[float] = None,
@@ -1375,6 +1778,16 @@ class QuantSimDB:
             "strategy_mode": self._normalize_strategy_mode(
                 existing["strategy_mode"] if strategy_mode is None else strategy_mode
             ),
+            "strategy_profile_id": existing["strategy_profile_id"] if strategy_profile_id is None else str(strategy_profile_id or "").strip(),
+            "ai_dynamic_strategy": self._normalize_ai_dynamic_strategy(
+                existing["ai_dynamic_strategy"] if ai_dynamic_strategy is None else ai_dynamic_strategy
+            ),
+            "ai_dynamic_strength": self._normalize_ai_dynamic_strength(
+                existing["ai_dynamic_strength"] if ai_dynamic_strength is None else ai_dynamic_strength
+            ),
+            "ai_dynamic_lookback": self._normalize_ai_dynamic_lookback(
+                existing["ai_dynamic_lookback"] if ai_dynamic_lookback is None else ai_dynamic_lookback
+            ),
             "start_date": self._normalize_start_date(existing["start_date"] if start_date is None else start_date),
             "market": existing["market"] if market is None else str(market),
             "commission_rate": self._normalize_fee_rate(
@@ -1389,6 +1802,9 @@ class QuantSimDB:
         }
         if payload["interval_minutes"] <= 0:
             raise ValueError("interval_minutes must be positive")
+        selected_profile_id = str(payload["strategy_profile_id"] or "").strip()
+        if selected_profile_id and self.get_strategy_profile(selected_profile_id) is None:
+            raise ValueError(f"strategy profile not found: {selected_profile_id}")
 
         conn = self._connect()
         cursor = conn.cursor()
@@ -1396,7 +1812,9 @@ class QuantSimDB:
             """
             UPDATE sim_scheduler_config
             SET enabled = ?, auto_execute = ?, interval_minutes = ?, trading_hours_only = ?,
-                analysis_timeframe = ?, strategy_mode = ?, start_date = ?, market = ?,
+                analysis_timeframe = ?, strategy_mode = ?, strategy_profile_id = ?,
+                ai_dynamic_strategy = ?, ai_dynamic_strength = ?, ai_dynamic_lookback = ?,
+                start_date = ?, market = ?,
                 commission_rate = ?, sell_tax_rate = ?, last_run_at = ?, updated_at = ?
             WHERE id = 1
             """,
@@ -1407,6 +1825,10 @@ class QuantSimDB:
                 payload["trading_hours_only"],
                 payload["analysis_timeframe"],
                 payload["strategy_mode"],
+                payload["strategy_profile_id"],
+                payload["ai_dynamic_strategy"],
+                payload["ai_dynamic_strength"],
+                payload["ai_dynamic_lookback"],
                 payload["start_date"],
                 payload["market"],
                 payload["commission_rate"],
@@ -1459,6 +1881,7 @@ class QuantSimDB:
         quantity: int,
         note: str | None = None,
         executed_at: str | datetime | None = None,
+        apply_trade_cost: bool = False,
     ) -> None:
         self._validate_trade_inputs(price=price, quantity=quantity)
 
@@ -1482,6 +1905,7 @@ class QuantSimDB:
                     price=price,
                     quantity=quantity,
                     executed_at=executed_dt,
+                    apply_trade_cost=apply_trade_cost,
                 )
             elif action == "sell":
                 trade_result = self._apply_sell(
@@ -1490,6 +1914,7 @@ class QuantSimDB:
                     price=price,
                     quantity=quantity,
                     executed_at=executed_dt,
+                    apply_trade_cost=apply_trade_cost,
                 )
             else:
                 raise ValueError(f"Unsupported executed_action: {executed_action}")
@@ -1817,11 +2242,14 @@ class QuantSimDB:
         price: float,
         quantity: int,
         executed_at: datetime,
+        apply_trade_cost: bool = False,
     ) -> dict[str, Any]:
         executed_at_text = self._format_datetime(executed_at)
-        cost_cfg = self._current_trade_cost_config(cursor)
         gross_amount = round(price * quantity, 4)
-        commission_fee = round(gross_amount * cost_cfg["commission_rate"], 4)
+        commission_fee = 0.0
+        if apply_trade_cost:
+            cost_cfg = self._current_trade_cost_config(cursor)
+            commission_fee = round(gross_amount * cost_cfg["commission_rate"], 4)
         amount = round(gross_amount + commission_fee, 4)
         available_cash = self._get_available_cash(cursor)
         if amount > available_cash:
@@ -1910,6 +2338,7 @@ class QuantSimDB:
         price: float,
         quantity: int,
         executed_at: datetime,
+        apply_trade_cost: bool = False,
     ) -> dict[str, Any]:
         cursor.execute("SELECT * FROM sim_positions WHERE stock_code = ?", (stock_code,))
         position = cursor.fetchone()
@@ -1928,7 +2357,6 @@ class QuantSimDB:
 
         remaining_to_sell = quantity
         executed_at_text = self._format_datetime(executed_at)
-        cost_cfg = self._current_trade_cost_config(cursor)
         realized_pnl = 0.0
         for row, lot in lots:
             if remaining_to_sell <= 0:
@@ -1968,7 +2396,10 @@ class QuantSimDB:
         )
         remaining_cost = float(cursor.fetchone()["remaining_cost"] or 0)
         gross_proceeds = round(price * quantity, 4)
-        sell_fee = round(gross_proceeds * (cost_cfg["commission_rate"] + cost_cfg["sell_tax_rate"]), 4)
+        sell_fee = 0.0
+        if apply_trade_cost:
+            cost_cfg = self._current_trade_cost_config(cursor)
+            sell_fee = round(gross_proceeds * (cost_cfg["commission_rate"] + cost_cfg["sell_tax_rate"]), 4)
         proceeds = round(gross_proceeds - sell_fee, 4)
         realized_pnl = round(realized_pnl - sell_fee, 4)
         self._set_available_cash(cursor, self._get_available_cash(cursor) + proceeds)
@@ -2143,14 +2574,20 @@ class QuantSimDB:
                 INSERT INTO sim_scheduler_config
                 (
                     id, enabled, auto_execute, interval_minutes, trading_hours_only,
-                    analysis_timeframe, strategy_mode, start_date, market,
+                    analysis_timeframe, strategy_mode, strategy_profile_id,
+                    ai_dynamic_strategy, ai_dynamic_strength, ai_dynamic_lookback,
+                    start_date, market,
                     commission_rate, sell_tax_rate, last_run_at, updated_at
                 )
-                VALUES (1, 0, 0, 15, 1, ?, ?, ?, 'CN', ?, ?, NULL, ?)
+                VALUES (1, 0, 0, 15, 1, ?, ?, ?, ?, ?, ?, ?, 'CN', ?, ?, NULL, ?)
                 """,
                 (
                     DEFAULT_ANALYSIS_TIMEFRAME,
                     DEFAULT_STRATEGY_MODE,
+                    DEFAULT_STRATEGY_PROFILE_ID,
+                    DEFAULT_AI_DYNAMIC_STRATEGY,
+                    DEFAULT_AI_DYNAMIC_STRENGTH,
+                    DEFAULT_AI_DYNAMIC_LOOKBACK,
                     date.today().isoformat(),
                     DEFAULT_COMMISSION_RATE,
                     DEFAULT_SELL_TAX_RATE,
@@ -2173,6 +2610,38 @@ class QuantSimDB:
                 WHERE id = 1
                 """,
                 (DEFAULT_STRATEGY_MODE,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET strategy_profile_id = COALESCE(NULLIF(strategy_profile_id, ''), ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_STRATEGY_PROFILE_ID,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET ai_dynamic_strategy = COALESCE(NULLIF(ai_dynamic_strategy, ''), ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_AI_DYNAMIC_STRATEGY,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET ai_dynamic_strength = COALESCE(ai_dynamic_strength, ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_AI_DYNAMIC_STRENGTH,),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET ai_dynamic_lookback = COALESCE(ai_dynamic_lookback, ?)
+                WHERE id = 1
+                """,
+                (DEFAULT_AI_DYNAMIC_LOOKBACK,),
             )
             cursor.execute(
                 """
@@ -2216,6 +2685,37 @@ class QuantSimDB:
         if normalized not in SUPPORTED_STRATEGY_MODES:
             raise ValueError(f"Unsupported strategy_mode: {value}")
         return normalized
+
+    @staticmethod
+    def _normalize_ai_dynamic_strategy(value: str | None) -> str:
+        normalized = str(value or DEFAULT_AI_DYNAMIC_STRATEGY).strip().lower()
+        if normalized not in SUPPORTED_AI_DYNAMIC_STRATEGIES:
+            raise ValueError(f"Unsupported ai_dynamic_strategy: {value}")
+        return normalized
+
+    @staticmethod
+    def _normalize_ai_dynamic_strength(value: float | int | str | None) -> float:
+        try:
+            parsed = float(value if value is not None else DEFAULT_AI_DYNAMIC_STRENGTH)
+        except (TypeError, ValueError):
+            parsed = DEFAULT_AI_DYNAMIC_STRENGTH
+        if parsed < 0:
+            parsed = 0.0
+        if parsed > 1:
+            parsed = 1.0
+        return round(parsed, 4)
+
+    @staticmethod
+    def _normalize_ai_dynamic_lookback(value: int | float | str | None) -> int:
+        try:
+            parsed = int(round(float(value if value is not None else DEFAULT_AI_DYNAMIC_LOOKBACK)))
+        except (TypeError, ValueError):
+            parsed = DEFAULT_AI_DYNAMIC_LOOKBACK
+        if parsed < 6:
+            parsed = 6
+        if parsed > 336:
+            parsed = 336
+        return parsed
 
     @staticmethod
     def _normalize_start_date(value: str | date | datetime | None) -> str:
@@ -2278,6 +2778,508 @@ class QuantSimDB:
             "sell_tax_rate": sell_tax_rate,
         }
 
+    @staticmethod
+    def _deep_copy_json(value: Any) -> Any:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+
+    def _build_builtin_strategy_profile_configs(self) -> dict[str, dict[str, Any]]:
+        payload = StrategyScoringConfig.default()
+        base_config = {
+            "schema_version": str(payload.schema_version),
+            "base": self._deep_copy_json(payload.base),
+            "profiles": self._deep_copy_json(payload.profiles),
+        }
+
+        aggressive_config = self._deep_copy_json(base_config)
+        aggressive_config["base"]["dual_track"]["mode"] = "hybrid"
+        aggressive_config["base"]["dual_track"]["track_weights"] = {"tech": 1.35, "context": 0.65}
+        aggressive_config["base"]["dual_track"]["fusion_buy_threshold"] = 0.62
+        aggressive_config["base"]["dual_track"]["fusion_sell_threshold"] = -0.24
+        aggressive_config["base"]["dual_track"]["sell_precedence_gate"] = -0.58
+        aggressive_config["base"]["dual_track"]["min_fusion_confidence"] = 0.42
+        aggressive_config["base"]["dual_track"]["min_tech_score_for_buy"] = 0.05
+        aggressive_config["base"]["dual_track"]["min_context_score_for_buy"] = -0.02
+        aggressive_config["base"]["dual_track"]["min_tech_confidence_for_buy"] = 0.42
+        aggressive_config["base"]["dual_track"]["min_context_confidence_for_buy"] = 0.38
+        aggressive_config["base"]["dual_track"]["lambda_divergence"] = 0.45
+        aggressive_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.25
+        aggressive_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.12
+        aggressive_config["profiles"]["candidate"]["technical"]["group_weights"] = {
+            "trend": 1.55,
+            "momentum": 1.45,
+            "volume_confirmation": 0.95,
+            "volatility_risk": 0.55,
+        }
+        aggressive_config["profiles"]["candidate"]["technical"]["dimension_weights"] = {
+            "trend_direction": 1.35,
+            "ma_alignment": 1.10,
+            "ma_slope": 1.20,
+            "price_vs_ma20": 1.05,
+            "macd_level": 1.25,
+            "macd_hist_slope": 1.30,
+            "rsi_zone": 0.85,
+            "kdj_cross": 0.75,
+            "volume_ratio": 1.15,
+            "obv_trend": 1.05,
+            "atr_risk": 0.65,
+            "boll_position": 0.55,
+        }
+        aggressive_config["profiles"]["candidate"]["context"]["group_weights"] = {
+            "market_structure": 1.35,
+            "risk_account": 0.85,
+            "tradability_timing": 0.70,
+            "source_execution": 0.65,
+        }
+        aggressive_config["profiles"]["candidate"]["context"]["dimension_weights"] = {
+            "trend_regime": 1.20,
+            "price_structure": 1.15,
+            "momentum": 1.05,
+            "risk_balance": 0.85,
+            "account_posture": 0.70,
+            "liquidity": 0.95,
+            "session": 0.65,
+            "source_prior": 0.90,
+            "execution_feedback": 0.55,
+        }
+        aggressive_config["profiles"]["candidate"]["dual_track"] = {
+            "fusion_buy_threshold": 0.64,
+            "sell_precedence_gate": -0.56,
+            "min_fusion_confidence": 0.40,
+        }
+        aggressive_config["profiles"]["position"]["technical"]["group_weights"] = {
+            "trend": 1.35,
+            "momentum": 1.20,
+            "volume_confirmation": 0.95,
+            "volatility_risk": 0.75,
+        }
+        aggressive_config["profiles"]["position"]["technical"]["dimension_weights"] = {
+            "trend_direction": 1.25,
+            "ma_alignment": 1.05,
+            "ma_slope": 1.20,
+            "price_vs_ma20": 1.00,
+            "macd_level": 1.10,
+            "macd_hist_slope": 1.15,
+            "rsi_zone": 0.85,
+            "kdj_cross": 0.65,
+            "volume_ratio": 1.00,
+            "obv_trend": 0.95,
+            "atr_risk": 0.85,
+            "boll_position": 0.75,
+        }
+        aggressive_config["profiles"]["position"]["context"]["group_weights"] = {
+            "market_structure": 1.20,
+            "risk_account": 1.00,
+            "tradability_timing": 0.70,
+            "source_execution": 0.60,
+        }
+        aggressive_config["profiles"]["position"]["context"]["dimension_weights"] = {
+            "trend_regime": 1.15,
+            "price_structure": 1.10,
+            "momentum": 0.95,
+            "risk_balance": 1.00,
+            "account_posture": 0.90,
+            "liquidity": 0.90,
+            "session": 0.60,
+            "source_prior": 0.80,
+            "execution_feedback": 0.70,
+        }
+        aggressive_config["profiles"]["position"]["dual_track"] = {
+            "fusion_buy_threshold": 0.68,
+            "sell_precedence_gate": -0.55,
+            "min_fusion_confidence": 0.45,
+        }
+
+        stable_config = self._deep_copy_json(base_config)
+        stable_config["base"]["dual_track"]["mode"] = "hybrid"
+        stable_config["base"]["dual_track"]["track_weights"] = {"tech": 1.0, "context": 1.0}
+        stable_config["base"]["dual_track"]["fusion_buy_threshold"] = 0.76
+        stable_config["base"]["dual_track"]["fusion_sell_threshold"] = -0.17
+        stable_config["base"]["dual_track"]["sell_precedence_gate"] = -0.50
+        stable_config["base"]["dual_track"]["min_fusion_confidence"] = 0.50
+        stable_config["base"]["dual_track"]["lambda_divergence"] = 0.60
+        stable_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.35
+        stable_config["profiles"]["candidate"]["technical"]["group_weights"] = {
+            "trend": 1.30,
+            "momentum": 1.15,
+            "volume_confirmation": 1.00,
+            "volatility_risk": 0.85,
+        }
+        stable_config["profiles"]["candidate"]["technical"]["dimension_weights"] = {
+            "trend_direction": 1.20,
+            "ma_alignment": 1.00,
+            "ma_slope": 1.10,
+            "price_vs_ma20": 0.95,
+            "macd_level": 1.05,
+            "macd_hist_slope": 1.10,
+            "rsi_zone": 0.85,
+            "kdj_cross": 0.60,
+            "volume_ratio": 1.00,
+            "obv_trend": 1.00,
+            "atr_risk": 0.90,
+            "boll_position": 0.80,
+        }
+        stable_config["profiles"]["candidate"]["context"]["group_weights"] = {
+            "market_structure": 1.20,
+            "risk_account": 1.10,
+            "tradability_timing": 0.80,
+            "source_execution": 0.75,
+        }
+        stable_config["profiles"]["candidate"]["context"]["dimension_weights"] = {
+            "trend_regime": 1.10,
+            "price_structure": 1.05,
+            "momentum": 0.90,
+            "risk_balance": 1.15,
+            "account_posture": 1.00,
+            "liquidity": 0.95,
+            "session": 0.60,
+            "source_prior": 0.85,
+            "execution_feedback": 0.70,
+        }
+        stable_config["profiles"]["candidate"]["dual_track"] = {
+            "fusion_buy_threshold": 0.78,
+            "sell_precedence_gate": -0.50,
+            "min_fusion_confidence": 0.50,
+        }
+        stable_config["profiles"]["position"]["technical"]["group_weights"] = {
+            "trend": 1.10,
+            "momentum": 0.90,
+            "volume_confirmation": 0.95,
+            "volatility_risk": 1.20,
+        }
+        stable_config["profiles"]["position"]["technical"]["dimension_weights"] = {
+            "trend_direction": 1.05,
+            "ma_alignment": 0.95,
+            "ma_slope": 1.10,
+            "price_vs_ma20": 0.90,
+            "macd_level": 0.95,
+            "macd_hist_slope": 0.95,
+            "rsi_zone": 0.80,
+            "kdj_cross": 0.55,
+            "volume_ratio": 0.90,
+            "obv_trend": 0.95,
+            "atr_risk": 1.35,
+            "boll_position": 1.15,
+        }
+        stable_config["profiles"]["position"]["context"]["group_weights"] = {
+            "market_structure": 1.00,
+            "risk_account": 1.40,
+            "tradability_timing": 0.70,
+            "source_execution": 0.75,
+        }
+        stable_config["profiles"]["position"]["context"]["dimension_weights"] = {
+            "trend_regime": 1.00,
+            "price_structure": 1.00,
+            "momentum": 0.80,
+            "risk_balance": 1.35,
+            "account_posture": 1.20,
+            "liquidity": 0.85,
+            "session": 0.55,
+            "source_prior": 0.75,
+            "execution_feedback": 0.90,
+        }
+        stable_config["profiles"]["position"]["dual_track"] = {
+            "fusion_buy_threshold": 0.74,
+            "sell_precedence_gate": -0.50,
+            "min_fusion_confidence": 0.52,
+        }
+
+        conservative_config = self._deep_copy_json(base_config)
+        conservative_config["base"]["dual_track"]["mode"] = "hybrid"
+        conservative_config["base"]["dual_track"]["track_weights"] = {"tech": 0.75, "context": 1.25}
+        conservative_config["base"]["dual_track"]["fusion_buy_threshold"] = 0.88
+        conservative_config["base"]["dual_track"]["fusion_sell_threshold"] = -0.10
+        conservative_config["base"]["dual_track"]["sell_precedence_gate"] = -0.36
+        conservative_config["base"]["dual_track"]["min_fusion_confidence"] = 0.62
+        conservative_config["base"]["dual_track"]["min_tech_score_for_buy"] = 0.08
+        conservative_config["base"]["dual_track"]["min_context_score_for_buy"] = 0.10
+        conservative_config["base"]["dual_track"]["min_tech_confidence_for_buy"] = 0.58
+        conservative_config["base"]["dual_track"]["min_context_confidence_for_buy"] = 0.62
+        conservative_config["base"]["dual_track"]["lambda_divergence"] = 0.75
+        conservative_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.50
+        conservative_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.15
+        conservative_config["profiles"]["candidate"]["technical"]["group_weights"] = {
+            "trend": 1.05,
+            "momentum": 0.80,
+            "volume_confirmation": 0.90,
+            "volatility_risk": 1.35,
+        }
+        conservative_config["profiles"]["candidate"]["technical"]["dimension_weights"] = {
+            "trend_direction": 1.00,
+            "ma_alignment": 0.90,
+            "ma_slope": 1.00,
+            "price_vs_ma20": 0.85,
+            "macd_level": 0.80,
+            "macd_hist_slope": 0.85,
+            "rsi_zone": 0.75,
+            "kdj_cross": 0.45,
+            "volume_ratio": 0.85,
+            "obv_trend": 0.90,
+            "atr_risk": 1.40,
+            "boll_position": 1.25,
+        }
+        conservative_config["profiles"]["candidate"]["context"]["group_weights"] = {
+            "market_structure": 1.00,
+            "risk_account": 1.65,
+            "tradability_timing": 0.75,
+            "source_execution": 0.60,
+        }
+        conservative_config["profiles"]["candidate"]["context"]["dimension_weights"] = {
+            "trend_regime": 0.95,
+            "price_structure": 1.00,
+            "momentum": 0.75,
+            "risk_balance": 1.50,
+            "account_posture": 1.35,
+            "liquidity": 0.90,
+            "session": 0.55,
+            "source_prior": 0.70,
+            "execution_feedback": 1.00,
+        }
+        conservative_config["profiles"]["candidate"]["dual_track"] = {
+            "fusion_buy_threshold": 0.86,
+            "sell_precedence_gate": -0.38,
+            "min_fusion_confidence": 0.60,
+        }
+        conservative_config["profiles"]["position"]["technical"]["group_weights"] = {
+            "trend": 0.95,
+            "momentum": 0.65,
+            "volume_confirmation": 0.85,
+            "volatility_risk": 1.70,
+        }
+        conservative_config["profiles"]["position"]["technical"]["dimension_weights"] = {
+            "trend_direction": 0.90,
+            "ma_alignment": 0.85,
+            "ma_slope": 0.95,
+            "price_vs_ma20": 0.80,
+            "macd_level": 0.70,
+            "macd_hist_slope": 0.75,
+            "rsi_zone": 0.70,
+            "kdj_cross": 0.40,
+            "volume_ratio": 0.80,
+            "obv_trend": 0.85,
+            "atr_risk": 1.65,
+            "boll_position": 1.45,
+        }
+        conservative_config["profiles"]["position"]["context"]["group_weights"] = {
+            "market_structure": 0.90,
+            "risk_account": 1.80,
+            "tradability_timing": 0.65,
+            "source_execution": 0.55,
+        }
+        conservative_config["profiles"]["position"]["context"]["dimension_weights"] = {
+            "trend_regime": 0.85,
+            "price_structure": 0.90,
+            "momentum": 0.70,
+            "risk_balance": 1.65,
+            "account_posture": 1.45,
+            "liquidity": 0.80,
+            "session": 0.50,
+            "source_prior": 0.65,
+            "execution_feedback": 1.10,
+        }
+        conservative_config["profiles"]["position"]["dual_track"] = {
+            "fusion_buy_threshold": 0.84,
+            "sell_precedence_gate": -0.34,
+            "min_fusion_confidence": 0.65,
+        }
+
+        return {
+            "aggressive": aggressive_config,
+            "stable": stable_config,
+            "conservative": conservative_config,
+        }
+
+    def _ensure_default_strategy_profile(self, cursor: sqlite3.Cursor) -> None:
+        now_text = self._now()
+        builtin_configs = self._build_builtin_strategy_profile_configs()
+
+        for builtin in BUILTIN_STRATEGY_PROFILES:
+            profile_id = builtin["id"]
+            profile_name = builtin["name"]
+            description = builtin["description"]
+            variant = builtin["variant"]
+
+            cursor.execute("SELECT id FROM strategy_profiles WHERE id = ?", (profile_id,))
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    INSERT INTO strategy_profiles
+                    (id, name, description, enabled, is_default, created_at, updated_at)
+                    VALUES (?, ?, ?, 1, 0, ?, ?)
+                    """,
+                    (profile_id, profile_name, description, now_text, now_text),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE strategy_profiles
+                    SET name = ?, description = ?, enabled = 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (profile_name, description, now_text, profile_id),
+                )
+
+            target_config = self._deep_copy_json(builtin_configs[variant])
+            cursor.execute(
+                """
+                SELECT config_json, note
+                FROM strategy_profile_versions
+                WHERE profile_id = ?
+                ORDER BY version DESC
+                LIMIT 1
+                """,
+                (profile_id,),
+            )
+            latest_version_row = cursor.fetchone()
+            if latest_version_row is None:
+                self._insert_strategy_profile_version(
+                    cursor,
+                    profile_id=profile_id,
+                    config=target_config,
+                    note=f"bootstrap_{variant}",
+                )
+            else:
+                latest_note = str(latest_version_row["note"] or "").strip().lower()
+                latest_config_raw = latest_version_row["config_json"]
+                latest_config: dict[str, Any] = {}
+                if isinstance(latest_config_raw, str):
+                    try:
+                        parsed_latest = json.loads(latest_config_raw)
+                        if isinstance(parsed_latest, dict):
+                            latest_config = parsed_latest
+                    except Exception:
+                        latest_config = {}
+                target_signature = json.dumps(target_config, ensure_ascii=False, sort_keys=True)
+                latest_signature = json.dumps(latest_config, ensure_ascii=False, sort_keys=True)
+                if (
+                    latest_note.startswith("bootstrap_")
+                    or latest_note.startswith("builtin_refresh_")
+                ) and latest_signature != target_signature:
+                    self._insert_strategy_profile_version(
+                        cursor,
+                        profile_id=profile_id,
+                        config=target_config,
+                        note=f"builtin_refresh_{variant}",
+                    )
+
+        cursor.execute(
+            "UPDATE strategy_profiles SET enabled = 0, is_default = 0, updated_at = ? WHERE id = ?",
+            (now_text, LEGACY_DEFAULT_STRATEGY_PROFILE_ID),
+        )
+        cursor.execute(
+            """
+            SELECT id
+            FROM strategy_profiles
+            WHERE is_default = 1 AND enabled = 1
+            ORDER BY updated_at DESC, id ASC
+            LIMIT 1
+            """
+        )
+        current_default = cursor.fetchone()
+        current_default_id = str(current_default["id"]).strip() if current_default is not None else ""
+        if not current_default_id:
+            cursor.execute("UPDATE strategy_profiles SET is_default = 0, updated_at = ?", (now_text,))
+            cursor.execute(
+                "UPDATE strategy_profiles SET is_default = 1, enabled = 1, updated_at = ? WHERE id = ?",
+                (now_text, DEFAULT_STRATEGY_PROFILE_ID),
+            )
+        cursor.execute(
+            """
+            UPDATE sim_scheduler_config
+            SET strategy_profile_id = CASE
+                    WHEN strategy_profile_id IS NULL OR strategy_profile_id = '' OR strategy_profile_id = ?
+                    THEN ?
+                    ELSE strategy_profile_id
+                END,
+                updated_at = ?
+            WHERE id = 1
+            """,
+            (LEGACY_DEFAULT_STRATEGY_PROFILE_ID, DEFAULT_STRATEGY_PROFILE_ID, now_text),
+        )
+
+    def _validate_and_normalize_strategy_profile_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(config, dict):
+            raise ValueError("strategy profile config must be an object")
+        schema_version = str(config.get("schema_version") or "quant_explain/v2.3").strip() or "quant_explain/v2.3"
+        base = config.get("base")
+        profiles = config.get("profiles")
+        if not isinstance(base, dict) or not isinstance(profiles, dict):
+            raise ValueError("strategy profile config requires base and profiles")
+        strategy = StrategyScoringConfig(schema_version=schema_version, base=base, profiles=profiles)
+        strategy.resolve("candidate")
+        strategy.resolve("position")
+        return {
+            "schema_version": schema_version,
+            "base": json.loads(json.dumps(base)),
+            "profiles": json.loads(json.dumps(profiles)),
+        }
+
+    def _insert_strategy_profile_version(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        profile_id: str,
+        config: dict[str, Any],
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """
+            SELECT COALESCE(MAX(version), 0) AS max_version
+            FROM strategy_profile_versions
+            WHERE profile_id = ?
+            """,
+            (profile_id,),
+        )
+        row = cursor.fetchone()
+        next_version = int((row["max_version"] if row is not None else 0) or 0) + 1
+        now_text = self._now()
+        cursor.execute(
+            """
+            INSERT INTO strategy_profile_versions
+            (profile_id, version, config_json, note, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                next_version,
+                json.dumps(config, ensure_ascii=False),
+                str(note or "").strip() or None,
+                now_text,
+            ),
+        )
+        version_id = int(cursor.lastrowid)
+        return {
+            "id": version_id,
+            "profile_id": profile_id,
+            "version": next_version,
+            "config": config,
+            "note": str(note or "").strip(),
+            "created_at": now_text,
+        }
+
+    @staticmethod
+    def _strategy_profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": str(row["id"]),
+            "name": str(row["name"] or row["id"]),
+            "description": str(row["description"] or ""),
+            "enabled": bool(row["enabled"]),
+            "is_default": bool(row["is_default"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _strategy_profile_version_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        config = self._loads_metadata(row["config_json"])
+        return {
+            "id": int(row["id"]),
+            "profile_id": str(row["profile_id"]),
+            "version": int(row["version"]),
+            "config": config,
+            "note": str(row["note"] or ""),
+            "created_at": row["created_at"],
+        }
+
     def _candidate_row_to_dict(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict[str, Any]:
         payload = self._row_to_dict(row)
         payload["metadata"] = self._loads_metadata(payload.pop("metadata_json", None))
@@ -2289,6 +3291,8 @@ class QuantSimDB:
         if "metadata_json" in payload:
             payload["metadata"] = self._loads_metadata(payload.get("metadata_json"))
         payload["strategy_profile"] = self._loads_metadata(payload.pop("strategy_profile_json", None))
+        if "strategy_profile_snapshot_json" in payload:
+            payload["strategy_profile_snapshot"] = self._loads_metadata(payload.pop("strategy_profile_snapshot_json", None))
         return payload
 
     def _get_candidate_sources(self, cursor: sqlite3.Cursor, candidate_id: int) -> list[str]:
@@ -2305,13 +3309,23 @@ class QuantSimDB:
     def _attach_candidate_source(self, cursor: sqlite3.Cursor, candidate_id: int, source: str) -> None:
         if not source:
             return
-        cursor.execute(
-            """
-            INSERT OR IGNORE INTO candidate_sources (candidate_id, source, created_at)
-            VALUES (?, ?, ?)
-            """,
-            (candidate_id, source, self._now()),
-        )
+        try:
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO candidate_sources (candidate_id, source, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (candidate_id, source, self._now()),
+            )
+        except sqlite3.OperationalError:
+            # 兼容历史库: candidate_sources 可能没有 created_at 字段
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO candidate_sources (candidate_id, source)
+                VALUES (?, ?)
+                """,
+                (candidate_id, source),
+            )
 
     def _set_candidate_status(self, cursor: sqlite3.Cursor, stock_code: str, status: str) -> None:
         cursor.execute(

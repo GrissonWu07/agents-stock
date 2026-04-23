@@ -265,6 +265,16 @@ export type LiveSimSnapshot = {
     interval: string;
     timeframe: string;
     strategyMode: string;
+    strategyProfileId?: string;
+    aiDynamicStrategy?: string;
+    aiDynamicStrength?: string;
+    aiDynamicLookback?: string;
+    strategyProfiles?: {
+      id: string;
+      name: string;
+      enabled: boolean;
+      isDefault: boolean;
+    }[];
     autoExecute: string;
     market: string;
     initialCapital: string;
@@ -298,6 +308,16 @@ export type ReplaySnapshot = {
     timeframe: string;
     market: string;
     strategyMode: string;
+    strategyProfileId?: string;
+    aiDynamicStrategy?: string;
+    aiDynamicStrength?: string;
+    aiDynamicLookback?: string;
+    strategyProfiles?: {
+      id: string;
+      name: string;
+      enabled: boolean;
+      isDefault: boolean;
+    }[];
     commissionRatePct?: string;
     sellTaxRatePct?: string;
   };
@@ -317,6 +337,9 @@ export type ReplaySnapshot = {
     finalEquity?: string;
     tradeCount?: string;
     winRate?: string;
+    strategyProfileId?: string;
+    strategyProfileName?: string;
+    strategyProfileVersionId?: string;
     holdings?: TableRow[];
   }[];
   tradingAnalysis: {
@@ -366,9 +389,23 @@ export type HistorySnapshot = {
 };
 
 export type SettingsSnapshot = {
+  updatedAt?: string;
+  metrics?: SummaryMetric[];
   dataSources: ConfigSettingItem[];
   modelConfig: ConfigSettingItem[];
   runtimeParams: ConfigSettingItem[];
+  strategyProfiles?: {
+    id: string;
+    name: string;
+    description?: string;
+    enabled: boolean;
+    isDefault: boolean;
+    updatedAt?: string;
+    latestVersionId?: string;
+    latestVersion?: string;
+    config?: Record<string, unknown>;
+  }[];
+  selectedStrategyProfileId?: string;
 };
 
 export type PageSnapshotMap = {

@@ -7,6 +7,7 @@ import { LiveSimPage } from "../features/quant/live-sim-page";
 import { HisReplayPage } from "../features/quant/his-replay-page";
 import { RealMonitorPage } from "../features/monitor/real-monitor-page";
 import { SettingsPage } from "../features/settings/settings-page";
+import { StrategyConfigPage } from "../features/settings/strategy-config-page";
 
 export type AppRouteItem = {
   path: string;
@@ -23,6 +24,7 @@ export const APP_ROUTE_ITEMS: AppRouteItem[] = [
   { path: "/live-sim", labelKey: "Quant simulation", groupKey: "Portfolio", element: <LiveSimPage /> },
   { path: "/his-replay", labelKey: "Historical replay", groupKey: "Portfolio", element: <HisReplayPage /> },
   { path: "/real-monitor", labelKey: "Real-time monitor", groupKey: "Portfolio", element: <RealMonitorPage /> },
+  { path: "/strategy-config", labelKey: "Strategy configuration", groupKey: "Settings", element: <StrategyConfigPage /> },
   { path: "/settings", labelKey: "Settings", groupKey: "Settings", element: <SettingsPage /> },
 ];
 

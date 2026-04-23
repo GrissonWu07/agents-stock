@@ -206,6 +206,68 @@ export function createApiClient(options: ApiClientOptions = {}) {
     });
   };
 
+  const listStrategyProfiles = async <T,>(includeDisabled: boolean = true): Promise<T> =>
+    requestLive<T>(`/api/v1/strategy-profiles?include_disabled=${includeDisabled ? "true" : "false"}`);
+
+  const getStrategyProfile = async <T,>(profileId: string, versionsLimit: number = 20): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}?versions_limit=${Math.max(1, versionsLimit)}`);
+  };
+
+  const createStrategyProfile = async <T,>(payload: unknown): Promise<T> =>
+    requestLive<T>("/api/v1/strategy-profiles", { method: "POST", body: payload ?? {} });
+
+  const updateStrategyProfile = async <T,>(profileId: string, payload: unknown): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}`, {
+      method: "PUT",
+      body: payload ?? {},
+    });
+  };
+
+  const cloneStrategyProfile = async <T,>(profileId: string, payload: unknown): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}/clone`, {
+      method: "POST",
+      body: payload ?? {},
+    });
+  };
+
+  const validateStrategyProfile = async <T,>(profileId: string, payload: unknown): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}/validate`, {
+      method: "POST",
+      body: payload ?? {},
+    });
+  };
+
+  const setDefaultStrategyProfile = async <T,>(profileId: string): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}/set-default`, {
+      method: "POST",
+      body: {},
+    });
+  };
+
+  const deleteStrategyProfile = async <T,>(profileId: string): Promise<T> => {
+    if (!profileId.trim()) {
+      throw new ApiError(t("Missing strategy profile id"), 400, "/api/v1/strategy-profiles");
+    }
+    return requestLive<T>(`/api/v1/strategy-profiles/${encodeURIComponent(profileId)}`, {
+      method: "DELETE",
+    });
+  };
+
   return {
     baseUrl,
     mode,
@@ -214,6 +276,14 @@ export function createApiClient(options: ApiClientOptions = {}) {
     getTaskStatus: requestTask,
     getPortfolioPosition: requestPortfolioPosition,
     patchPortfolioPosition,
+    listStrategyProfiles,
+    getStrategyProfile,
+    createStrategyProfile,
+    updateStrategyProfile,
+    cloneStrategyProfile,
+    validateStrategyProfile,
+    setDefaultStrategyProfile,
+    deleteStrategyProfile,
   };
 }
 

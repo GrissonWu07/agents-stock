@@ -21,11 +21,9 @@ const TIMEFRAME_OPTIONS = [
   { value: "1d+30m", label: "日线方向 + 30分钟确认" },
 ];
 
-const STRATEGY_MODE_OPTIONS = [
-  { value: "auto", label: "自动" },
-  { value: "aggressive", label: "激进" },
-  { value: "neutral", label: "中性" },
-  { value: "defensive", label: "稳健" },
+const AI_DYNAMIC_STRATEGY_OPTIONS = [
+  { value: "off", label: "关闭" },
+  { value: "hybrid", label: "开启" },
 ];
 
 const MARKET_OPTIONS = ["CN", "HK", "US"] as const;
@@ -56,17 +54,33 @@ function parseRatePercent(value: string | undefined, fallback: number) {
   return Math.max(0, parsed);
 }
 
-function normalizeStrategyMode(value: string) {
-  const normalized = String(value).trim().toLowerCase();
-  if (normalized === "aggressive" || normalized.includes("激进")) return "aggressive";
-  if (normalized === "neutral" || normalized.includes("中性")) return "neutral";
-  if (normalized === "defensive" || normalized.includes("稳健") || normalized.includes("防守")) return "defensive";
-  return "auto";
-}
-
 function normalizeMarket(value: string) {
   const normalized = String(value).trim().toUpperCase();
   return MARKET_OPTIONS.includes(normalized as (typeof MARKET_OPTIONS)[number]) ? normalized : "CN";
+}
+
+function normalizeAiDynamicStrategy(value: string) {
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized || normalized === "off" || normalized.includes("关")) return "off";
+  if (normalized === "template" || normalized === "weights" || normalized === "hybrid" || normalized.includes("开")) return "hybrid";
+  return "off";
+}
+
+function parseDynamicStrength(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed > 1) return Math.max(0, Math.min(1, parsed / 100));
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function parseDynamicLookback(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/\d+/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(6, Math.min(336, Math.round(parsed)));
 }
 
 type HisReplayPageProps = {
@@ -135,7 +149,10 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   const [endTime, setEndTime] = useState("15:00");
   const [timeframe, setTimeframe] = useState("30m");
   const [market, setMarket] = useState<(typeof MARKET_OPTIONS)[number]>("CN");
-  const [strategyMode, setStrategyMode] = useState("auto");
+  const [strategyProfileId, setStrategyProfileId] = useState("");
+  const [aiDynamicStrategy, setAiDynamicStrategy] = useState("off");
+  const [aiDynamicStrength, setAiDynamicStrength] = useState(0.5);
+  const [aiDynamicLookback, setAiDynamicLookback] = useState(48);
   const [commissionRatePct, setCommissionRatePct] = useState(0.03);
   const [sellTaxRatePct, setSellTaxRatePct] = useState(0.1);
   const [replayUntilNow, setReplayUntilNow] = useState(false);
@@ -162,7 +179,10 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     setEndTime("15:00");
     setTimeframe(normalizeTimeframe(snapshot.config.timeframe));
     setMarket(normalizeMarket(snapshot.config.market) as (typeof MARKET_OPTIONS)[number]);
-    setStrategyMode(normalizeStrategyMode(snapshot.config.strategyMode));
+    setStrategyProfileId(String(snapshot.config.strategyProfileId ?? snapshot.config.strategyProfiles?.[0]?.id ?? ""));
+    setAiDynamicStrategy(normalizeAiDynamicStrategy(snapshot.config.aiDynamicStrategy ?? "off"));
+    setAiDynamicStrength(parseDynamicStrength(snapshot.config.aiDynamicStrength, 0.5));
+    setAiDynamicLookback(parseDynamicLookback(snapshot.config.aiDynamicLookback, 48));
     setCommissionRatePct(parseRatePercent(snapshot.config.commissionRatePct, 0.03));
     setSellTaxRatePct(parseRatePercent(snapshot.config.sellTaxRatePct, 0.1));
     setReplayUntilNow(false);
@@ -456,9 +476,19 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                 </select>
               </label>
               <label className="field">
-                <span className="field__label">策略模式</span>
-                <select className="input" value={strategyMode} onChange={(event) => setStrategyMode(event.target.value)}>
-                  {STRATEGY_MODE_OPTIONS.map((option) => (
+                <span className="field__label">策略配置</span>
+                <select className="input" value={strategyProfileId} onChange={(event) => setStrategyProfileId(event.target.value)}>
+                  {(snapshot.config.strategyProfiles ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span className="field__label">AI动态策略</span>
+                <select className="input" value={aiDynamicStrategy} onChange={(event) => setAiDynamicStrategy(event.target.value)}>
+                  {AI_DYNAMIC_STRATEGY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -524,7 +554,11 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                     endDateTime: replayUntilNow ? null : `${endDate} ${endTime}:00`,
                     timeframe,
                     market,
-                    strategyMode,
+                    strategyMode: "auto",
+                    strategyProfileId,
+                    aiDynamicStrategy,
+                    aiDynamicStrength,
+                    aiDynamicLookback,
                     commissionRatePct,
                     sellTaxRatePct,
                     overwriteLive,
@@ -584,7 +618,10 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                       <div className="summary-item__body">{`开始时间：${selectedTaskStartedAt}`}</div>
                       <div className="summary-item__body">{`结束时间：${selectedTaskEndedAt}`}</div>
                       <div className="summary-item__body">{`区间：${selectedTaskRange}`}</div>
-                      <div className="summary-item__body">{`模式：${replayModeLabel} · 粒度：${snapshot.config.timeframe} · 策略模式：${snapshot.config.strategyMode}`}</div>
+                      <div className="summary-item__body">{`模式：${replayModeLabel} · 粒度：${snapshot.config.timeframe}`}</div>
+                      <div className="summary-item__body">
+                        {`策略配置：${selectedTask.strategyProfileName || selectedTask.strategyProfileId || strategyProfileId || "--"}${selectedTask.strategyProfileVersionId ? ` · 版本#${selectedTask.strategyProfileVersionId}` : ""}`}
+                      </div>
                     </div>
                     <div className="mini-metric-grid replay-task-metrics-grid" style={{ gap: "8px" }}>
                       <div className="mini-metric">

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 _LOCALES_DIR = Path(__file__).resolve().parent / "locales"
-_DEFAULT_LOCALE = (os.getenv("APP_LOCALE") or "en-US").strip() or "en-US"
+_DEFAULT_LOCALE = (os.getenv("APP_LOCALE") or "zh-CN").strip() or "zh-CN"
 _FALLBACK_LOCALE = "en-US"
 
 

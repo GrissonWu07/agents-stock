@@ -33,6 +33,7 @@ class PortfolioService:
             quantity=quantity,
             note=note,
             executed_at=executed_at,
+            apply_trade_cost=True,
         )
 
     def confirm_sell(
@@ -50,6 +51,7 @@ class PortfolioService:
             quantity=quantity,
             note=note,
             executed_at=executed_at,
+            apply_trade_cost=True,
         )
 
     def delay_signal(self, signal_id: int, note: Optional[str] = None) -> None:

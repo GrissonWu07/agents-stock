@@ -697,6 +697,14 @@ def _action_research_run_module(context: Any, payload: dict[str, Any]) -> dict[s
         args=(context, task_id, body),
         name_prefix="research-task",
     )
+    wait_ms = max(0, _int(body.get("waitMs"), 600) or 600)
+    if wait_ms > 0:
+        deadline = time.monotonic() + (wait_ms / 1000.0)
+        while time.monotonic() < deadline:
+            task = research_task_manager.get_task(task_id)
+            if not task or task.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
     snapshot = _snapshot_research(context, task_job=research_task_manager.get_task(task_id))
     snapshot["taskId"] = task_id
     return snapshot

@@ -56,9 +56,14 @@ class NotificationService:
             config['webhook_keyword'] = os.getenv('WEBHOOK_KEYWORD')
         
         return config
+
+    def reload_runtime_config(self) -> None:
+        """Reload notification config from current environment variables."""
+        self.config = self._load_config()
     
     def send_notifications(self):
         """发送所有待发送的通知"""
+        self.reload_runtime_config()
         notifications = monitor_db.get_pending_notifications()
         
         if not notifications:
@@ -86,6 +91,7 @@ class NotificationService:
     
     def send_notification(self, notification: Dict) -> bool:
         """发送单个通知"""
+        self.reload_runtime_config()
         success = False
         
         # 尝试webhook通知
@@ -543,6 +549,7 @@ _此消息由AI股票分析系统自动发送_"""
             是否发送成功
         """
         try:
+            self.reload_runtime_config()
             # 构建通知内容
             total = analysis_results.get("total", 0)
             succeeded = len([r for r in analysis_results.get("results", []) if r.get("result", {}).get("success")])

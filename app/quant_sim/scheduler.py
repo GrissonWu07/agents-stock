@@ -9,6 +9,11 @@ from pathlib import Path
 import schedule
 
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
+from app.quant_sim.dynamic_strategy import (
+    DEFAULT_AI_DYNAMIC_LOOKBACK,
+    DEFAULT_AI_DYNAMIC_STRENGTH,
+    DEFAULT_AI_DYNAMIC_STRATEGY,
+)
 from app.quant_sim.engine import QuantSimEngine
 from app.quant_sim.portfolio_service import PortfolioService
 from app.runtime_paths import default_db_path
@@ -50,16 +55,43 @@ class QuantSimScheduler:
         config = self.db.get_scheduler_config()
         analysis_timeframe = str(config["analysis_timeframe"])
         strategy_mode = str(config["strategy_mode"])
-        candidates = self.engine.candidate_pool.list_candidates(status="active")
+        configured_profile_id = str(config.get("strategy_profile_id") or "").strip()
+        default_profile_id = self.db.get_default_strategy_profile_id()
+        strategy_profile_id = configured_profile_id if configured_profile_id and configured_profile_id != default_profile_id else None
+        ai_dynamic_strategy = str(config.get("ai_dynamic_strategy") or DEFAULT_AI_DYNAMIC_STRATEGY).strip().lower()
+        ai_dynamic_strength = float(config.get("ai_dynamic_strength") or DEFAULT_AI_DYNAMIC_STRENGTH)
+        ai_dynamic_lookback = int(config.get("ai_dynamic_lookback") or DEFAULT_AI_DYNAMIC_LOOKBACK)
         positions = self.portfolio.list_positions()
+        held_codes = {str(item.get("stock_code") or "").strip() for item in positions if str(item.get("stock_code") or "").strip()}
+        candidates = [
+            item
+            for item in self.engine.candidate_pool.list_candidates(status="active")
+            if str(item.get("stock_code") or "").strip() not in held_codes
+        ]
+        candidate_kwargs = {
+            "analysis_timeframe": analysis_timeframe,
+            "strategy_mode": strategy_mode,
+            "ai_dynamic_strategy": ai_dynamic_strategy,
+            "ai_dynamic_strength": ai_dynamic_strength,
+            "ai_dynamic_lookback": ai_dynamic_lookback,
+        }
+        if strategy_profile_id:
+            candidate_kwargs["strategy_profile_id"] = strategy_profile_id
+        if held_codes:
+            candidate_kwargs["exclude_codes"] = held_codes
         candidate_signals = self.engine.analyze_active_candidates(
-            analysis_timeframe=analysis_timeframe,
-            strategy_mode=strategy_mode,
+            **candidate_kwargs,
         )
-        position_signals = self.engine.analyze_positions(
-            analysis_timeframe=analysis_timeframe,
-            strategy_mode=strategy_mode,
-        )
+        position_kwargs = {
+            "analysis_timeframe": analysis_timeframe,
+            "strategy_mode": strategy_mode,
+            "ai_dynamic_strategy": ai_dynamic_strategy,
+            "ai_dynamic_strength": ai_dynamic_strength,
+            "ai_dynamic_lookback": ai_dynamic_lookback,
+        }
+        if strategy_profile_id:
+            position_kwargs["strategy_profile_id"] = strategy_profile_id
+        position_signals = self.engine.analyze_positions(**position_kwargs)
         auto_executed = self._auto_execute_pending_signals()
         snapshot_id = self.db.add_account_snapshot(run_reason)
         self.db.update_scheduler_config(last_run_at=self._now())
@@ -82,6 +114,10 @@ class QuantSimScheduler:
         trading_hours_only: bool | None = None,
         analysis_timeframe: str | None = None,
         strategy_mode: str | None = None,
+        strategy_profile_id: str | None = None,
+        ai_dynamic_strategy: str | None = None,
+        ai_dynamic_strength: float | None = None,
+        ai_dynamic_lookback: int | None = None,
         start_date: str | None = None,
         market: str | None = None,
         commission_rate: float | None = None,
@@ -94,6 +130,10 @@ class QuantSimScheduler:
             trading_hours_only=trading_hours_only,
             analysis_timeframe=analysis_timeframe,
             strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
             start_date=start_date,
             market=market,
             commission_rate=commission_rate,
@@ -118,6 +158,10 @@ class QuantSimScheduler:
             "trading_hours_only": config["trading_hours_only"],
             "analysis_timeframe": config["analysis_timeframe"],
             "strategy_mode": config["strategy_mode"],
+            "strategy_profile_id": config.get("strategy_profile_id"),
+            "ai_dynamic_strategy": config.get("ai_dynamic_strategy"),
+            "ai_dynamic_strength": config.get("ai_dynamic_strength"),
+            "ai_dynamic_lookback": config.get("ai_dynamic_lookback"),
             "start_date": config["start_date"],
             "market": config["market"],
             "commission_rate": config["commission_rate"],

@@ -528,6 +528,7 @@ class SmartMonitorTDXDataFetcher:
         hosts_file: Optional[str | Path],
     ) -> List[Tuple[str, str, int]]:
         hosts: List[Tuple[str, str, int]] = []
+        repo_hosts = load_pytdx_hosts(hosts_file)
 
         if host:
             hosts.append(("primary", host, int(port)))
@@ -547,7 +548,7 @@ class SmartMonitorTDXDataFetcher:
             else:
                 hosts.append((f"fallback-{host_info}", host_info, DEFAULT_TDX_PORT))
 
-        hosts.extend(load_pytdx_hosts(hosts_file))
+        hosts.extend(repo_hosts)
 
         if not hosts:
             for name, host_name, host_port in hq_hosts[:DEFAULT_HOST_LIMIT]:
@@ -561,6 +562,21 @@ class SmartMonitorTDXDataFetcher:
                 continue
             seen.add(key)
             deduplicated.append((name, host_name, host_port))
+
+        if repo_hosts:
+            prioritized_repo: List[Tuple[str, str, int]] = []
+            used_repo_keys: set[tuple[str, int]] = set()
+            for _, repo_host, repo_port in repo_hosts:
+                key = (repo_host, repo_port)
+                if key in used_repo_keys:
+                    continue
+                matched = next((item for item in deduplicated if item[1] == repo_host and item[2] == repo_port), None)
+                if matched is None:
+                    continue
+                prioritized_repo.append(matched)
+                used_repo_keys.add(key)
+            remaining = [item for item in deduplicated if (item[1], item[2]) not in used_repo_keys]
+            return prioritized_repo + self._prioritize_hosts(remaining)
 
         return self._prioritize_hosts(deduplicated)
 

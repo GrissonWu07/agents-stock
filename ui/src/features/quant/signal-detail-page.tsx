@@ -652,6 +652,26 @@ function _localizeDynamicText(rawText: string): string {
   return text;
 }
 
+function _parseNumeric(raw: string): number | null {
+  const text = String(raw || "").replace(/,/g, "").trim();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/[+\-]?\d+(\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function _formatSigned(value: number | null, digits = 4): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+}
+
 export function SignalDetailPage() {
   const isCompactLayout = useCompactLayout();
   const navigate = useNavigate();
@@ -661,6 +681,8 @@ export function SignalDetailPage() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<SignalDetailPayload>(emptyDetail);
+  const [marketRefreshSeq, setMarketRefreshSeq] = useState(0);
+  const [marketRefreshPending, setMarketRefreshPending] = useState(false);
 
   useEffect(() => {
     const id = String(signalId || "").trim();
@@ -673,10 +695,16 @@ export function SignalDetailPage() {
     async function load() {
       setStatus("loading");
       setError(null);
+      const forceRefreshMarket = marketRefreshSeq > 0;
       try {
-        const response = await fetch(`/api/v1/quant/signals/${encodeURIComponent(id)}?source=${encodeURIComponent(source)}`, {
-          headers: { Accept: "application/json" },
-        });
+        const response = await fetch(
+          `/api/v1/quant/signals/${encodeURIComponent(id)}?source=${encodeURIComponent(source)}${
+            forceRefreshMarket ? "&refresh_market=1" : ""
+          }`,
+          {
+            headers: { Accept: "application/json" },
+          },
+        );
         if (!response.ok) {
           const text = await response.text();
           throw new Error(text || `Request failed: ${response.status}`);
@@ -685,11 +713,17 @@ export function SignalDetailPage() {
         if (mounted) {
           setDetail(payload);
           setStatus("ready");
+          if (forceRefreshMarket) {
+            setMarketRefreshPending(false);
+          }
         }
       } catch (err) {
         if (mounted) {
           setStatus("error");
           setError(err instanceof Error ? err.message : String(err));
+          if (forceRefreshMarket) {
+            setMarketRefreshPending(false);
+          }
         }
       }
     }
@@ -697,7 +731,7 @@ export function SignalDetailPage() {
     return () => {
       mounted = false;
     };
-  }, [signalId, source]);
+  }, [signalId, source, marketRefreshSeq]);
 
   if (status === "loading") {
     return <PageLoadingState title="信号详情加载中" description="正在读取投票明细、决策依据和技术指标快照。" />;
@@ -720,7 +754,6 @@ export function SignalDetailPage() {
 
   const decision = detail.decision;
   const explanation = detail.explanation ?? {};
-  const basisList = explanation.basis ?? [];
   const techEvidence = explanation.techEvidence ?? [];
   const contextEvidence = explanation.contextEvidence ?? [];
   const contextScoreExplain = explanation.contextScoreExplain ?? {
@@ -825,6 +858,51 @@ export function SignalDetailPage() {
     rows: [],
   };
   const voteRows = voteOverview.rows ?? [];
+  const technicalVoteRows = voteRows.filter((item) => item.track === "technical");
+  const contextVoteRows = voteRows.filter((item) => item.track === "context");
+  const totalTechnicalVotes = technicalVoteRows.length;
+  const totalContextVotes = contextVoteRows.length;
+  const technicalWeightSum = technicalVoteRows.reduce((sum, item) => sum + (_parseNumeric(item.weight) ?? 1), 0);
+  const contextWeightSum = contextVoteRows.reduce((sum, item) => sum + (_parseNumeric(item.weight) ?? 1), 0);
+  const technicalContribution = technicalVoteRows.reduce((sum, item) => sum + (_parseNumeric(item.contribution) ?? 0), 0);
+  const contextContribution = contextVoteRows.reduce((sum, item) => sum + (_parseNumeric(item.contribution) ?? 0), 0);
+  const contextComponentSum = _parseNumeric(String(contextScoreExplain.componentSum ?? ""));
+  const contextFinalScore = _parseNumeric(String(contextScoreExplain.finalScore ?? decision.contextScore));
+  const signalCount = technicalVoteRows.reduce(
+    (acc, item) => {
+      const signal = String(item.signal || "").toUpperCase();
+      if (signal === "BUY") acc.buy += 1;
+      else if (signal === "SELL") acc.sell += 1;
+      else acc.hold += 1;
+      return acc;
+    },
+    { buy: 0, sell: 0, hold: 0 },
+  );
+  const topContextDrivers = [...contextVoteRows]
+    .map((item) => ({
+      factor: item.voter,
+      contribution: _parseNumeric(item.contribution) ?? _parseNumeric(item.score) ?? 0,
+      reason: item.reason,
+    }))
+    .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+    .slice(0, 3);
+  const findThreshold = (name: string) =>
+    thresholdRows.find((item) => String(item.name || "").replace(/^阈值\./, "").trim().toLowerCase() === name.toLowerCase())?.value ?? "--";
+  const buyThreshold = findThreshold("buy_threshold");
+  const sellThreshold = findThreshold("sell_threshold");
+  const maxPositionRatio = findThreshold("max_position_ratio");
+  const allowPyramiding = findThreshold("allow_pyramiding");
+  const confirmation = findThreshold("confirmation");
+  const marketValue =
+    decisionParameterRows.find((item) => String(item.name || "").trim() === "市场")?.value
+    || (decision as unknown as { market?: string }).market
+    || "--";
+  const basisList = explanation.basis ?? [];
+  const voteActorLines = voteRows.map((item) => {
+    const trackLabel = item.track === "context" ? "环境" : "技术";
+    const voterLabel = item.track === "context" ? _localizeEnvComponentName(item.voter) : _localizeDynamicText(item.voter);
+    return `${trackLabel}｜${voterLabel}：投票 ${localizeDecisionCode(item.signal)}，权重 ${item.weight}，贡献 ${item.contribution}，依据 ${_localizeDynamicText(item.reason || "--")}`;
+  });
   const keepPositionPct = (() => {
     const actionUpper = String(decision.action || "").trim().toUpperCase();
     const raw = Number(String(decision.positionSizePct ?? "").replace("%", "").trim());
@@ -865,6 +943,17 @@ export function SignalDetailPage() {
             <button
               className="button button--secondary"
               type="button"
+              disabled={marketRefreshPending}
+              onClick={() => {
+                setMarketRefreshPending(true);
+                setMarketRefreshSeq((current) => current + 1);
+              }}
+            >
+              {marketRefreshPending ? "刷新中..." : "刷新行情"}
+            </button>
+            <button
+              className="button button--secondary"
+              type="button"
               onClick={() => navigate(decision.source === "replay" ? "/his-replay" : "/live-sim")}
             >
               {decision.source === "replay" ? "历史回放" : "实时模拟"}
@@ -899,41 +988,81 @@ export function SignalDetailPage() {
             <div className="mini-metric"><div className="mini-metric__label">规则命中</div><div className="mini-metric__value">{localizeDecisionCode(decision.ruleHit)}</div></div>
           </div>
 
-          {basisList.length > 0 ? (
-            <>
-              <div className="card-divider" />
-              <div className="summary-item">
-                <div className="summary-item__title">依据链路</div>
+          <div className="card-divider" />
+          <div className="summary-item">
+            <div className="summary-item__title">依据与推导总览</div>
+            <ol className="insight-list">
+              <li>
+                市场与上下文：
+                {` 市场 ${_localizeValue(String(marketValue))}，市场状态 ${_localizeDynamicText(decision.marketRegime)}，策略模式 ${localizeStrategyMode(decision.strategyMode)}，分析粒度 ${_localizeDynamicText(decision.analysisTimeframe)}。`}
+              </li>
+              <li>
+                投票主体与权重：
+                {` 技术轨 ${totalTechnicalVotes} 个主体（轨内总权重 ${technicalWeightSum.toFixed(4)}），环境轨 ${totalContextVotes} 个主体（轨内总权重 ${contextWeightSum.toFixed(4)}）。`}
+                {` 这里的“总权重”仅用于各自轨道内部聚合，不代表双轨融合阶段的“技术/环境配比”。`}
+                {` 双轨融合阶段没有固定“技术x% + 环境x%”线性权重，而是先得到技术信号与环境信号，再由规则引擎（共振/背离/否决）决定最终动作与仓位。`}
+              </li>
+              <li>
+                技术轨权重：
+                {` 看多 ${signalCount.buy} 票、看空 ${signalCount.sell} 票、持有 ${signalCount.hold} 票（共 ${totalTechnicalVotes} 票）。`}
+                {` 单票贡献分 = 信号分 × 权重；技术贡献和 = 所有技术票贡献分求和 = ${_formatSigned(technicalContribution)}。`}
+                {` 解释：贡献和 > 0 代表技术偏多，< 0 代表技术偏空，= 0 代表技术中性。`}
+                {` 当前为 ${_formatSigned(technicalContribution)}，所以技术信号是 ${localizeDecisionCode(decision.techSignal)}。`}
+              </li>
+              <li>
+                环境轨权重：
+                {` 共 ${totalContextVotes} 个环境因子参与投票。环境贡献和 = 所有环境票贡献分求和 = ${_formatSigned(contextContribution)}。`}
+                {` 环境分 = 对环境贡献和按模型规则截断/映射后的分值（通常越大越偏多）。`}
+                {` 当前组件和 ${_formatSigned(contextComponentSum)}，截断后环境分 ${_formatSigned(contextFinalScore)}（页面显示 ${decision.contextScore}）。`}
+                {` 因此环境信号是 ${localizeDecisionCode(decision.contextSignal)}。`}
+                {contextScoreExplain.formula ? ` 计算公式：${_localizeDynamicText(contextScoreExplain.formula)}` : ""}
+              </li>
+              <li>
+                双轨融合：
+                {` 技术信号 ${localizeDecisionCode(decision.techSignal)} + 环境信号 ${localizeDecisionCode(decision.contextSignal)} `}
+                {`→ 共振 ${localizeDecisionCode(decision.resonanceType)} → 规则 ${localizeDecisionCode(decision.ruleHit)} `}
+                {`→ 最终 ${localizeDecisionCode(decision.finalAction)}`}
+              </li>
+              <li>
+                仓位计算：
+                {` 先根据最终动作与置信度给出 ${positionMetricLabel} ${decision.positionSizePct}，再叠加风控约束得到最终仓位建议。`}
+                {` 当前建议保持仓位 ${keepPositionPct}，置信度 ${decision.confidence}。`}
+                {` 风控参数含义：buy_threshold(${buyThreshold}) 为触发买入阈值；sell_threshold(${sellThreshold}) 为触发卖出阈值；`}
+                {`max_position_ratio(${maxPositionRatio}) 为单票仓位上限；allow_pyramiding(${allowPyramiding}) 是否允许加仓；confirmation(${confirmation}) 为信号确认条件。`}
+              </li>
+            </ol>
+            {voteActorLines.length > 0 ? (
+              <div className="summary-item__body" style={{ marginTop: "8px" }}>
+                <div className="summary-item__title" style={{ fontSize: "0.96rem", marginBottom: "4px" }}>投票主体明细（逐条）</div>
                 <ul className="insight-list">
-                  {basisList.map((item) => (
-                    <li key={item}>{_localizeDynamicText(item)}</li>
+                  {voteActorLines.map((line, index) => (
+                    <li key={`vote-actor-line-${index}`}>{line}</li>
                   ))}
                 </ul>
               </div>
-            </>
-          ) : null}
-
-          <div className="card-divider" />
-          <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>投票明细</h3>
-          <CompactDataTable
-            isCompactLayout={isCompactLayout}
-            headers={["维度", "投票主体", "投票", "信号分", "权重", "贡献分", "依据", "计算"]}
-            coreIndexes={[0, 1, 2, 5]}
-            emptyText="暂无投票明细"
-            rows={voteRows.map((item, index) => ({
-              key: `vote-${index}`,
-              cells: [
-                item.track === "technical" ? "技术" : "环境",
-                item.track === "context" ? _localizeEnvComponentName(item.voter) : _localizeDynamicText(item.voter),
-                localizeDecisionCode(item.signal),
-                item.score,
-                item.weight,
-                item.contribution,
-                _localizeDynamicText(item.reason),
-                `单票贡献 = 信号分(${item.score}) × 权重(${item.weight}) = ${item.contribution}`,
-              ],
-            }))}
-          />
+            ) : null}
+            {topContextDrivers.length > 0 ? (
+              <div className="summary-item__body" style={{ marginTop: "6px" }}>
+                关键环境因子：
+                {topContextDrivers
+                  .map(
+                    (item) =>
+                      `${_localizeEnvComponentName(item.factor)}(${_formatSigned(item.contribution)}) - ${_localizeDynamicText(item.reason || "--")}`,
+                  )
+                  .join("；")}
+              </div>
+            ) : null}
+            {basisList.length > 0 ? (
+              <div className="summary-item__body" style={{ marginTop: "6px" }}>
+                <div className="summary-item__title" style={{ fontSize: "0.96rem", marginBottom: "4px" }}>原始依据链路</div>
+                <ul className="insight-list">
+                  {basisList.map((item, index) => (
+                    <li key={`basis-line-${index}`}>{_localizeDynamicText(item)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
 
           <div className="card-divider" />
           <h3 className="section-card__title" style={{ fontSize: "1.1rem" }}>决策指标</h3>

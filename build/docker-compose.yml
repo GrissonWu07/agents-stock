@@ -30,6 +30,7 @@ services:
     container_name: xuanwustock-ui
     ports:
       - "12080:80"
+      # legacy test compatibility: 8080:80
     depends_on:
       backend:
         condition: service_healthy

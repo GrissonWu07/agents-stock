@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.database import StockAnalysisDatabase
 from app import stock_analysis_service
 from app.gateway_common import (
     code_from_payload as _code_from_payload,
+    first_non_empty as _first_non_empty,
     float_value as _float,
     insight as _insight,
     int_value as _int,
@@ -32,18 +34,20 @@ from app.gateway_discover import (
     action_discover_batch as _action_discover_batch,
     action_discover_item as _action_discover_item,
     action_discover_reset as _action_discover_reset,
-    action_discover_run_strategy as _action_discover_run_strategy,
+    action_discover_run_strategy as _gateway_discover_run_strategy,
     discover_task_manager,
     snapshot_discover as _snapshot_discover,
 )
+import app.gateway_discover as _gateway_discover_module
 from app.gateway_research import (
     action_research_batch as _action_research_batch,
     action_research_item as _action_research_item,
     action_research_reset as _action_research_reset,
-    action_research_run_module as _action_research_run_module,
+    action_research_run_module as _gateway_research_run_module,
     research_task_manager,
     snapshot_research as _snapshot_research,
 )
+import app.gateway_research as _gateway_research_module
 from app.gateway_workbench import (
     action_workbench_add_watchlist as _action_workbench_add_watchlist,
     action_workbench_analysis as _action_workbench_analysis,
@@ -52,7 +56,8 @@ from app.gateway_workbench import (
     action_workbench_batch_quant as _action_workbench_batch_quant,
     action_workbench_delete as _action_workbench_delete,
     action_workbench_refresh as _action_workbench_refresh,
-    snapshot_workbench as _snapshot_workbench,
+    build_workbench_snapshot as _gateway_build_workbench_snapshot,
+    snapshot_workbench as _gateway_snapshot_workbench,
 )
 from app.main_force_batch_db import MainForceBatchDatabase
 from app.monitor_db import monitor_db
@@ -60,6 +65,9 @@ from app.portfolio_db import portfolio_db
 from app.portfolio_rebalance_tasks import portfolio_rebalance_task_manager
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.db import (
+    DEFAULT_AI_DYNAMIC_LOOKBACK,
+    DEFAULT_AI_DYNAMIC_STRENGTH,
+    DEFAULT_AI_DYNAMIC_STRATEGY,
     DEFAULT_COMMISSION_RATE,
     DEFAULT_SELL_TAX_RATE,
     QuantSimDB,
@@ -77,6 +85,11 @@ from app.stock_refresh_scheduler import (
 from app.watchlist_selector_integration import normalize_stock_code
 from app.monitor_db import StockMonitorDatabase
 from app.watchlist_service import WatchlistService
+from app.workbench_analysis_payloads import (
+    analysis_config as _workbench_analysis_config,
+    analysis_options as _workbench_analysis_options,
+    build_workbench_analysis_payload as _build_workbench_analysis_payload,
+)
 from app.workbench_analysis_tasks import analysis_task_manager
 
 SERVICE_NAME = "xuanwu-api"
@@ -89,6 +102,38 @@ async def _json(request: Request) -> Any:
         return await request.json()
     except Exception:
         return {}
+
+
+MainForceStockSelector = _gateway_discover_module.MainForceStockSelector
+LowPriceBullSelector = _gateway_discover_module.LowPriceBullSelector
+SmallCapSelector = _gateway_discover_module.SmallCapSelector
+ProfitGrowthSelector = _gateway_discover_module.ProfitGrowthSelector
+ValueStockSelector = _gateway_discover_module.ValueStockSelector
+SectorStrategyDataFetcher = _gateway_research_module.SectorStrategyDataFetcher
+SectorStrategyEngine = _gateway_research_module.SectorStrategyEngine
+LonghubangEngine = _gateway_research_module.LonghubangEngine
+NewsFlowEngine = _gateway_research_module.NewsFlowEngine
+MacroAnalysisEngine = _gateway_research_module.MacroAnalysisEngine
+MacroCycleEngine = _gateway_research_module.MacroCycleEngine
+
+
+def _action_discover_run_strategy(context: "UIApiContext", payload: Any) -> dict[str, Any]:
+    _gateway_discover_module.MainForceStockSelector = globals().get("MainForceStockSelector")
+    _gateway_discover_module.LowPriceBullSelector = globals().get("LowPriceBullSelector")
+    _gateway_discover_module.SmallCapSelector = globals().get("SmallCapSelector")
+    _gateway_discover_module.ProfitGrowthSelector = globals().get("ProfitGrowthSelector")
+    _gateway_discover_module.ValueStockSelector = globals().get("ValueStockSelector")
+    return _gateway_discover_run_strategy(context, payload)
+
+
+def _action_research_run_module(context: "UIApiContext", payload: Any) -> dict[str, Any]:
+    _gateway_research_module.SectorStrategyDataFetcher = globals().get("SectorStrategyDataFetcher")
+    _gateway_research_module.SectorStrategyEngine = globals().get("SectorStrategyEngine")
+    _gateway_research_module.LonghubangEngine = globals().get("LonghubangEngine")
+    _gateway_research_module.NewsFlowEngine = globals().get("NewsFlowEngine")
+    _gateway_research_module.MacroAnalysisEngine = globals().get("MacroAnalysisEngine")
+    _gateway_research_module.MacroCycleEngine = globals().get("MacroCycleEngine")
+    return _gateway_research_run_module(context, payload)
 
 
 
@@ -396,6 +441,8 @@ class UIApiContext:
     quote_fetcher: Callable[[str, str | None], dict[str, Any] | None] | None = None
     discover_result_key: str = "main_force"
     research_result_key: str = "research"
+    workbench_analysis_cache: dict[str, Any] | None = None
+    workbench_analysis_job_cache: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.data_dir = _p(self.data_dir)
@@ -480,6 +527,447 @@ class UIApiContext:
 
     def main_force_batch_db(self):
         return MainForceBatchDatabase(str(self.main_force_batch_db_file))
+
+    def set_workbench_analysis(self, payload: dict[str, Any] | None) -> None:
+        self.workbench_analysis_cache = dict(payload) if isinstance(payload, dict) else None
+
+    def get_workbench_analysis(self) -> dict[str, Any] | None:
+        return dict(self.workbench_analysis_cache) if isinstance(self.workbench_analysis_cache, dict) else None
+
+    def set_workbench_analysis_job(self, payload: dict[str, Any] | None) -> None:
+        self.workbench_analysis_job_cache = dict(payload) if isinstance(payload, dict) else None
+
+    def get_workbench_analysis_job(self) -> dict[str, Any] | None:
+        return dict(self.workbench_analysis_job_cache) if isinstance(self.workbench_analysis_job_cache, dict) else None
+
+
+_WORKBENCH_DEFAULT_ANALYSTS = ["technical", "fundamental", "fund_flow", "risk"]
+_WORKBENCH_MARKDOWN_NOISE = [
+    "以下是基于",
+    "核心结论先看",
+    "我会重点围绕",
+    "如果你愿意",
+    "先说明",
+    "会议纪要",
+    "模拟对话",
+    "会议主持人",
+    "投资决策团队",
+]
+_WORKBENCH_MODEL_FAILURE_TOKENS = [
+    "api调用失败",
+    "authentication fails",
+    "auth fail",
+    "governor",
+    "鉴权",
+]
+
+
+def _normalize_workbench_selected(selected: Any) -> list[str]:
+    if isinstance(selected, list):
+        values = [str(item).strip() for item in selected if str(item).strip()]
+        if values:
+            return values
+    return list(_WORKBENCH_DEFAULT_ANALYSTS)
+
+
+def _analysis_options(selected: list[str] | None = None) -> list[dict[str, Any]]:
+    return _workbench_analysis_options(_normalize_workbench_selected(selected))
+
+
+def _clean_workbench_text(value: Any, *, limit: int = 0) -> str:
+    text = _txt(value)
+    if not text:
+        return ""
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
+    text = text.replace("***", " ").replace("**", " ").replace("__", " ").replace("`", " ")
+    text = text.replace("---", " ").replace("|", " ")
+    for noise in _WORKBENCH_MARKDOWN_NOISE:
+        text = text.replace(noise, " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    if limit > 0 and len(text) > limit:
+        text = f"{text[:limit].rstrip()}…"
+    return text
+
+
+def _contains_workbench_model_failure(*values: Any) -> bool:
+    merged = " ".join(_txt(item).lower() for item in values if _txt(item))
+    if not merged:
+        return False
+    return any(token in merged for token in _WORKBENCH_MODEL_FAILURE_TOKENS)
+
+
+def _record_is_more_complete(record: dict[str, Any]) -> tuple[int, int]:
+    indicators = record.get("indicators") if isinstance(record.get("indicators"), dict) else {}
+    historical = record.get("historical_data") if isinstance(record.get("historical_data"), list) else []
+    agents = record.get("agents_results") if isinstance(record.get("agents_results"), dict) else {}
+    final_decision = record.get("final_decision") if isinstance(record.get("final_decision"), dict) else {}
+    score = 0
+    if indicators:
+        score += 4
+    if historical:
+        score += 4
+    score += min(len(agents), 4)
+    if _txt(final_decision.get("operation_advice") or final_decision.get("decision_text") or final_decision.get("rating")):
+        score += 2
+    return score, _int(record.get("id"), 0) or 0
+
+
+def _pick_best_cached_record(context: UIApiContext, symbol: str) -> dict[str, Any] | None:
+    records = context.stock_analysis_db().get_recent_records_by_symbol(symbol, limit=10)
+    if not records:
+        return None
+    ranked = sorted(records, key=_record_is_more_complete, reverse=True)
+    return ranked[0] if ranked else None
+
+
+def _history_points_from_dataframe(stock_data: Any) -> list[dict[str, Any]]:
+    if stock_data is None or not hasattr(stock_data, "iterrows"):
+        return []
+    points: list[dict[str, Any]] = []
+    try:
+        for index, row in stock_data.tail(180).iterrows():
+            close_value = row.get("Close") if hasattr(row, "get") else None
+            if close_value in (None, "") and hasattr(row, "get"):
+                close_value = row.get("收盘")
+            if close_value in (None, ""):
+                continue
+            label = _txt(index)
+            if hasattr(index, "strftime"):
+                try:
+                    label = index.strftime("%Y-%m-%d")
+                except Exception:
+                    label = _txt(index)
+            points.append({"date": label, "close": float(close_value)})
+    except Exception:
+        return []
+    return points
+
+
+def _normalize_workbench_payload(
+    *,
+    payload: dict[str, Any],
+    indicators: dict[str, Any],
+    discussion_result: Any,
+    final_decision: dict[str, Any],
+    agents_results: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(payload)
+    indicator_explanations = stock_analysis_service.build_indicator_explanations(
+        indicators if isinstance(indicators, dict) else {},
+        current_price=None,
+    )
+    indicator_summary = _txt(
+        stock_analysis_service.build_indicator_summary(indicator_explanations),
+        "关键指标显示当前趋势信号仍在，建议结合仓位控制继续跟踪。",
+    )
+    discussion_summary = _txt(discussion_result.get("summary")) if isinstance(discussion_result, dict) else ""
+    summary_text = _clean_workbench_text(discussion_summary or _txt(discussion_result), limit=110)
+    if not summary_text:
+        summary_text = _clean_workbench_text(indicator_summary, limit=110)
+
+    analyst_views: list[dict[str, Any]] = []
+    analyst_names: list[str] = []
+    model_failure = _contains_workbench_model_failure(summary_text, _txt(final_decision), _txt(discussion_result))
+    for _, agent_result in (agents_results or {}).items():
+        if not isinstance(agent_result, dict):
+            continue
+        agent_name = _txt(agent_result.get("agent_name"), "分析师")
+        analyst_names.append(agent_name)
+        body = _clean_workbench_text(
+            _txt(agent_result.get("summary") or agent_result.get("analysis") or agent_result.get("decision_text") or agent_result.get("result")),
+            limit=170,
+        )
+        if _contains_workbench_model_failure(body):
+            model_failure = True
+        if not body:
+            continue
+        analyst_views.append({"title": agent_name, "body": body})
+
+    rating = _txt(_first_non_empty(final_decision, ["rating", "decision", "verdict"]))
+    position_size = _txt(final_decision.get("position_size"))
+    target_price = _txt(final_decision.get("target_price"))
+    operation_advice = _clean_workbench_text(
+        _txt(final_decision.get("operation_advice") or final_decision.get("decision_text") or final_decision.get("reasoning")),
+        limit=170,
+    )
+
+    decision_parts: list[str] = []
+    if rating:
+        decision_parts.append(f"当前评级：{rating}")
+    if position_size:
+        decision_parts.append(f"建议仓位：{position_size}")
+    if target_price:
+        decision_parts.append(f"目标价：{target_price}")
+    decision_text = "；".join(decision_parts)
+    if operation_advice:
+        decision_text = f"{decision_text}。{operation_advice}" if decision_text else operation_advice
+    if not decision_text and analyst_views:
+        view_hint = "；".join(item.get("body", "") for item in analyst_views[:2] if _txt(item.get("body")))
+        decision_text = _clean_workbench_text(view_hint, limit=170)
+    if not decision_text:
+        decision_text = summary_text or _clean_workbench_text(indicator_summary, limit=170)
+    if decision_text and ("建议" not in decision_text and "更适合" not in decision_text):
+        decision_text = f"建议继续观察，{decision_text}"
+    if not decision_text:
+        decision_text = "综合决策暂不可用，请先查看分析师观点与关键指标。"
+
+    insights: list[dict[str, Any]] = []
+    risk_warning = _clean_workbench_text(_txt(final_decision.get("risk_warning")), limit=120)
+    if model_failure:
+        model_state = "模型调用暂不可用（疑似鉴权或额度异常），已自动降级为指标与历史结论。"
+        analyst_hint = "、".join(analyst_names) if analyst_names else "当前分析师"
+        normalized["summaryBody"] = _clean_workbench_text(indicator_summary, limit=110)
+        normalized["decision"] = _clean_workbench_text(indicator_summary, limit=170) or "综合决策暂不可用，请先查看关键指标。"
+        normalized["finalDecisionText"] = normalized["decision"]
+        normalized["analystViews"] = []
+        insights.append(_insight("模型状态", model_state, "warning"))
+        insights.append(_insight("分析师观点", f"{analyst_hint}观点暂不可用，建议稍后重试。", "neutral"))
+        insights.append(_insight("操作建议", normalized["decision"], "accent"))
+    else:
+        merged_summary = summary_text
+        if decision_text and _clean_workbench_text(decision_text, limit=80) not in merged_summary:
+            merged_summary = _clean_workbench_text(f"{decision_text} {summary_text}", limit=110)
+        normalized["summaryBody"] = merged_summary
+        normalized["decision"] = _clean_workbench_text(decision_text, limit=170)
+        normalized["finalDecisionText"] = normalized["decision"]
+        normalized["analystViews"] = analyst_views
+        insights.append(_insight("操作建议", normalized["decision"], "accent"))
+        if risk_warning:
+            insights.append(_insight("风险提示", risk_warning, "warning"))
+    normalized["insights"] = insights
+    return normalized
+
+
+def _run_single_workbench_analysis(
+    context: UIApiContext,
+    job_id: str,
+    *,
+    code: str,
+    selected: list[str] | None,
+    cycle: str,
+    mode: str,
+) -> dict[str, Any]:
+    symbol = normalize_stock_code(code)
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Missing stock code")
+
+    selected_values = _normalize_workbench_selected(selected)
+    analyze_config = _workbench_analysis_config(selected_values)
+    try:
+        result = stock_analysis_service.analyze_single_stock_for_batch(
+            symbol,
+            cycle,
+            enabled_analysts_config=analyze_config,
+            selected_model=None,
+            progress_callback=None,
+        )
+    except Exception as exc:
+        result = {"success": False, "error": str(exc), "symbol": symbol}
+
+    if not isinstance(result, dict) or not result.get("success"):
+        hydrated_name = _hydrate_cached_workbench_analysis(
+            context,
+            code=symbol,
+            selected=selected_values,
+            cycle=cycle,
+            mode=mode,
+        )
+        if not hydrated_name:
+            fallback = {
+                "symbol": symbol,
+                "stockName": symbol,
+                "analysts": _analysis_options(selected_values),
+                "mode": mode,
+                "cycle": cycle,
+                "inputHint": "例如 600519 / 300390 / AAPL",
+                "summaryTitle": f"{symbol} 分析摘要",
+                "summaryBody": "分析未返回有效结果，请稍后重试。",
+                "generatedAt": _now(),
+                "indicators": [],
+                "decision": "综合决策暂不可用，请先查看关键指标与分析师观点。",
+                "finalDecisionText": "综合决策暂不可用，请先查看关键指标与分析师观点。",
+                "insights": [
+                    _insight("模型状态", "模型调用暂不可用（疑似鉴权或额度异常），请检查配置后重试。", "warning"),
+                ],
+                "analystViews": [],
+                "curve": [],
+            }
+            context.set_workbench_analysis(fallback)
+        failure_message = _txt(result.get("error"), "分析失败")
+        if hydrated_name:
+            failure_message = f"{failure_message}；已保留上一次成功分析。"
+        context.set_workbench_analysis_job(
+            {
+                "id": job_id,
+                "status": "failed",
+                "title": "刷新失败（已回退到最近有效结果）",
+                "message": failure_message,
+                "stage": "failed",
+                "progress": 100,
+                "symbol": symbol,
+                "startedAt": _now(),
+                "updatedAt": _now(),
+            }
+        )
+        return context.get_workbench_analysis() or {}
+
+    stock_info = result.get("stock_info") if isinstance(result.get("stock_info"), dict) else {}
+    stock_name = _txt(stock_info.get("name"), symbol)
+    indicators = result.get("indicators") if isinstance(result.get("indicators"), dict) else {}
+    discussion_result = result.get("discussion_result")
+    final_decision = result.get("final_decision") if isinstance(result.get("final_decision"), dict) else {}
+    agents_results = result.get("agents_results") if isinstance(result.get("agents_results"), dict) else {}
+    historical_data = result.get("historical_data") if isinstance(result.get("historical_data"), list) else []
+
+    try:
+        context.stock_analysis_db().save_analysis(
+            symbol=symbol,
+            stock_name=stock_name,
+            period=cycle,
+            stock_info=stock_info,
+            agents_results=agents_results,
+            discussion_result=discussion_result,
+            final_decision=final_decision,
+            indicators=indicators,
+            historical_data=historical_data,
+        )
+    except Exception:
+        pass
+
+    payload = _build_workbench_analysis_payload(
+        code=symbol,
+        stock_name=stock_name,
+        selected=selected_values,
+        mode=mode,
+        cycle=cycle,
+        generated_at=_txt(result.get("generated_at"), _now()),
+        stock_info=stock_info,
+        indicators=indicators,
+        discussion_result=discussion_result,
+        final_decision=final_decision,
+        agents_results=agents_results,
+        historical_data=historical_data,
+    )
+    payload = _normalize_workbench_payload(
+        payload=payload,
+        indicators=indicators,
+        discussion_result=discussion_result,
+        final_decision=final_decision,
+        agents_results=agents_results,
+    )
+    context.set_workbench_analysis(payload)
+    context.set_workbench_analysis_job(
+        {
+            "id": job_id,
+            "status": "completed",
+            "title": "分析已完成",
+            "message": f"{symbol} 分析完成",
+            "stage": "completed",
+            "progress": 100,
+            "symbol": symbol,
+            "startedAt": _now(),
+            "updatedAt": _now(),
+        }
+    )
+    return payload
+
+
+def _hydrate_cached_workbench_analysis(
+    context: UIApiContext,
+    *,
+    code: str,
+    selected: list[str] | None,
+    cycle: str,
+    mode: str,
+) -> str:
+    symbol = normalize_stock_code(code)
+    if not symbol:
+        return ""
+    record = _pick_best_cached_record(context, symbol)
+    if not record:
+        return ""
+    stock_info = record.get("stock_info") if isinstance(record.get("stock_info"), dict) else {}
+    indicators = record.get("indicators") if isinstance(record.get("indicators"), dict) else {}
+    historical_data = record.get("historical_data") if isinstance(record.get("historical_data"), list) else []
+    if not indicators or not historical_data:
+        try:
+            rt_stock_info, rt_data, rt_indicators = stock_analysis_service.get_stock_data(symbol, cycle)
+            if isinstance(rt_stock_info, dict):
+                stock_info = rt_stock_info
+            if isinstance(rt_indicators, dict) and rt_indicators:
+                indicators = rt_indicators
+            if not historical_data:
+                historical_data = _history_points_from_dataframe(rt_data)
+        except Exception:
+            pass
+    stock_name = _txt(record.get("stock_name"), _txt(stock_info.get("name"), symbol))
+    payload = _build_workbench_analysis_payload(
+        code=symbol,
+        stock_name=stock_name,
+        selected=_normalize_workbench_selected(selected),
+        mode=mode,
+        cycle=cycle,
+        generated_at=_txt(record.get("analysis_date") or record.get("created_at"), _now()),
+        stock_info=stock_info,
+        indicators=indicators,
+        discussion_result=record.get("discussion_result"),
+        final_decision=record.get("final_decision") if isinstance(record.get("final_decision"), dict) else {},
+        agents_results=record.get("agents_results") if isinstance(record.get("agents_results"), dict) else {},
+        historical_data=historical_data,
+    )
+    payload = _normalize_workbench_payload(
+        payload=payload,
+        indicators=indicators,
+        discussion_result=record.get("discussion_result"),
+        final_decision=record.get("final_decision") if isinstance(record.get("final_decision"), dict) else {},
+        agents_results=record.get("agents_results") if isinstance(record.get("agents_results"), dict) else {},
+    )
+    payload["summaryBody"] = payload.get("summaryBody", "").replace("最近一次有效分析时间", "").strip()
+    context.set_workbench_analysis(payload)
+    return stock_name
+
+
+def _workbench_analysis_needs_refresh(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    summary_body = _txt(payload.get("summaryBody"))
+    if "最近一次有效分析时间" in summary_body:
+        return True
+    indicators = payload.get("indicators") if isinstance(payload.get("indicators"), list) else []
+    if any(_txt(item.get("value")) in {"暂无数据", "暂无判断"} for item in indicators if isinstance(item, dict)):
+        return True
+    curve = payload.get("curve") if isinstance(payload.get("curve"), list) else []
+    return len(curve) == 0
+
+
+def _snapshot_workbench(context: UIApiContext) -> dict[str, Any]:
+    analysis = context.get_workbench_analysis()
+    analysis_job = context.get_workbench_analysis_job()
+    if analysis and _workbench_analysis_needs_refresh(analysis):
+        _hydrate_cached_workbench_analysis(
+            context,
+            code=_txt(analysis.get("symbol")),
+            selected=[item.get("value") for item in analysis.get("analysts", []) if isinstance(item, dict) and item.get("selected")] if isinstance(analysis.get("analysts"), list) else None,
+            cycle=_txt(analysis.get("cycle"), "1y"),
+            mode=_txt(analysis.get("mode"), "单个分析"),
+        )
+        analysis = context.get_workbench_analysis()
+    if isinstance(analysis_job, dict) and _txt(analysis_job.get("status")) in {"running", "queued"} and isinstance(analysis, dict):
+        normalized_job = {
+            **analysis_job,
+            "status": "completed",
+            "title": "分析已完成",
+            "message": _txt(analysis_job.get("message"), "分析结果已可查看"),
+            "stage": "completed",
+            "progress": 100,
+            "updatedAt": _now(),
+        }
+        context.set_workbench_analysis_job(normalized_job)
+        analysis_job = normalized_job
+    if isinstance(analysis, dict) or isinstance(analysis_job, dict):
+        return _gateway_build_workbench_snapshot(context, analysis=analysis, analysis_job=analysis_job)
+    return _gateway_snapshot_workbench(context)
 
 
 
@@ -631,12 +1119,26 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
     db = context.quant_db()
     scheduler = context.scheduler().get_status()
     account = db.get_account_summary()
+    strategy_profiles = [
+        {
+            "id": _txt(item.get("id")),
+            "name": _txt(item.get("name") or item.get("id")),
+            "enabled": bool(item.get("enabled", True)),
+            "isDefault": bool(item.get("is_default", False)),
+        }
+        for item in db.list_strategy_profiles(include_disabled=False)
+    ]
     return {
         "updatedAt": _now(),
         "config": {
             "interval": f"{scheduler.get('interval_minutes', 0)} 分钟",
             "timeframe": _txt(scheduler.get("analysis_timeframe"), "30m"),
             "strategyMode": _txt(scheduler.get("strategy_mode"), "auto"),
+            "strategyProfileId": _txt(scheduler.get("strategy_profile_id")),
+            "aiDynamicStrategy": _txt(scheduler.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY),
+            "aiDynamicStrength": _txt(scheduler.get("ai_dynamic_strength"), f"{DEFAULT_AI_DYNAMIC_STRENGTH:.2f}"),
+            "aiDynamicLookback": _txt(scheduler.get("ai_dynamic_lookback"), str(DEFAULT_AI_DYNAMIC_LOOKBACK)),
+            "strategyProfiles": strategy_profiles,
             "autoExecute": "开启" if scheduler.get("auto_execute") else "关闭",
             "market": _txt(scheduler.get("market"), "CN"),
             "initialCapital": _txt(account.get("initial_cash"), "0"),
@@ -724,6 +1226,15 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
 def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
     db = context.quant_db()
     scheduler_status = context.scheduler().get_status()
+    strategy_profiles = [
+        {
+            "id": _txt(item.get("id")),
+            "name": _txt(item.get("name") or item.get("id")),
+            "enabled": bool(item.get("enabled", True)),
+            "isDefault": bool(item.get("is_default", False)),
+        }
+        for item in db.list_strategy_profiles(include_disabled=False)
+    ]
     runs = db.get_sim_runs(limit=20)
     run = runs[0] if runs else None
     candidate_rows = [
@@ -750,6 +1261,11 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
                 "timeframe": "30m",
                 "market": "CN",
                 "strategyMode": "auto",
+                "strategyProfileId": _txt(scheduler_status.get("strategy_profile_id")),
+                "aiDynamicStrategy": _txt(scheduler_status.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY),
+                "aiDynamicStrength": _txt(scheduler_status.get("ai_dynamic_strength"), f"{DEFAULT_AI_DYNAMIC_STRENGTH:.2f}"),
+                "aiDynamicLookback": _txt(scheduler_status.get("ai_dynamic_lookback"), str(DEFAULT_AI_DYNAMIC_LOOKBACK)),
+                "strategyProfiles": strategy_profiles,
                 "commissionRatePct": _fee_rate_pct_text(scheduler_status.get("commission_rate"), DEFAULT_COMMISSION_RATE),
                 "sellTaxRatePct": _fee_rate_pct_text(scheduler_status.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
             },
@@ -963,6 +1479,9 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
                 "finalEquity": _num(item.get("final_equity"), 0),
                 "tradeCount": _txt(item.get("trade_count"), "0"),
                 "winRate": _pct(item.get("win_rate")),
+                "strategyProfileId": _txt(item.get("selected_strategy_profile_id")),
+                "strategyProfileName": _txt(item.get("selected_strategy_profile_name")),
+                "strategyProfileVersionId": _txt(item.get("selected_strategy_profile_version_id")),
                 "holdings": position_rows,
             }
         )
@@ -976,6 +1495,18 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
         run_metadata.get("sell_tax_rate"),
         _normalize_fee_rate(scheduler_status.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
     )
+    replay_ai_dynamic_strategy = _txt(
+        run_metadata.get("ai_dynamic_strategy"),
+        _txt(scheduler_status.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY),
+    )
+    replay_ai_dynamic_strength = _txt(
+        run_metadata.get("ai_dynamic_strength"),
+        _txt(scheduler_status.get("ai_dynamic_strength"), f"{DEFAULT_AI_DYNAMIC_STRENGTH:.2f}"),
+    )
+    replay_ai_dynamic_lookback = _txt(
+        run_metadata.get("ai_dynamic_lookback"),
+        _txt(scheduler_status.get("ai_dynamic_lookback"), str(DEFAULT_AI_DYNAMIC_LOOKBACK)),
+    )
 
     return {
         "updatedAt": _now(),
@@ -985,6 +1516,11 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
             "timeframe": _txt(run.get("timeframe"), "30m"),
             "market": _txt(run.get("market"), "CN"),
             "strategyMode": _txt(run.get("selected_strategy_mode") or run.get("strategy_mode"), "auto"),
+            "strategyProfileId": _txt(run.get("selected_strategy_profile_id"), _txt(scheduler_status.get("strategy_profile_id"))),
+            "aiDynamicStrategy": replay_ai_dynamic_strategy,
+            "aiDynamicStrength": replay_ai_dynamic_strength,
+            "aiDynamicLookback": replay_ai_dynamic_lookback,
+            "strategyProfiles": strategy_profiles,
             "commissionRatePct": _fee_rate_pct_text(replay_commission_rate, DEFAULT_COMMISSION_RATE),
             "sellTaxRatePct": _fee_rate_pct_text(replay_sell_tax_rate, DEFAULT_SELL_TAX_RATE),
         },
@@ -1060,7 +1596,80 @@ def _extract_technical_indicators(
     reasoning: str,
     analysis_text: str = "",
     strategy_profile: dict[str, Any] | None = None,
+    technical_breakdown: dict[str, Any] | None = None,
+    context_breakdown: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
+    if isinstance(technical_breakdown, dict):
+        indicators: list[dict[str, str]] = []
+        track_info = technical_breakdown.get("track") if isinstance(technical_breakdown.get("track"), dict) else {}
+        indicators.append(
+            {
+                "name": "technical.track.score",
+                "value": _txt(track_info.get("score"), "0"),
+                "source": "technical_breakdown.track",
+                "note": "技术轨总分（TrackScore）",
+            }
+        )
+        indicators.append(
+            {
+                "name": "technical.track.confidence",
+                "value": _txt(track_info.get("confidence"), "0"),
+                "source": "technical_breakdown.track",
+                "note": "技术轨置信度（TrackConfidence）",
+            }
+        )
+
+        group_rows = technical_breakdown.get("groups")
+        if isinstance(group_rows, list):
+            for item in group_rows:
+                if not isinstance(item, dict):
+                    continue
+                gid = _txt(item.get("id"), "group")
+                indicators.append(
+                    {
+                        "name": f"technical.group.{gid}",
+                        "value": _txt(item.get("score"), "0"),
+                        "source": "technical_breakdown.groups",
+                        "note": f"coverage={_txt(item.get('coverage'), '--')}; weight_norm={_txt(item.get('weight_norm_in_track'), '--')}; track_contribution={_txt(item.get('track_contribution'), '--')}",
+                    }
+                )
+
+        dim_rows = technical_breakdown.get("dimensions")
+        if isinstance(dim_rows, list):
+            for item in dim_rows:
+                if not isinstance(item, dict):
+                    continue
+                dim_id = _txt(item.get("id"), "dimension")
+                indicators.append(
+                    {
+                        "name": dim_id,
+                        "value": _txt(item.get("score"), "0"),
+                        "source": "technical_breakdown.dimensions",
+                        "note": f"group={_txt(item.get('group'), '--')}; weight_raw={_txt(item.get('weight_raw'), '--')}; w_norm={_txt(item.get('weight_norm_in_group'), '--')}; group_contribution={_txt(item.get('group_contribution'), '--')}; track_contribution={_txt(item.get('track_contribution'), '--')}; reason={_txt(item.get('reason'), '--')}",
+                    }
+                )
+
+        if isinstance(context_breakdown, dict):
+            ctx_track = context_breakdown.get("track") if isinstance(context_breakdown.get("track"), dict) else {}
+            indicators.append(
+                {
+                    "name": "context.track.score",
+                    "value": _txt(ctx_track.get("score"), "0"),
+                    "source": "context_breakdown.track",
+                    "note": "环境轨总分（TrackScore）",
+                }
+            )
+            indicators.append(
+                {
+                    "name": "context.track.confidence",
+                    "value": _txt(ctx_track.get("confidence"), "0"),
+                    "source": "context_breakdown.track",
+                    "note": "环境轨置信度（TrackConfidence）",
+                }
+            )
+
+        return indicators
+
     patterns = [
         ("现价", r"现价\s*(-?\d+(?:\.\d+)?)"),
         ("现价", r"价格\s*(-?\d+(?:\.\d+)?)"),
@@ -1280,7 +1889,174 @@ def _build_explanation_payload(
     tech_votes_raw: list[dict[str, Any]],
     context_votes_raw: list[dict[str, Any]],
     effective_thresholds: dict[str, Any],
+    explainability: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    explain_obj = explainability if isinstance(explainability, dict) else {}
+    if _is_v23_explainability(explain_obj):
+        technical_breakdown = _safe_json_load(explain_obj.get("technical_breakdown"))
+        context_breakdown = _safe_json_load(explain_obj.get("context_breakdown"))
+        fusion_breakdown = _safe_json_load(explain_obj.get("fusion_breakdown"))
+        decision_path = explain_obj.get("decision_path") if isinstance(explain_obj.get("decision_path"), list) else []
+        vetoes = explain_obj.get("vetoes") if isinstance(explain_obj.get("vetoes"), list) else []
+
+        tech_track = _safe_json_load(technical_breakdown.get("track"))
+        context_track = _safe_json_load(context_breakdown.get("track"))
+        tech_groups = technical_breakdown.get("groups") if isinstance(technical_breakdown.get("groups"), list) else []
+        context_groups = context_breakdown.get("groups") if isinstance(context_breakdown.get("groups"), list) else []
+        tech_dims = technical_breakdown.get("dimensions") if isinstance(technical_breakdown.get("dimensions"), list) else []
+        context_dims = context_breakdown.get("dimensions") if isinstance(context_breakdown.get("dimensions"), list) else []
+
+        mode = _txt(fusion_breakdown.get("mode"), _txt(decision.get("strategyMode"), "--"))
+        weighted_threshold_action = _txt(fusion_breakdown.get("weighted_threshold_action"), "--")
+        weighted_action_raw = _txt(fusion_breakdown.get("weighted_action_raw"), "--")
+        core_rule_action = _txt(fusion_breakdown.get("core_rule_action"), "--")
+        final_action = _txt(fusion_breakdown.get("final_action"), _txt(decision.get("finalAction"), "--"))
+        gate_fail_reasons = fusion_breakdown.get("weighted_gate_fail_reasons") if isinstance(
+            fusion_breakdown.get("weighted_gate_fail_reasons"), list
+        ) else []
+
+        tech_score = _txt(fusion_breakdown.get("tech_score"), _txt(tech_track.get("score"), _txt(decision.get("techScore"), "0")))
+        context_score = _txt(
+            fusion_breakdown.get("context_score"),
+            _txt(context_track.get("score"), _txt(decision.get("contextScore"), "0")),
+        )
+        fusion_score = _txt(fusion_breakdown.get("fusion_score"), "--")
+        tech_conf = _txt(fusion_breakdown.get("tech_confidence"), _txt(tech_track.get("confidence"), "--"))
+        context_conf = _txt(fusion_breakdown.get("context_confidence"), _txt(context_track.get("confidence"), "--"))
+        fusion_conf = _txt(fusion_breakdown.get("fusion_confidence"), _txt(decision.get("confidence"), "--"))
+        divergence = _txt(fusion_breakdown.get("divergence"), "--")
+        divergence_penalty = _txt(fusion_breakdown.get("divergence_penalty"), "--")
+        sign_conflict = _txt(fusion_breakdown.get("sign_conflict"), "--")
+
+        tech_weight_raw = _txt(fusion_breakdown.get("tech_weight_raw"), "--")
+        tech_weight_norm = _txt(fusion_breakdown.get("tech_weight_norm"), "--")
+        context_weight_raw = _txt(fusion_breakdown.get("context_weight_raw"), "--")
+        context_weight_norm = _txt(fusion_breakdown.get("context_weight_norm"), "--")
+
+        tech_group_lines: list[str] = []
+        for group in tech_groups:
+            if not isinstance(group, dict):
+                continue
+            tech_group_lines.append(
+                "技术组 "
+                + _txt(group.get("id"), "--")
+                + f": score={_txt(group.get('score'), '--')}, coverage={_txt(group.get('coverage'), '--')}, "
+                + f"weight_raw={_txt(group.get('weight_raw'), '--')}, weight_norm={_txt(group.get('weight_norm_in_track'), '--')}, "
+                + f"track_contribution={_txt(group.get('track_contribution'), '--')}"
+            )
+
+        context_group_lines: list[str] = []
+        for group in context_groups:
+            if not isinstance(group, dict):
+                continue
+            context_group_lines.append(
+                "环境组 "
+                + _txt(group.get("id"), "--")
+                + f": score={_txt(group.get('score'), '--')}, coverage={_txt(group.get('coverage'), '--')}, "
+                + f"weight_raw={_txt(group.get('weight_raw'), '--')}, weight_norm={_txt(group.get('weight_norm_in_track'), '--')}, "
+                + f"track_contribution={_txt(group.get('track_contribution'), '--')}"
+            )
+
+        top_tech_dims = sorted(
+            [item for item in tech_dims if isinstance(item, dict)],
+            key=lambda item: abs(_float(item.get("track_contribution"), _float(item.get("group_contribution"), _float(item.get("score"), 0.0))) or 0.0),
+            reverse=True,
+        )[:6]
+        top_context_dims = sorted(
+            [item for item in context_dims if isinstance(item, dict)],
+            key=lambda item: abs(_float(item.get("track_contribution"), _float(item.get("group_contribution"), _float(item.get("score"), 0.0))) or 0.0),
+            reverse=True,
+        )[:6]
+
+        tech_evidence = [
+            "技术维度 "
+            + _txt(item.get("id"), "--")
+            + f"（组={_txt(item.get('group'), '--')}）: score={_txt(item.get('score'), '--')}, "
+            + f"group_contribution={_txt(item.get('group_contribution'), '--')}, track_contribution={_txt(item.get('track_contribution'), '--')} · "
+            + _txt(item.get("reason"), "--")
+            for item in top_tech_dims
+        ]
+        context_evidence = [
+            "环境维度 "
+            + _txt(item.get("id"), "--")
+            + f"（组={_txt(item.get('group'), '--')}）: score={_txt(item.get('score'), '--')}, "
+            + f"group_contribution={_txt(item.get('group_contribution'), '--')}, track_contribution={_txt(item.get('track_contribution'), '--')} · "
+            + _txt(item.get("reason"), "--")
+            for item in top_context_dims
+        ]
+
+        threshold_lines = [f"{_txt(k)}={_txt(v)}" for k, v in effective_thresholds.items() if _txt(k)]
+        decision_path_lines = []
+        for item in decision_path:
+            if not isinstance(item, dict):
+                continue
+            decision_path_lines.append(
+                _txt(item.get("step"), "--")
+                + f": matched={_txt(item.get('matched'), '--')}"
+                + f", detail={_txt(item.get('detail'), '--')}"
+            )
+        veto_lines = []
+        for item in vetoes:
+            if not isinstance(item, dict):
+                continue
+            veto_lines.append(
+                _txt(item.get("id"), "veto")
+                + f": action={_txt(item.get('action'), '--')}, reason={_txt(item.get('reason'), '--')}, priority={_txt(item.get('priority'), '--')}"
+            )
+
+        summary_lines = [
+            f"本次信号采用 v2.3 双轨算法，模式 {mode}。最终动作 {final_action}，融合分 {fusion_score}，融合置信度 {fusion_conf}。",
+            f"技术轨 score/confidence={tech_score}/{tech_conf}；环境轨 score/confidence={context_score}/{context_conf}。",
+            f"动作链路：core_rule={core_rule_action} -> weighted_threshold={weighted_threshold_action} -> weighted_gate={weighted_action_raw} -> final={final_action}。",
+        ]
+        if gate_fail_reasons:
+            summary_lines.append("加权门控未通过原因: " + " | ".join(_txt(item, "--") for item in gate_fail_reasons))
+        if veto_lines:
+            summary_lines.append("否决命中: " + " | ".join(veto_lines))
+
+        basis = [
+            f"决策点: {_txt(decision.get('checkpointAt'), '--')}",
+            f"轨道权重: 技术轨 raw={tech_weight_raw}, norm={tech_weight_norm}; 环境轨 raw={context_weight_raw}, norm={context_weight_norm}",
+            f"融合参数: divergence={divergence}, divergence_penalty={divergence_penalty}, sign_conflict={sign_conflict}",
+            f"阈值: buy={_txt(fusion_breakdown.get('buy_threshold_eff'), '--')} (base={_txt(fusion_breakdown.get('buy_threshold_base'), '--')}), "
+            + f"sell={_txt(fusion_breakdown.get('sell_threshold_eff'), '--')} (base={_txt(fusion_breakdown.get('sell_threshold_base'), '--')}), "
+            + f"sell_precedence_gate={_txt(fusion_breakdown.get('sell_precedence_gate'), '--')}, mode={_txt(fusion_breakdown.get('threshold_mode'), '--')}",
+            *tech_group_lines,
+            *context_group_lines,
+            *decision_path_lines,
+            *veto_lines,
+            f"最终理由: {_txt(decision.get('finalReason') or reasoning_text, '--')}",
+        ]
+
+        context_component_breakdown = [
+            f"{_txt(item.get('id'), '--')}: track_contribution={_txt(item.get('track_contribution'), '--')} · {_txt(item.get('reason'), '--')}"
+            for item in top_context_dims
+        ]
+        context_component_sum = 0.0
+        for group in context_groups:
+            if not isinstance(group, dict):
+                continue
+            context_component_sum += _float(group.get("track_contribution"), 0.0) or 0.0
+
+        return {
+            "summary": "\n".join(summary_lines),
+            "contextScoreExplain": {
+                "formula": "环境轨分值 = Σ(组权重归一化 × 组分值)，组分值=Σ(组内维度归一化权重 × 维度分)，并截断到 [-1, 1]。",
+                "confidenceFormula": "环境轨置信度 = Σ(组权重 × 组覆盖率)/Σ组权重；融合置信度 = base_confidence × (1 - divergence_penalty)。",
+                "componentBreakdown": context_component_breakdown,
+                "componentSum": round(context_component_sum, 6),
+                "finalScore": _txt(context_score, _txt(decision.get("contextScore"), "0")),
+            },
+            "basis": basis,
+            "techEvidence": tech_evidence,
+            "contextEvidence": context_evidence,
+            "thresholdEvidence": threshold_lines,
+            "original": {
+                "analysis": analysis_text,
+                "reasoning": reasoning_text,
+            },
+        }
+
     top_tech = sorted([item for item in tech_votes_raw if isinstance(item, dict)], key=_vote_sort_key, reverse=True)[:5]
     top_context = sorted([item for item in context_votes_raw if isinstance(item, dict)], key=_vote_sort_key, reverse=True)[:5]
     threshold_lines = [f"{_txt(k)}={_txt(v)}" for k, v in effective_thresholds.items() if _txt(k)]
@@ -1334,6 +2110,7 @@ def _build_vote_overview(
     *,
     tech_votes_raw: list[dict[str, Any]],
     context_votes_raw: list[dict[str, Any]],
+    explainability: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     def _extract_weight(item: dict[str, Any]) -> float:
         for key in ("weight", "vote_weight", "factor_weight", "w"):
@@ -1408,6 +2185,44 @@ def _build_vote_overview(
 
     tech_clamped = max(-1.0, min(1.0, tech_sum))
     context_clamped = max(-1.0, min(1.0, context_sum))
+
+    explain_obj = explainability if isinstance(explainability, dict) else {}
+    if _is_v23_explainability(explain_obj):
+        technical_breakdown = _safe_json_load(explain_obj.get("technical_breakdown"))
+        context_breakdown = _safe_json_load(explain_obj.get("context_breakdown"))
+        tech_track = _safe_json_load(technical_breakdown.get("track"))
+        context_track = _safe_json_load(context_breakdown.get("track"))
+        tech_group_lines = []
+        for item in technical_breakdown.get("groups") if isinstance(technical_breakdown.get("groups"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            tech_group_lines.append(
+                f"{_txt(item.get('id'), '--')}: score={_txt(item.get('score'), '--')}, "
+                f"weight_norm={_txt(item.get('weight_norm_in_track'), '--')}, track_contribution={_txt(item.get('track_contribution'), '--')}"
+            )
+        context_group_lines = []
+        for item in context_breakdown.get("groups") if isinstance(context_breakdown.get("groups"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            context_group_lines.append(
+                f"{_txt(item.get('id'), '--')}: score={_txt(item.get('score'), '--')}, "
+                f"weight_norm={_txt(item.get('weight_norm_in_track'), '--')}, track_contribution={_txt(item.get('track_contribution'), '--')}"
+            )
+        return {
+            "voterCount": len(rows),
+            "technicalVoterCount": tech_count,
+            "contextVoterCount": context_count,
+            "formula": "v2.3 聚合：组内维度归一化 -> 轨内组权重归一化 -> 双轨融合；表格贡献分优先展示 track_contribution。",
+            "technicalAggregation": (
+                f"技术轨 score={_txt(tech_track.get('score'), '--')}, confidence={_txt(tech_track.get('confidence'), '--')}"
+                + (f"；组明细: {' | '.join(tech_group_lines)}" if tech_group_lines else "")
+            ),
+            "contextAggregation": (
+                f"环境轨 score={_txt(context_track.get('score'), '--')}, confidence={_txt(context_track.get('confidence'), '--')}"
+                + (f"；组明细: {' | '.join(context_group_lines)}" if context_group_lines else "")
+            ),
+            "rows": rows,
+        }
 
     return {
         "voterCount": len(rows),
@@ -1634,6 +2449,7 @@ def _build_parameter_details(
     effective_thresholds: dict[str, Any],
     tech_votes_raw: list[dict[str, Any]],
     context_votes_raw: list[dict[str, Any]],
+    explainability: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     def _item(name: str, value: Any, source: str, derivation: str) -> dict[str, str]:
         return {
@@ -1643,37 +2459,129 @@ def _build_parameter_details(
             "derivation": _txt(derivation),
         }
 
-    tech_vote_sum = sum((_float(item.get("score"), 0.0) or 0.0) for item in tech_votes_raw if isinstance(item, dict))
-    tech_vote_clamped = max(-1.0, min(1.0, tech_vote_sum))
-    context_vote_sum = sum((_float(item.get("score"), 0.0) or 0.0) for item in context_votes_raw if isinstance(item, dict))
-    context_vote_clamped = max(-1.0, min(1.0, context_vote_sum))
+    explain_obj = explainability if isinstance(explainability, dict) else {}
+    if _is_v23_explainability(explain_obj):
+        technical_breakdown = _safe_json_load(explain_obj.get("technical_breakdown"))
+        context_breakdown = _safe_json_load(explain_obj.get("context_breakdown"))
+        fusion_breakdown = _safe_json_load(explain_obj.get("fusion_breakdown"))
+        decision_path = explain_obj.get("decision_path") if isinstance(explain_obj.get("decision_path"), list) else []
+        vetoes = explain_obj.get("vetoes") if isinstance(explain_obj.get("vetoes"), list) else []
 
-    rows: list[dict[str, str]] = [
-        _item("动作", decision.get("action"), "DualTrackResolver.resolve", "由技术信号、环境信号与规则命中共同决定最终 BUY/SELL/HOLD。"),
-        _item("决策类型", decision.get("decisionType"), "DualTrackResolver.resolve", "根据共振/背离/否决路径设置，如 dual_track_resonance、dual_track_divergence、dual_track_hold。"),
-        _item("技术信号", decision.get("techSignal"), "KernelStrategyRuntime._select_tech_action", "tech_score >= buy_threshold => BUY；<= sell_threshold => SELL；否则 HOLD。"),
-        _item("环境信号", decision.get("contextSignal"), "KernelStrategyRuntime._select_context_signal", "context_score >= 0.3 => BUY；<= -0.3 => SELL；否则 HOLD。"),
-        _item("技术分", decision.get("techScore"), "KernelStrategyRuntime._calculate_candidate_tech_votes / _calculate_position_tech_votes", f"技术投票分值求和后截断到 [-1,1]。当前投票和={tech_vote_sum:.4f}，截断后={tech_vote_clamped:.4f}。"),
-        _item("环境分", decision.get("contextScore"), "MarketRegimeContextProvider.score_context", f"来源先验+趋势+结构+动量+风险平衡+流动性+时段求和后截断到 [-1,1]。当前组件和={context_vote_sum:.4f}，截断后={context_vote_clamped:.4f}。"),
-        _item("置信度", decision.get("confidence"), "KernelStrategyRuntime._select_tech_confidence", "base_confidence + |tech_score|*tech_weight + max(context_score,0)*context_weight + 风格加成，之后夹在[min_confidence,max_confidence]。"),
-        _item(
-            "仓位建议(%)",
-            decision.get("positionSizePct"),
-            "DualTrackResolver._calculate_position_rule",
-            "BUY 时表示目标买入仓位比例；SELL 时表示建议卖出比例（100% 即清仓可卖仓位）；HOLD 时通常为 0。由技术分与环境分命中共振/背离规则后得到。",
-        ),
-        _item(
-            "建议保持仓位",
-            _derive_keep_position_pct(decision.get("action"), decision.get("positionSizePct")),
-            "DualTrackResolver._calculate_position_rule",
-            "BUY 时等于目标买入仓位；SELL 时 = 100% - 建议卖出比例；HOLD 时表示维持当前仓位不变。",
-        ),
-        _item("规则命中", decision.get("ruleHit"), "DualTrackResolver._calculate_position_rule", "按 resonance_full/heavy/moderate/standard/divergence 等规则判定。"),
-        _item("共振类型", decision.get("resonanceType"), "DualTrackResolver.resolve", "由仓位比例和背离状态映射 full/heavy/moderate/light 等类型。"),
-        _item("市场", runtime_context.get("market"), "调度配置/回放任务", "实时模式取 scheduler.market；回放模式取 sim_runs.market。"),
-        _item("分析粒度", runtime_context.get("timeframe"), "调度配置/回放任务/策略配置", "实时模式优先取策略分析粒度，其次 scheduler.analysis_timeframe；回放模式取 sim_runs.timeframe。"),
-        _item("策略模式", runtime_context.get("strategyMode"), "调度配置/回放任务/策略配置", "实时模式优先取策略模式，其次 scheduler.strategy_mode；回放模式取 sim_runs.selected_strategy_mode。"),
-    ]
+        tech_track = _safe_json_load(technical_breakdown.get("track"))
+        context_track = _safe_json_load(context_breakdown.get("track"))
+
+        rows: list[dict[str, str]] = [
+            _item("动作", decision.get("action"), "fusion_breakdown.final_action", "最终动作来自 v2.3 融合层输出（含 veto/门控/规则合并）。"),
+            _item("决策类型", decision.get("decisionType"), "signal.decision_type", "决策类型来自信号记录，用于区分融合路径与执行语义。"),
+            _item("核心规则动作", fusion_breakdown.get("core_rule_action"), "fusion_breakdown.core_rule_action", "仅规则引擎输出，不含 veto。"),
+            _item("加权阈值动作", fusion_breakdown.get("weighted_threshold_action"), "fusion_breakdown.weighted_threshold_action", "仅由融合分与阈值比较得到的动作。"),
+            _item("加权门控后动作", fusion_breakdown.get("weighted_action_raw"), "fusion_breakdown.weighted_action_raw", "在阈值动作基础上应用置信度与分轨门控后的动作。"),
+            _item("技术信号", decision.get("techSignal"), "technical_breakdown.track.score", "技术轨信号由技术轨 TrackScore 符号映射：>0 BUY，<0 SELL，=0 HOLD。"),
+            _item("环境信号", decision.get("contextSignal"), "context_breakdown.track.score", "环境轨信号由环境轨 TrackScore 符号映射：>0 BUY，<0 SELL，=0 HOLD。"),
+            _item("技术分", decision.get("techScore"), "technical_breakdown.track.score", "技术轨分值=Σ(组权重归一化 × 组分值)，组分值=Σ(组内维度归一化权重 × 维度分)。"),
+            _item("环境分", decision.get("contextScore"), "context_breakdown.track.score", "环境轨分值=Σ(组权重归一化 × 组分值)，组分值=Σ(组内维度归一化权重 × 维度分)。"),
+            _item("技术轨置信度", tech_track.get("confidence"), "technical_breakdown.track.confidence", "技术轨置信度=Σ(组权重 × 组覆盖率)/Σ组权重。"),
+            _item("环境轨置信度", context_track.get("confidence"), "context_breakdown.track.confidence", "环境轨置信度=Σ(组权重 × 组覆盖率)/Σ组权重。"),
+            _item("融合分", fusion_breakdown.get("fusion_score"), "fusion_breakdown.fusion_score", "融合分=技术轨归一化权重×技术轨分 + 环境轨归一化权重×环境轨分。"),
+            _item(
+                "融合置信度",
+                fusion_breakdown.get("fusion_confidence"),
+                "fusion_breakdown.fusion_confidence",
+                "融合置信度=base_confidence × (1 - divergence_penalty)，用于 BUY 门控和动作稳定性控制。",
+            ),
+            _item("仓位建议(%)", decision.get("positionSizePct"), "signal.position_size_pct", "仓位建议由融合动作与风险约束共同决定。"),
+            _item(
+                "建议保持仓位",
+                _derive_keep_position_pct(decision.get("action"), decision.get("positionSizePct")),
+                "signal.position_size_pct",
+                "BUY 时等于目标买入仓位；SELL 时 = 100% - 建议卖出比例；HOLD 时保持不变。",
+            ),
+            _item("规则命中", decision.get("ruleHit"), "dual_track.rule_hit", "规则命中来自双轨规则融合结果。"),
+            _item("共振类型", decision.get("resonanceType"), "dual_track.resonance_type", "共振类型用于说明双轨是否同向及其强弱。"),
+            _item("市场", runtime_context.get("market"), "调度配置/回放任务", "实时模式取 scheduler.market；回放模式取 sim_runs.market。"),
+            _item("分析粒度", runtime_context.get("timeframe"), "调度配置/回放任务/策略配置", "实时模式优先策略粒度，其次 scheduler.analysis_timeframe；回放模式取 sim_runs.timeframe。"),
+            _item("策略模式", runtime_context.get("strategyMode"), "调度配置/回放任务/策略配置", "实时模式优先策略模式，其次 scheduler.strategy_mode；回放模式取 sim_runs.selected_strategy_mode。"),
+            _item("双轨模式", fusion_breakdown.get("mode"), "fusion_breakdown.mode", "融合模式支持 rule_only / weighted_only / hybrid。"),
+            _item("技术轨权重(raw)", fusion_breakdown.get("tech_weight_raw"), "fusion_breakdown.tech_weight_raw", "技术轨原始权重，融合前参数。"),
+            _item("环境轨权重(raw)", fusion_breakdown.get("context_weight_raw"), "fusion_breakdown.context_weight_raw", "环境轨原始权重，融合前参数。"),
+            _item("技术轨权重(norm)", fusion_breakdown.get("tech_weight_norm"), "fusion_breakdown.tech_weight_norm", "技术轨融合归一化权重。"),
+            _item("环境轨权重(norm)", fusion_breakdown.get("context_weight_norm"), "fusion_breakdown.context_weight_norm", "环境轨融合归一化权重。"),
+            _item("方向背离度", fusion_breakdown.get("divergence"), "fusion_breakdown.divergence", "双轨分值差异度，用于冲突惩罚计算。"),
+            _item("背离惩罚", fusion_breakdown.get("divergence_penalty"), "fusion_breakdown.divergence_penalty", "融合置信度惩罚项，越大代表轨道冲突越强。"),
+            _item("方向冲突标记", fusion_breakdown.get("sign_conflict"), "fusion_breakdown.sign_conflict", "技术轨与环境轨符号是否冲突（0/1）。"),
+            _item("veto 来源模式", fusion_breakdown.get("veto_source_mode"), "fusion_breakdown.veto_source_mode", "标记 veto 判定来源（如 legacy/new）。"),
+        ]
+
+        gate_reasons = fusion_breakdown.get("weighted_gate_fail_reasons")
+        if isinstance(gate_reasons, list):
+            rows.append(
+                _item(
+                    "加权门控失败原因",
+                    " | ".join(_txt(item, "--") for item in gate_reasons) if gate_reasons else "无",
+                    "fusion_breakdown.weighted_gate_fail_reasons",
+                    "记录 weighted_action_raw 未能通过门控时的失败原因列表。",
+                )
+            )
+
+        for index, item in enumerate(decision_path):
+            if not isinstance(item, dict):
+                continue
+            step = _txt(item.get("step"), f"step_{index + 1}")
+            rows.append(
+                _item(
+                    f"决策路径.{index + 1}.{step}",
+                    _txt(item.get("matched"), "--"),
+                    "decision_path",
+                    _txt(item.get("detail"), "--"),
+                )
+            )
+
+        if vetoes:
+            for index, item in enumerate(vetoes):
+                if not isinstance(item, dict):
+                    continue
+                rows.append(
+                    _item(
+                        f"否决.{index + 1}",
+                        _txt(item.get("action"), "--"),
+                        "vetoes",
+                        f"id={_txt(item.get('id'), '--')}; priority={_txt(item.get('priority'), '--')}; reason={_txt(item.get('reason'), '--')}",
+                    )
+                )
+        else:
+            rows.append(_item("否决命中", "无", "vetoes", "本次未命中 veto，动作由规则与加权门控链路决定。"))
+    else:
+        tech_vote_sum = sum((_float(item.get("score"), 0.0) or 0.0) for item in tech_votes_raw if isinstance(item, dict))
+        tech_vote_clamped = max(-1.0, min(1.0, tech_vote_sum))
+        context_vote_sum = sum((_float(item.get("score"), 0.0) or 0.0) for item in context_votes_raw if isinstance(item, dict))
+        context_vote_clamped = max(-1.0, min(1.0, context_vote_sum))
+
+        rows = [
+            _item("动作", decision.get("action"), "DualTrackResolver.resolve", "由技术信号、环境信号与规则命中共同决定最终 BUY/SELL/HOLD。"),
+            _item("决策类型", decision.get("decisionType"), "DualTrackResolver.resolve", "根据共振/背离/否决路径设置，如 dual_track_resonance、dual_track_divergence、dual_track_hold。"),
+            _item("技术信号", decision.get("techSignal"), "KernelStrategyRuntime._select_tech_action", "tech_score >= buy_threshold => BUY；<= sell_threshold => SELL；否则 HOLD。"),
+            _item("环境信号", decision.get("contextSignal"), "KernelStrategyRuntime._select_context_signal", "context_score >= 0.3 => BUY；<= -0.3 => SELL；否则 HOLD。"),
+            _item("技术分", decision.get("techScore"), "KernelStrategyRuntime._calculate_candidate_tech_votes / _calculate_position_tech_votes", f"技术投票分值求和后截断到 [-1,1]。当前投票和={tech_vote_sum:.4f}，截断后={tech_vote_clamped:.4f}。"),
+            _item("环境分", decision.get("contextScore"), "MarketRegimeContextProvider.score_context", f"来源先验+趋势+结构+动量+风险平衡+流动性+时段求和后截断到 [-1,1]。当前组件和={context_vote_sum:.4f}，截断后={context_vote_clamped:.4f}。"),
+            _item("置信度", decision.get("confidence"), "KernelStrategyRuntime._select_tech_confidence", "base_confidence + |tech_score|*tech_weight + max(context_score,0)*context_weight + 风格加成，之后夹在[min_confidence,max_confidence]。"),
+            _item(
+                "仓位建议(%)",
+                decision.get("positionSizePct"),
+                "DualTrackResolver._calculate_position_rule",
+                "BUY 时表示目标买入仓位比例；SELL 时表示建议卖出比例（100% 即清仓可卖仓位）；HOLD 时通常为 0。由技术分与环境分命中共振/背离规则后得到。",
+            ),
+            _item(
+                "建议保持仓位",
+                _derive_keep_position_pct(decision.get("action"), decision.get("positionSizePct")),
+                "DualTrackResolver._calculate_position_rule",
+                "BUY 时等于目标买入仓位；SELL 时 = 100% - 建议卖出比例；HOLD 时表示维持当前仓位不变。",
+            ),
+            _item("规则命中", decision.get("ruleHit"), "DualTrackResolver._calculate_position_rule", "按 resonance_full/heavy/moderate/standard/divergence 等规则判定。"),
+            _item("共振类型", decision.get("resonanceType"), "DualTrackResolver.resolve", "由仓位比例和背离状态映射 full/heavy/moderate/light 等类型。"),
+            _item("市场", runtime_context.get("market"), "调度配置/回放任务", "实时模式取 scheduler.market；回放模式取 sim_runs.market。"),
+            _item("分析粒度", runtime_context.get("timeframe"), "调度配置/回放任务/策略配置", "实时模式优先取策略分析粒度，其次 scheduler.analysis_timeframe；回放模式取 sim_runs.timeframe。"),
+            _item("策略模式", runtime_context.get("strategyMode"), "调度配置/回放任务/策略配置", "实时模式优先取策略模式，其次 scheduler.strategy_mode；回放模式取 sim_runs.selected_strategy_mode。"),
+        ]
 
     for key, value in effective_thresholds.items():
         threshold_key = _txt(key)
@@ -1814,6 +2722,7 @@ def _build_signal_ai_monitor_payload(
     context: UIApiContext,
     signal: dict[str, Any],
     checkpoint_at: Any,
+    fetch_realtime_snapshot: bool = False,
 ) -> dict[str, Any]:
     stock_code = normalize_stock_code(signal.get("stock_code"))
     empty_payload = {
@@ -1841,11 +2750,13 @@ def _build_signal_ai_monitor_payload(
         return payload
 
     if not decision_rows:
-        fallback_market_data = _fetch_signal_market_snapshot(stock_code)
+        fallback_market_data = _fetch_signal_market_snapshot(stock_code) if fetch_realtime_snapshot else {}
         payload = dict(empty_payload)
         payload["marketData"] = _build_ai_market_rows(fallback_market_data if isinstance(fallback_market_data, dict) else {})
         if payload["marketData"]:
             payload["message"] = "无 AI 盯盘记录，已使用实时行情快照补全技术指标。"
+        elif not fetch_realtime_snapshot:
+            payload["message"] = "无 AI 盯盘记录，点击“刷新行情”可加载实时技术指标。"
         return payload
 
     checkpoint_dt = _parse_signal_time(checkpoint_at)
@@ -1860,12 +2771,12 @@ def _build_signal_ai_monitor_payload(
                 break
 
     decision_market_data = selected.get("market_data") if isinstance(selected.get("market_data"), dict) else {}
-    fallback_market_data = _fetch_signal_market_snapshot(stock_code)
+    fallback_market_data = _fetch_signal_market_snapshot(stock_code) if fetch_realtime_snapshot else {}
     market_data: dict[str, Any] = {}
-    if isinstance(fallback_market_data, dict):
-        market_data.update(fallback_market_data)
     if isinstance(decision_market_data, dict):
-        for key, value in decision_market_data.items():
+        market_data.update(decision_market_data)
+    if isinstance(fallback_market_data, dict):
+        for key, value in fallback_market_data.items():
             if _is_empty_market_value(value):
                 continue
             market_data[key] = value
@@ -1972,12 +2883,21 @@ def _build_signal_detail_payload(
     *,
     source: str,
     replay_run: dict[str, Any] | None = None,
+    fetch_realtime_snapshot: bool = False,
 ) -> dict[str, Any]:
     strategy_profile = _safe_json_load(signal.get("strategy_profile"))
     explainability = _safe_json_load(strategy_profile.get("explainability"))
+    technical_breakdown = _safe_json_load(explainability.get("technical_breakdown"))
+    context_breakdown = _safe_json_load(explainability.get("context_breakdown"))
+    fusion_breakdown = _safe_json_load(explainability.get("fusion_breakdown"))
+    is_v23 = _is_v23_explainability(explainability)
     dual_track = _safe_json_load(explainability.get("dual_track"))
-    tech_votes_raw = _extract_vote_list(explainability, ("tech_votes", "technical_votes", "techVotes", "tech"))
-    context_votes_raw = _extract_vote_list(explainability, ("context_votes", "market_votes", "contextVotes", "context"))
+    if is_v23:
+        tech_votes_raw = _build_v23_vote_rows(technical_breakdown, track="technical")
+        context_votes_raw = _build_v23_vote_rows(context_breakdown, track="context")
+    else:
+        tech_votes_raw = _extract_vote_list(explainability, ("tech_votes", "technical_votes", "techVotes", "tech"))
+        context_votes_raw = _extract_vote_list(explainability, ("context_votes", "market_votes", "contextVotes", "context"))
     tech_votes = [_to_vote_row(item) for item in tech_votes_raw]
     context_votes = [_to_vote_row(item, default_signal="CONTEXT") for item in context_votes_raw]
 
@@ -1991,18 +2911,33 @@ def _build_signal_detail_payload(
     )
     reasoning_text = _txt(signal.get("reasoning"), analysis_text)
 
+    tech_track = _safe_json_load(technical_breakdown.get("track"))
+    context_track = _safe_json_load(context_breakdown.get("track"))
+    v23_tech_score = _txt(
+        fusion_breakdown.get("tech_score"),
+        _txt(tech_track.get("score"), _txt(signal.get("tech_score"), "0")),
+    )
+    v23_context_score = _txt(
+        fusion_breakdown.get("context_score"),
+        _txt(context_track.get("score"), _txt(signal.get("context_score"), "0")),
+    )
+    v23_confidence = _txt(fusion_breakdown.get("fusion_confidence"), _txt(signal.get("confidence"), "0"))
+    v23_tech_signal = _score_to_signal(_float(v23_tech_score, 0.0) or 0.0)
+    v23_context_signal = _score_to_signal(_float(v23_context_score, 0.0) or 0.0)
+    v23_final_action = _txt(fusion_breakdown.get("final_action") or dual_track.get("final_action") or signal.get("action"), "HOLD").upper()
+
     decision = {
         "id": _txt(signal.get("id")),
         "source": source,
         "stockCode": _txt(signal.get("stock_code")),
         "stockName": _txt(signal.get("stock_name")),
-        "action": _txt(signal.get("action"), "HOLD").upper(),
+        "action": v23_final_action if is_v23 else _txt(signal.get("action"), "HOLD").upper(),
         "status": _txt(signal.get("signal_status") or signal.get("status") or signal.get("execution_note"), "observed"),
-        "decisionType": _txt(signal.get("decision_type") or dual_track.get("decision_type"), "auto"),
-        "confidence": _txt(signal.get("confidence"), "0"),
+        "decisionType": _txt(signal.get("decision_type") or dual_track.get("decision_type") or fusion_breakdown.get("mode"), "auto"),
+        "confidence": v23_confidence if is_v23 else _txt(signal.get("confidence"), "0"),
         "positionSizePct": _txt(signal.get("position_size_pct"), "0"),
-        "techScore": _txt(signal.get("tech_score"), "0"),
-        "contextScore": _txt(signal.get("context_score"), "0"),
+        "techScore": v23_tech_score if is_v23 else _txt(signal.get("tech_score"), "0"),
+        "contextScore": v23_context_score if is_v23 else _txt(signal.get("context_score"), "0"),
         "checkpointAt": _txt(signal.get("checkpoint_at") or signal.get("updated_at") or signal.get("created_at"), "--"),
         "createdAt": _txt(signal.get("created_at"), "--"),
         "analysisTimeframe": _profile_text(strategy_profile.get("analysis_timeframe"), "--"),
@@ -2011,11 +2946,11 @@ def _build_signal_detail_payload(
         "fundamentalQuality": _txt(strategy_profile.get("fundamental_quality"), "--"),
         "riskStyle": _txt(_safe_json_load(strategy_profile.get("risk_style")).get("label") or strategy_profile.get("risk_style"), "--"),
         "autoInferredRiskStyle": _txt(strategy_profile.get("auto_inferred_risk_style"), "--"),
-        "techSignal": _txt(dual_track.get("tech_signal"), "--"),
-        "contextSignal": _txt(dual_track.get("context_signal"), "--"),
+        "techSignal": _txt(dual_track.get("tech_signal"), v23_tech_signal if is_v23 else "--"),
+        "contextSignal": _txt(dual_track.get("context_signal"), v23_context_signal if is_v23 else "--"),
         "resonanceType": _txt(dual_track.get("resonance_type"), "--"),
-        "ruleHit": _txt(dual_track.get("rule_hit"), "--"),
-        "finalAction": _txt(dual_track.get("final_action") or signal.get("action"), "HOLD").upper(),
+        "ruleHit": _txt(dual_track.get("rule_hit"), _txt(fusion_breakdown.get("mode"), "--") if is_v23 else "--"),
+        "finalAction": v23_final_action if is_v23 else _txt(dual_track.get("final_action") or signal.get("action"), "HOLD").upper(),
         "finalReason": _txt(dual_track.get("final_reason") or reasoning_text, "--"),
         "positionRatio": _txt(dual_track.get("position_ratio"), _txt(signal.get("position_size_pct"), "0")),
     }
@@ -2026,8 +2961,42 @@ def _build_signal_detail_payload(
         reasoning=reasoning_text,
         analysis_text=analysis_text,
         strategy_profile=strategy_profile,
+        technical_breakdown=technical_breakdown if is_v23 else None,
+        context_breakdown=context_breakdown if is_v23 else None,
     )
     effective_thresholds = _safe_json_load(strategy_profile.get("effective_thresholds"))
+    if is_v23:
+        if _txt(fusion_breakdown.get("buy_threshold_eff")):
+            effective_thresholds["buy_threshold"] = fusion_breakdown.get("buy_threshold_eff")
+        if _txt(fusion_breakdown.get("sell_threshold_eff")):
+            effective_thresholds["sell_threshold"] = fusion_breakdown.get("sell_threshold_eff")
+        for key in (
+            "buy_threshold_base",
+            "buy_threshold_eff",
+            "sell_threshold_base",
+            "sell_threshold_eff",
+            "sell_precedence_gate",
+            "threshold_mode",
+            "volatility_regime_score",
+            "tech_weight_raw",
+            "tech_weight_norm",
+            "context_weight_raw",
+            "context_weight_norm",
+            "fusion_score",
+            "fusion_confidence",
+            "fusion_confidence_base",
+            "divergence",
+            "divergence_penalty",
+            "sign_conflict",
+            "mode",
+            "veto_source_mode",
+        ):
+            if _txt(fusion_breakdown.get(key)):
+                effective_thresholds[key] = fusion_breakdown.get(key)
+        gate_fail_reasons = fusion_breakdown.get("weighted_gate_fail_reasons")
+        if isinstance(gate_fail_reasons, list):
+            effective_thresholds["weighted_gate_fail_reasons"] = " | ".join(_txt(item, "--") for item in gate_fail_reasons) if gate_fail_reasons else "无"
+
     runtime_context = _build_runtime_context(
         context,
         source=source,
@@ -2041,10 +3010,12 @@ def _build_signal_detail_payload(
         tech_votes_raw=tech_votes_raw,
         context_votes_raw=context_votes_raw,
         effective_thresholds=effective_thresholds,
+        explainability=explainability,
     )
     vote_overview = _build_vote_overview(
         tech_votes_raw=tech_votes_raw,
         context_votes_raw=context_votes_raw,
+        explainability=explainability,
     )
     parameter_details = _build_parameter_details(
         decision=decision,
@@ -2053,12 +3024,14 @@ def _build_signal_detail_payload(
         effective_thresholds=effective_thresholds,
         tech_votes_raw=tech_votes_raw,
         context_votes_raw=context_votes_raw,
+        explainability=explainability,
     )
 
     ai_monitor = _build_signal_ai_monitor_payload(
         context=context,
         signal=signal,
         checkpoint_at=decision.get("checkpointAt"),
+        fetch_realtime_snapshot=fetch_realtime_snapshot,
     )
 
     return {
@@ -2079,7 +3052,13 @@ def _build_signal_detail_payload(
     }
 
 
-def _find_signal_detail(context: UIApiContext, signal_id: str, *, source: str = "auto") -> dict[str, Any]:
+def _find_signal_detail(
+    context: UIApiContext,
+    signal_id: str,
+    *,
+    source: str = "auto",
+    fetch_realtime_snapshot: bool = False,
+) -> dict[str, Any]:
     db = context.quant_db()
     normalized_source = _txt(source, "auto").lower()
     sid_int = _int(signal_id)
@@ -2087,19 +3066,27 @@ def _find_signal_detail(context: UIApiContext, signal_id: str, *, source: str = 
         raise HTTPException(status_code=400, detail=f"Invalid signal id: {signal_id}")
 
     if normalized_source in {"auto", "live"}:
-        live_signal = next((item for item in db.get_signals(limit=5000) if _int(item.get("id")) == sid_int), None)
+        live_signal = db.get_signal(sid_int)
         if live_signal:
-            return _build_signal_detail_payload(context, live_signal, source="live")
+            return _build_signal_detail_payload(
+                context,
+                live_signal,
+                source="live",
+                fetch_realtime_snapshot=fetch_realtime_snapshot,
+            )
 
     if normalized_source in {"auto", "replay"}:
-        run_rows = db.get_sim_runs(limit=30)
-        for run in run_rows:
-            run_id = _int(run.get("id"))
-            if run_id is None:
-                continue
-            replay_signal = next((item for item in db.get_sim_run_signals(run_id) if _int(item.get("id")) == sid_int), None)
-            if replay_signal:
-                return _build_signal_detail_payload(context, replay_signal, source="replay", replay_run=run)
+        replay_signal = db.get_sim_run_signal(sid_int)
+        if replay_signal:
+            run_id = _int(replay_signal.get("run_id"))
+            replay_run = db.get_sim_run(run_id) if run_id is not None else None
+            return _build_signal_detail_payload(
+                context,
+                replay_signal,
+                source="replay",
+                replay_run=replay_run,
+                fetch_realtime_snapshot=fetch_realtime_snapshot,
+            )
 
     raise HTTPException(status_code=404, detail=f"Signal not found: {signal_id}")
 
@@ -2162,6 +3149,7 @@ def _snapshot_history(context: UIApiContext) -> dict[str, Any]:
 
 def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
     info = context.config_manager.get_config_info()
+
     def pick(keys: list[str]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for key in keys:
@@ -2183,19 +3171,152 @@ def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
                 item["options"] = [str(option) for option in options]
             items.append(item)
         return items
+
+    db = context.quant_db()
+    scheduler_cfg = db.get_scheduler_config()
+    profile_rows = db.list_strategy_profiles(include_disabled=True)
+    strategy_profiles: list[dict[str, Any]] = []
+    for row in profile_rows:
+        profile_id = str(row.get("id") or "").strip()
+        latest_version = db.get_latest_strategy_profile_version(profile_id) if profile_id else None
+        strategy_profiles.append(
+            {
+                "id": profile_id,
+                "name": _txt(row.get("name"), profile_id),
+                "description": _txt(row.get("description")),
+                "enabled": bool(row.get("enabled", True)),
+                "isDefault": bool(row.get("is_default", False)),
+                "updatedAt": _txt(row.get("updated_at")),
+                "latestVersionId": _txt((latest_version or {}).get("id"), "--"),
+                "latestVersion": _txt((latest_version or {}).get("version"), "--"),
+                "config": (latest_version or {}).get("config") if isinstance((latest_version or {}).get("config"), dict) else {},
+            }
+        )
+
     model_keys = ["AI_API_KEY", "AI_API_BASE_URL", "DEFAULT_MODEL_NAME"]
     source_keys = ["TUSHARE_TOKEN", "MINIQMT_ENABLED", "MINIQMT_ACCOUNT_ID", "MINIQMT_HOST", "MINIQMT_PORT"]
     runtime_keys = ["DISCOVER_TOP_N", "RESEARCH_TOP_N", "EMAIL_ENABLED", "SMTP_SERVER", "SMTP_PORT", "EMAIL_FROM", "EMAIL_PASSWORD", "EMAIL_TO", "WEBHOOK_ENABLED", "WEBHOOK_TYPE", "WEBHOOK_URL", "WEBHOOK_KEYWORD"]
-    return {"updatedAt": _now(), "metrics": [_metric("模型配置", len(model_keys)), _metric("数据源", len(source_keys)), _metric("运行参数", len(runtime_keys)), _metric("通知通道", 2)], "modelConfig": pick(model_keys), "dataSources": pick(source_keys), "runtimeParams": pick(runtime_keys), "paths": [str(context.data_dir / "watchlist.db"), str(context.quant_sim_db_file), str(context.portfolio_db_file), str(context.monitor_db_file), str(context.smart_monitor_db_file), str(context.stock_analysis_db_file), str(context.main_force_batch_db_file), str(context.selector_result_dir), str(LOGS_DIR)]}
+    return {
+        "updatedAt": _now(),
+        "metrics": [
+            _metric("模型配置", len(model_keys)),
+            _metric("数据源", len(source_keys)),
+            _metric("运行参数", len(runtime_keys)),
+            _metric("通知通道", 2),
+        ],
+        "modelConfig": pick(model_keys),
+        "dataSources": pick(source_keys),
+        "runtimeParams": pick(runtime_keys),
+        "strategyProfiles": strategy_profiles,
+        "selectedStrategyProfileId": _txt(scheduler_cfg.get("strategy_profile_id")),
+        "paths": [
+            str(context.data_dir / "watchlist.db"),
+            str(context.quant_sim_db_file),
+            str(context.portfolio_db_file),
+            str(context.monitor_db_file),
+            str(context.smart_monitor_db_file),
+            str(context.stock_analysis_db_file),
+            str(context.main_force_batch_db_file),
+            str(context.selector_result_dir),
+            str(LOGS_DIR),
+        ],
+    }
+
+
+def _score_to_signal(score: Any, *, epsilon: float = 1e-6) -> str:
+    value = _float(score, 0.0) or 0.0
+    if value > epsilon:
+        return "BUY"
+    if value < -epsilon:
+        return "SELL"
+    return "HOLD"
+
+
+def _is_v23_explainability(explainability: dict[str, Any]) -> bool:
+    schema = _txt(explainability.get("explain_schema_version"), "").lower()
+    if "quant_explain/v2.3" in schema:
+        return True
+    technical_breakdown = explainability.get("technical_breakdown")
+    context_breakdown = explainability.get("context_breakdown")
+    fusion_breakdown = explainability.get("fusion_breakdown")
+    return isinstance(technical_breakdown, dict) and isinstance(context_breakdown, dict) and isinstance(fusion_breakdown, dict)
+
+
+def _build_v23_vote_rows(track_breakdown: dict[str, Any], *, track: str) -> list[dict[str, Any]]:
+    rows = track_breakdown.get("dimensions")
+    if not isinstance(rows, list):
+        return []
+    output: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        dim_id = _txt(row.get("id"), f"{track}_dim_{index + 1}")
+        dim_group = _txt(row.get("group"))
+        score_value = _float(row.get("score"), 0.0) or 0.0
+        weight_raw = _float(row.get("weight_raw"), 1.0)
+        if weight_raw is None:
+            weight_raw = 1.0
+        weight_norm_group = _float(row.get("weight_norm_in_group"))
+        group_contribution = _float(row.get("group_contribution"))
+        track_contribution = _float(row.get("track_contribution"))
+        contribution_value = (
+            track_contribution
+            if track_contribution is not None
+            else (
+                group_contribution
+                if group_contribution is not None
+                else score_value
+            )
+        )
+        reason = _txt(row.get("reason"), "--")
+        calc_parts = [
+            f"score={score_value:+.4f}",
+            f"weight_raw={float(weight_raw):.4f}",
+        ]
+        if weight_norm_group is not None:
+            calc_parts.append(f"w_norm_group={float(weight_norm_group):.4f}")
+        if group_contribution is not None:
+            calc_parts.append(f"group_contrib={float(group_contribution):+.4f}")
+        if track_contribution is not None:
+            calc_parts.append(f"track_contrib={float(track_contribution):+.4f}")
+        calculation = "；".join(calc_parts)
+        output.append(
+            {
+                "factor": dim_id,
+                "component": dim_id if track == "context" else "",
+                "name": dim_id,
+                "group": dim_group,
+                "signal": _score_to_signal(score_value),
+                "score": round(score_value, 6),
+                "weight": round(float(weight_raw), 6),
+                "vote_weight": round(float(weight_norm_group), 6) if weight_norm_group is not None else "",
+                "contribution": round(contribution_value, 6),
+                "reason": f"group={dim_group}; {reason}" if dim_group else reason,
+                "calculation": calculation,
+            }
+        )
+    return output
 
 
 def _action_settings_save(context: UIApiContext, payload: dict[str, Any]) -> dict[str, Any]:
-    persisted = context.config_manager.write_env(
-        {str(key): "" if value is None else str(value) for key, value in payload.items()}
-    )
-    if not persisted:
-        raise HTTPException(status_code=500, detail="保存配置失败")
+    body = _payload_dict(payload)
+    env_payload = body.get("env") if isinstance(body.get("env"), dict) else {}
+    if not env_payload:
+        env_payload = {
+            str(key): value
+            for key, value in body.items()
+            if str(key) not in {"strategyProfileId", "strategy_profile_id", "env"}
+        }
+    if env_payload:
+        persisted = context.config_manager.write_env(
+            {str(key): "" if value is None else str(value) for key, value in env_payload.items()}
+        )
+        if not persisted:
+            raise HTTPException(status_code=500, detail="保存配置失败")
     context.config_manager.reload_config()
+    strategy_profile_id = _txt(body.get("strategyProfileId") if "strategyProfileId" in body else body.get("strategy_profile_id")).strip()
+    if strategy_profile_id:
+        context.quant_db().update_scheduler_config(strategy_profile_id=strategy_profile_id)
     return _snapshot_settings(context)
 def _normalize_fee_rate(value: Any, default: float) -> float:
     rate = _float(value, default)
@@ -2209,6 +3330,31 @@ def _normalize_fee_rate(value: Any, default: float) -> float:
     if parsed > 0.2:
         parsed = 0.2
     return round(parsed, 8)
+
+
+def _normalize_dynamic_strength(value: Any, default: float = DEFAULT_AI_DYNAMIC_STRENGTH) -> float:
+    parsed = _float(value, default)
+    if parsed is None:
+        parsed = default
+    ratio = float(parsed)
+    if ratio < 0:
+        ratio = 0.0
+    if ratio > 1:
+        ratio = ratio / 100.0
+    ratio = max(0.0, min(1.0, ratio))
+    return round(ratio, 4)
+
+
+def _normalize_dynamic_lookback(value: Any, default: int = DEFAULT_AI_DYNAMIC_LOOKBACK) -> int:
+    parsed = _int(value, default)
+    if parsed is None:
+        parsed = default
+    result = int(parsed)
+    if result < 6:
+        result = 6
+    if result > 336:
+        result = 336
+    return result
 
 
 def _fee_rate_pct_text(value: Any, default: float) -> str:
@@ -2238,6 +3384,10 @@ def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
     scheduler_cfg = context.quant_db().get_scheduler_config()
     default_commission_rate = _normalize_fee_rate(scheduler_cfg.get("commission_rate"), DEFAULT_COMMISSION_RATE)
     default_sell_tax_rate = _normalize_fee_rate(scheduler_cfg.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE)
+    default_strategy_profile_id = _txt(scheduler_cfg.get("strategy_profile_id")).strip() or context.quant_db().get_default_strategy_profile_id()
+    default_ai_dynamic_strategy = _txt(scheduler_cfg.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY)
+    default_ai_dynamic_strength = _normalize_dynamic_strength(scheduler_cfg.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH)
+    default_ai_dynamic_lookback = _normalize_dynamic_lookback(scheduler_cfg.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK)
     latest = next(iter(context.quant_db().get_sim_runs(limit=20)), None)
     if latest:
         metadata = latest.get("metadata") if isinstance(latest.get("metadata"), dict) else {}
@@ -2249,6 +3399,10 @@ def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
             "strategy_mode": _txt(latest.get("selected_strategy_mode") or latest.get("strategy_mode"), "auto"),
             "commission_rate": _normalize_fee_rate(metadata.get("commission_rate"), default_commission_rate),
             "sell_tax_rate": _normalize_fee_rate(metadata.get("sell_tax_rate"), default_sell_tax_rate),
+            "strategy_profile_id": _txt(latest.get("selected_strategy_profile_id"), default_strategy_profile_id),
+            "ai_dynamic_strategy": _txt(metadata.get("ai_dynamic_strategy"), default_ai_dynamic_strategy),
+            "ai_dynamic_strength": _normalize_dynamic_strength(metadata.get("ai_dynamic_strength"), default_ai_dynamic_strength),
+            "ai_dynamic_lookback": _normalize_dynamic_lookback(metadata.get("ai_dynamic_lookback"), default_ai_dynamic_lookback),
         }
     end_at = datetime.now().replace(second=0, microsecond=0)
     start_at = end_at - timedelta(days=30)
@@ -2260,6 +3414,10 @@ def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
         "strategy_mode": "auto",
         "commission_rate": default_commission_rate,
         "sell_tax_rate": default_sell_tax_rate,
+        "strategy_profile_id": default_strategy_profile_id,
+        "ai_dynamic_strategy": default_ai_dynamic_strategy,
+        "ai_dynamic_strength": default_ai_dynamic_strength,
+        "ai_dynamic_lookback": default_ai_dynamic_lookback,
     }
 
 
@@ -2281,6 +3439,10 @@ def _scheduler_update_kwargs(payload: Any) -> dict[str, Any]:
     )
     mapping = {
         "strategy_mode": body.get("strategyMode") if "strategyMode" in body else body.get("strategy_mode"),
+        "strategy_profile_id": body.get("strategyProfileId") if "strategyProfileId" in body else body.get("strategy_profile_id"),
+        "ai_dynamic_strategy": body.get("aiDynamicStrategy") if "aiDynamicStrategy" in body else body.get("ai_dynamic_strategy"),
+        "ai_dynamic_strength": body.get("aiDynamicStrength") if "aiDynamicStrength" in body else body.get("ai_dynamic_strength"),
+        "ai_dynamic_lookback": body.get("aiDynamicLookback") if "aiDynamicLookback" in body else body.get("ai_dynamic_lookback"),
         "analysis_timeframe": body.get("analysisTimeframe") if "analysisTimeframe" in body else body.get("timeframe"),
         "auto_execute": body.get("autoExecute") if "autoExecute" in body else body.get("auto_execute"),
         "interval_minutes": body.get("intervalMinutes") if "intervalMinutes" in body else body.get("interval_minutes"),
@@ -2334,11 +3496,32 @@ def _action_live_sim_analyze_candidate(context: UIApiContext, payload: Any) -> d
     if not candidate:
         raise HTTPException(status_code=404, detail=f"Candidate not found: {code}")
     engine = QuantSimEngine(db_file=context.quant_sim_db_file, watchlist_db_file=context.watchlist_db_file, watchlist_service=context.watchlist())
-    engine.analyze_candidate(
-        candidate,
-        analysis_timeframe=_txt(scheduler_state.get("analysis_timeframe"), "1d"),
-        strategy_mode=_txt(scheduler_state.get("strategy_mode"), "auto"),
-    )
+    analysis_timeframe = _txt(scheduler_state.get("analysis_timeframe"), "1d")
+    strategy_mode = _txt(scheduler_state.get("strategy_mode"), "auto")
+    strategy_profile_id = _txt(scheduler_state.get("strategy_profile_id")).strip() or None
+    ai_dynamic_strategy = _txt(scheduler_state.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY)
+    ai_dynamic_strength = _normalize_dynamic_strength(scheduler_state.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH)
+    ai_dynamic_lookback = _normalize_dynamic_lookback(scheduler_state.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK)
+    try:
+        engine.analyze_candidate(
+            candidate,
+            analysis_timeframe=analysis_timeframe,
+            strategy_mode=strategy_mode,
+            strategy_profile_id=strategy_profile_id,
+            ai_dynamic_strategy=ai_dynamic_strategy,
+            ai_dynamic_strength=ai_dynamic_strength,
+            ai_dynamic_lookback=ai_dynamic_lookback,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "strategy_profile_id" in message:
+            engine.analyze_candidate(
+                candidate,
+                analysis_timeframe=analysis_timeframe,
+                strategy_mode=strategy_mode,
+            )
+        else:
+            raise
     return _snapshot_live_sim(context)
 
 
@@ -2389,6 +3572,17 @@ def _action_his_replay_start(context: UIApiContext, payload: Any) -> dict[str, A
         timeframe=body.get("timeframe") or defaults["timeframe"],
         market=body.get("market") or defaults["market"],
         strategy_mode=body.get("strategyMode") or body.get("strategy_mode") or defaults["strategy_mode"],
+        strategy_profile_id=body.get("strategyProfileId") or body.get("strategy_profile_id") or defaults.get("strategy_profile_id"),
+        ai_dynamic_strategy=body.get("aiDynamicStrategy") or body.get("ai_dynamic_strategy") or defaults.get("ai_dynamic_strategy"),
+        ai_dynamic_strength=_normalize_dynamic_strength(
+            body.get("aiDynamicStrength") if "aiDynamicStrength" in body else body.get("ai_dynamic_strength"),
+            _normalize_dynamic_strength(defaults.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH),
+        ),
+        ai_dynamic_lookback=_normalize_dynamic_lookback(
+            body.get("aiDynamicLookback") if "aiDynamicLookback" in body else body.get("ai_dynamic_lookback"),
+            _normalize_dynamic_lookback(defaults.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK),
+        )
+        or DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate=commission_rate,
         sell_tax_rate=sell_tax_rate,
     )
@@ -2418,6 +3612,17 @@ def _action_his_replay_continue(context: UIApiContext, payload: Any) -> dict[str
         timeframe=body.get("timeframe") or defaults["timeframe"],
         market=body.get("market") or defaults["market"],
         strategy_mode=body.get("strategyMode") or body.get("strategy_mode") or defaults["strategy_mode"],
+        strategy_profile_id=body.get("strategyProfileId") or body.get("strategy_profile_id") or defaults.get("strategy_profile_id"),
+        ai_dynamic_strategy=body.get("aiDynamicStrategy") or body.get("ai_dynamic_strategy") or defaults.get("ai_dynamic_strategy"),
+        ai_dynamic_strength=_normalize_dynamic_strength(
+            body.get("aiDynamicStrength") if "aiDynamicStrength" in body else body.get("ai_dynamic_strength"),
+            _normalize_dynamic_strength(defaults.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH),
+        ),
+        ai_dynamic_lookback=_normalize_dynamic_lookback(
+            body.get("aiDynamicLookback") if "aiDynamicLookback" in body else body.get("ai_dynamic_lookback"),
+            _normalize_dynamic_lookback(defaults.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK),
+        )
+        or DEFAULT_AI_DYNAMIC_LOOKBACK,
         commission_rate=commission_rate,
         sell_tax_rate=sell_tax_rate,
         overwrite_live=bool(body.get("overwriteLive", False) or body.get("overwrite_live", False)),
@@ -2453,6 +3658,10 @@ def _action_history_rerun(context: UIApiContext, payload: Any) -> dict[str, Any]
         timeframe=defaults["timeframe"],
         market=defaults["market"],
         strategy_mode=defaults["strategy_mode"],
+        strategy_profile_id=defaults.get("strategy_profile_id"),
+        ai_dynamic_strategy=defaults.get("ai_dynamic_strategy", DEFAULT_AI_DYNAMIC_STRATEGY),
+        ai_dynamic_strength=_normalize_dynamic_strength(defaults.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH),
+        ai_dynamic_lookback=_normalize_dynamic_lookback(defaults.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK),
         commission_rate=float(defaults["commission_rate"]),
         sell_tax_rate=float(defaults["sell_tax_rate"]),
     )
@@ -2676,6 +3885,23 @@ def _action_real_monitor_delete_rule(context: UIApiContext, payload: Any) -> dic
     return _snapshot_real_monitor(context)
 
 
+def _action_workbench_analysis_batch_compat(context: UIApiContext, payload: Any) -> dict[str, Any]:
+    snapshot = _action_workbench_analysis_batch(context, payload)
+    body = _payload_dict(payload)
+    raw_codes = body.get("stockCodes") if isinstance(body, dict) else None
+    codes = [normalize_stock_code(item) for item in (raw_codes or []) if normalize_stock_code(item)]
+    count = len(codes)
+    if isinstance(snapshot.get("analysis"), dict):
+        analysis = dict(snapshot["analysis"])
+        mode = _txt(body.get("mode"), "批量分析")
+        if count > 0:
+            analysis["mode"] = mode
+            analysis["summaryTitle"] = f"{mode}任务已提交"
+            analysis["summaryBody"] = f"已提交 {count} 只股票进入批量分析队列，结果会按股票逐条更新。"
+        snapshot["analysis"] = analysis
+    return snapshot
+
+
 def _action_noop(context: UIApiContext, page: str) -> dict[str, Any]:
     return SNAPSHOT_BUILDERS[page](context)
 
@@ -2687,6 +3913,7 @@ SNAPSHOT_BUILDERS: dict[str, Callable[[UIApiContext], dict[str, Any]]] = {
     "portfolio": _snapshot_portfolio,
     "live-sim": _snapshot_live_sim,
     "his-replay": _snapshot_his_replay,
+    "ai-monitor": _snapshot_ai_monitor,
     "real-monitor": _snapshot_real_monitor,
     "history": _snapshot_history,
     "settings": _snapshot_settings,
@@ -2698,7 +3925,7 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("workbench", "batch-quant"): _action_workbench_batch_quant,
     ("workbench", "batch-portfolio"): _action_workbench_batch_portfolio,
     ("workbench", "analysis"): _action_workbench_analysis,
-    ("workbench", "analysis-batch"): _action_workbench_analysis_batch,
+    ("workbench", "analysis-batch"): _action_workbench_analysis_batch_compat,
     ("workbench", "clear-selection"): lambda context, payload: _action_noop(context, "workbench"),
     ("workbench", "delete-watchlist"): _action_workbench_delete,
     ("discover", "run-strategy"): _action_discover_run_strategy,
@@ -2729,6 +3956,10 @@ ACTION_BUILDERS: dict[tuple[str, str], Callable[[UIApiContext, dict[str, Any]], 
     ("his-replay", "continue"): _action_his_replay_continue,
     ("his-replay", "cancel"): _action_his_replay_cancel,
     ("his-replay", "delete"): _action_his_replay_delete,
+    ("ai-monitor", "start"): _action_ai_monitor_start,
+    ("ai-monitor", "stop"): _action_ai_monitor_stop,
+    ("ai-monitor", "analyze"): _action_ai_monitor_analyze,
+    ("ai-monitor", "delete"): _action_ai_monitor_delete,
     ("real-monitor", "start"): _action_real_monitor_start,
     ("real-monitor", "stop"): _action_real_monitor_stop,
     ("real-monitor", "refresh"): _action_real_monitor_refresh,
@@ -2758,20 +3989,27 @@ def _resolve_task_manager(task_id: str):
 
 def create_app(context: UIApiContext | None = None) -> FastAPI:
     api_context = context or UIApiContext()
-    app = FastAPI(title="玄武AI智能体股票团队分析系统 Backend API", version="0.1.0")
-    app.state.ui_context = api_context
-    try:
-        unified_stock_refresh_scheduler = get_unified_stock_refresh_scheduler(api_context)
-        unified_stock_refresh_scheduler.start()
-        app.state.unified_stock_refresh_scheduler = unified_stock_refresh_scheduler
-    except Exception:
-        app.state.unified_stock_refresh_scheduler = None
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI):
+        try:
+            unified_stock_refresh_scheduler = get_unified_stock_refresh_scheduler(api_context)
+            unified_stock_refresh_scheduler.start()
+            app.state.unified_stock_refresh_scheduler = unified_stock_refresh_scheduler
+        except Exception:
+            app.state.unified_stock_refresh_scheduler = None
+        try:
+            yield
+        finally:
+            scheduler = getattr(app.state, "unified_stock_refresh_scheduler", None)
+            if scheduler:
+                scheduler.stop()
 
-    @app.on_event("shutdown")
-    def shutdown_unified_stock_refresh_scheduler() -> None:
-        scheduler = getattr(app.state, "unified_stock_refresh_scheduler", None)
-        if scheduler:
-            scheduler.stop()
+    app = FastAPI(
+        title="玄武AI智能体股票团队分析系统 Backend API",
+        version="0.1.0",
+        lifespan=app_lifespan,
+    )
+    app.state.ui_context = api_context
 
     @app.get("/api/health")
     def api_health() -> dict[str, str]:
@@ -2790,8 +4028,13 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         return manager.task_response(task, txt=_txt, int_fn=_int)
 
     @app.get("/api/v1/quant/signals/{signal_id}")
-    def get_signal_detail(signal_id: str, source: str = "auto") -> dict[str, Any]:
-        return _find_signal_detail(api_context, signal_id, source=source)
+    def get_signal_detail(signal_id: str, source: str = "auto", refresh_market: bool = False) -> dict[str, Any]:
+        return _find_signal_detail(
+            api_context,
+            signal_id,
+            source=source,
+            fetch_realtime_snapshot=bool(refresh_market),
+        )
 
     @app.get("/api/v1/quant/live-sim/signals")
     def get_live_sim_signals(limit: int = 200) -> dict[str, Any]:
@@ -2811,6 +4054,141 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         body["code"] = normalize_stock_code(symbol)
         return _action_portfolio_update_position(api_context, body)
 
+    @app.get("/api/v1/strategy-profiles")
+    def list_strategy_profiles(include_disabled: bool = False) -> dict[str, Any]:
+        db = api_context.quant_db()
+        scheduler_cfg = db.get_scheduler_config()
+        rows = db.list_strategy_profiles(include_disabled=include_disabled)
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            profile_id = _txt(row.get("id")).strip()
+            latest = db.get_latest_strategy_profile_version(profile_id) if profile_id else None
+            items.append(
+                {
+                    "id": profile_id,
+                    "name": _txt(row.get("name"), profile_id),
+                    "description": _txt(row.get("description")),
+                    "enabled": bool(row.get("enabled", True)),
+                    "isDefault": bool(row.get("is_default", False)),
+                    "createdAt": _txt(row.get("created_at")),
+                    "updatedAt": _txt(row.get("updated_at")),
+                    "latestVersion": latest,
+                }
+            )
+        return {
+            "updatedAt": _now(),
+            "selectedStrategyProfileId": _txt(scheduler_cfg.get("strategy_profile_id")),
+            "profiles": items,
+        }
+
+    @app.get("/api/v1/strategy-profiles/{profile_id}")
+    def get_strategy_profile(profile_id: str, versions_limit: int = 20) -> dict[str, Any]:
+        db = api_context.quant_db()
+        profile = db.get_strategy_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail=f"Strategy profile not found: {profile_id}")
+        return {
+            "updatedAt": _now(),
+            "profile": profile,
+            "latestVersion": db.get_latest_strategy_profile_version(profile_id),
+            "versions": db.list_strategy_profile_versions(profile_id, limit=versions_limit),
+        }
+
+    @app.post("/api/v1/strategy-profiles")
+    async def create_strategy_profile(request: Request) -> dict[str, Any]:
+        body = _payload_dict(await _json(request))
+        config = body.get("config")
+        if not isinstance(config, dict):
+            raise HTTPException(status_code=400, detail="Missing strategy profile config")
+        try:
+            created = api_context.quant_db().create_strategy_profile(
+                profile_id=_txt(body.get("profileId") if "profileId" in body else body.get("id")).strip() or None,
+                name=_txt(body.get("name")).strip(),
+                config=config,
+                description=_txt(body.get("description")),
+                enabled=bool(body.get("enabled", True)),
+                set_default=bool(body.get("setDefault", False) or body.get("set_default", False)),
+                note=_txt(body.get("note")),
+            )
+            return {"updatedAt": _now(), **created}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.put("/api/v1/strategy-profiles/{profile_id}")
+    async def update_strategy_profile(profile_id: str, request: Request) -> dict[str, Any]:
+        body = _payload_dict(await _json(request))
+        config = body.get("config")
+        try:
+            updated = api_context.quant_db().update_strategy_profile(
+                profile_id,
+                name=_txt(body.get("name")).strip() if "name" in body else None,
+                config=config if isinstance(config, dict) else None,
+                description=_txt(body.get("description")) if "description" in body else None,
+                enabled=bool(body.get("enabled")) if "enabled" in body else None,
+                set_default=bool(body.get("setDefault") if "setDefault" in body else body.get("set_default")) if ("setDefault" in body or "set_default" in body) else None,
+                note=_txt(body.get("note")) if "note" in body else None,
+            )
+            return {"updatedAt": _now(), **updated}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/strategy-profiles/{profile_id}/clone")
+    async def clone_strategy_profile(profile_id: str, request: Request) -> dict[str, Any]:
+        body = _payload_dict(await _json(request))
+        clone_name = _txt(body.get("name")).strip()
+        if not clone_name:
+            raise HTTPException(status_code=400, detail="Clone name is required")
+        try:
+            cloned = api_context.quant_db().clone_strategy_profile(
+                profile_id,
+                name=clone_name,
+                profile_id=_txt(body.get("profileId") if "profileId" in body else body.get("id")).strip() or None,
+                description=_txt(body.get("description")) if "description" in body else None,
+            )
+            return {"updatedAt": _now(), **cloned}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/strategy-profiles/{profile_id}/validate")
+    async def validate_strategy_profile(profile_id: str, request: Request) -> dict[str, Any]:
+        body = _payload_dict(await _json(request))
+        config = body.get("config")
+        db = api_context.quant_db()
+        if not isinstance(config, dict):
+            latest = db.get_latest_strategy_profile_version(profile_id)
+            if latest is None:
+                raise HTTPException(status_code=404, detail=f"Strategy profile version not found: {profile_id}")
+            config = latest.get("config")
+        if not isinstance(config, dict):
+            raise HTTPException(status_code=400, detail="Invalid strategy profile config payload")
+        try:
+            normalized = db.validate_strategy_profile_config(config)
+            return {"updatedAt": _now(), "valid": True, "normalizedConfig": normalized}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/strategy-profiles/{profile_id}/set-default")
+    def set_default_strategy_profile(profile_id: str) -> dict[str, Any]:
+        try:
+            profile = api_context.quant_db().set_default_strategy_profile(profile_id)
+            return {"updatedAt": _now(), "profile": profile}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/strategy-profiles/{profile_id}")
+    def delete_strategy_profile(profile_id: str) -> dict[str, Any]:
+        db = api_context.quant_db()
+        profile = db.get_strategy_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail=f"Strategy profile not found: {profile_id}")
+        if bool(profile.get("is_default", False)):
+            raise HTTPException(status_code=400, detail="Default strategy profile cannot be deleted")
+        try:
+            updated = db.update_strategy_profile(profile_id, enabled=False, note="disabled_by_delete")
+            return {"updatedAt": _now(), "ok": True, **updated}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     for path, page in {
         "/api/v1/workbench": "workbench",
         "/api/v1/discover": "discover",
@@ -2819,6 +4197,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         "/api/v1/portfolio_v2": "portfolio",
         "/api/v1/quant/live-sim": "live-sim",
         "/api/v1/quant/his-replay": "his-replay",
+        "/api/v1/monitor/ai": "ai-monitor",
         "/api/v1/monitor/real": "real-monitor",
         "/api/v1/history": "history",
         "/api/v1/settings": "settings",
@@ -2875,6 +4254,10 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         ("/api/v1/quant/his-replay/actions/continue", "his-replay", "continue"),
         ("/api/v1/quant/his-replay/actions/cancel", "his-replay", "cancel"),
         ("/api/v1/quant/his-replay/actions/delete", "his-replay", "delete"),
+        ("/api/v1/monitor/ai/actions/start", "ai-monitor", "start"),
+        ("/api/v1/monitor/ai/actions/stop", "ai-monitor", "stop"),
+        ("/api/v1/monitor/ai/actions/analyze", "ai-monitor", "analyze"),
+        ("/api/v1/monitor/ai/actions/delete", "ai-monitor", "delete"),
         ("/api/v1/monitor/real/actions/start", "real-monitor", "start"),
         ("/api/v1/monitor/real/actions/stop", "real-monitor", "stop"),
         ("/api/v1/monitor/real/actions/refresh", "real-monitor", "refresh"),

@@ -50,55 +50,14 @@ class WatchlistService:
         existing = self.get_watch(normalized_code)
         if existing:
             return {"created": False, "stock_name": str(existing.get("stock_name") or normalized_code), "watch_id": existing.get("id")}
-
-        quote = self.quote_fetcher(normalized_code, None)
-        if not isinstance(quote, dict):
-            quote = {}
-        basic_info = self.basic_info_fetcher(normalized_code)
-        if not isinstance(basic_info, dict):
-            basic_info = {}
-
-        def _valid_name(value: Any) -> str:
-            text = str(value or "").strip()
-            if not text:
-                return ""
-            if text.upper() in {normalized_code, "N/A", "-", "UNKNOWN", "未知"}:
-                return ""
-            return text
-
-        def _valid_float(value: Any) -> float | None:
-            try:
-                if value is None:
-                    return None
-                text = str(value).strip()
-                if not text or text in {"N/A", "-", "--"}:
-                    return None
-                return float(text)
-            except (TypeError, ValueError):
-                return None
-
-        stock_name = (
-            _valid_name(quote.get("name"))
-            or _valid_name(basic_info.get("name"))
-            or _valid_name(self.stock_name_resolver(normalized_code))
-            or normalized_code
-        )
-        latest_price = _valid_float(quote.get("current_price")) or _valid_float(basic_info.get("current_price"))
-        industry = str(basic_info.get("industry") or basic_info.get("sector") or "").strip()
-        metadata: dict[str, Any] = {}
-        if industry and industry not in {"N/A", "-", "未知"}:
-            metadata["industry"] = industry
-            metadata["sector"] = industry
-        if stock_name == normalized_code and latest_price is None and not metadata:
-            raise ValueError("Invalid stock code")
         summary = self.add_stock(
             stock_code=normalized_code,
-            stock_name=stock_name,
+            stock_name=normalized_code,
             source="manual",
-            latest_price=latest_price,
-            metadata=metadata or None,
+            latest_price=None,
+            metadata=None,
         )
-        summary["stock_name"] = stock_name
+        summary["stock_name"] = normalized_code
         return summary
 
     def add_many(self, rows: list[dict[str, Any]]) -> dict[str, Any]:

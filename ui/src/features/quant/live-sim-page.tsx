@@ -15,11 +15,9 @@ const ANALYSIS_TIMEFRAME_OPTIONS = [
   { value: "1d+30m", label: "日线方向 + 30分钟确认" },
 ];
 
-const STRATEGY_MODE_OPTIONS = [
-  { value: "auto", label: "自动" },
-  { value: "aggressive", label: "激进" },
-  { value: "neutral", label: "中性" },
-  { value: "defensive", label: "稳健" },
+const AI_DYNAMIC_STRATEGY_OPTIONS = [
+  { value: "off", label: "关闭" },
+  { value: "hybrid", label: "开启" },
 ];
 
 const MARKET_OPTIONS = ["CN", "HK", "US"] as const;
@@ -37,17 +35,16 @@ function normalizeAnalysisTimeframe(value: string) {
   return ANALYSIS_TIMEFRAME_OPTIONS.find((option) => option.value === normalized)?.value ?? "30m";
 }
 
-function normalizeStrategyMode(value: string) {
-  const normalized = String(value).trim().toLowerCase();
-  if (normalized === "aggressive" || normalized.includes("激进")) return "aggressive";
-  if (normalized === "neutral" || normalized.includes("中性")) return "neutral";
-  if (normalized === "defensive" || normalized.includes("稳健") || normalized.includes("防守")) return "defensive";
-  return "auto";
-}
-
 function normalizeMarket(value: string) {
   const normalized = String(value).trim().toUpperCase();
   return MARKET_OPTIONS.includes(normalized as (typeof MARKET_OPTIONS)[number]) ? normalized : "CN";
+}
+
+function normalizeAiDynamicStrategy(value: string) {
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized || normalized === "off" || normalized.includes("关")) return "off";
+  if (normalized === "template" || normalized === "weights" || normalized === "hybrid" || normalized.includes("开")) return "hybrid";
+  return "off";
 }
 
 function parseAutoExecute(value: string) {
@@ -61,6 +58,23 @@ function parseRatePercent(value: string | undefined, fallback: number) {
   const parsed = Number(match[0]);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(0, parsed);
+}
+
+function parseDynamicStrength(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed > 1) return Math.max(0, Math.min(1, parsed / 100));
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function parseDynamicLookback(value: string | undefined, fallback: number) {
+  const match = String(value ?? "").match(/\d+/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(6, Math.min(336, Math.round(parsed)));
 }
 
 function normalizeSignalAction(value: string) {
@@ -78,7 +92,10 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   const snapshotVersion = snapshot?.updatedAt ?? "loading";
   const [intervalMinutes, setIntervalMinutes] = useState(15);
   const [analysisTimeframe, setAnalysisTimeframe] = useState("30m");
-  const [strategyMode, setStrategyMode] = useState("auto");
+  const [strategyProfileId, setStrategyProfileId] = useState("");
+  const [aiDynamicStrategy, setAiDynamicStrategy] = useState("off");
+  const [aiDynamicStrength, setAiDynamicStrength] = useState(0.5);
+  const [aiDynamicLookback, setAiDynamicLookback] = useState(48);
   const [market, setMarket] = useState<(typeof MARKET_OPTIONS)[number]>("CN");
   const [autoExecute, setAutoExecute] = useState(true);
   const [initialCash, setInitialCash] = useState(100000);
@@ -102,7 +119,10 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
 
     setIntervalMinutes(parseIntervalMinutes(snapshot.config.interval));
     setAnalysisTimeframe(normalizeAnalysisTimeframe(snapshot.config.timeframe));
-    setStrategyMode(normalizeStrategyMode(snapshot.config.strategyMode));
+    setStrategyProfileId(String(snapshot.config.strategyProfileId ?? snapshot.config.strategyProfiles?.[0]?.id ?? ""));
+    setAiDynamicStrategy(normalizeAiDynamicStrategy(snapshot.config.aiDynamicStrategy ?? "off"));
+    setAiDynamicStrength(parseDynamicStrength(snapshot.config.aiDynamicStrength, 0.5));
+    setAiDynamicLookback(parseDynamicLookback(snapshot.config.aiDynamicLookback, 48));
     setMarket(normalizeMarket(snapshot.config.market) as (typeof MARKET_OPTIONS)[number]);
     setAutoExecute(parseAutoExecute(snapshot.config.autoExecute));
     setInitialCash(Number.parseFloat(String(snapshot.config.initialCapital)) || 100000);
@@ -196,7 +216,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   };
   const toolbarControlHeight = "40px";
   const renderSignalPager = () => (
-    <div className="chip-row">
+    <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
       <button
         className="button button--secondary button--small"
         type="button"
@@ -231,7 +251,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
     </div>
   );
   const renderSignalToolbar = () => (
-    <div className="table-toolbar-compact">
+    <div className="table-toolbar-compact" style={{ flexWrap: "nowrap", overflowX: "auto" }}>
       <input
         className="input"
         style={{ height: toolbarControlHeight, minHeight: toolbarControlHeight, padding: "0 10px" }}
@@ -281,7 +301,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
           <WorkbenchCard>
             <h2 className="section-card__title">定时任务配置</h2>
             <p className="section-card__description">
-              {`资金池、粒度、策略模式和自动执行统一放在这里配置。启动后会从当前时点开始做真实模拟。`}
+              {`资金池、粒度和自动执行统一放在这里配置。启动后会从当前时点开始做真实模拟。`}
             </p>
             <div className="mini-metric-grid">
               <div className="mini-metric">
@@ -293,8 +313,10 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                 <div className="mini-metric__value">{snapshot.config.timeframe}</div>
               </div>
               <div className="mini-metric">
-                <div className="mini-metric__label">策略模式</div>
-                <div className="mini-metric__value">{snapshot.config.strategyMode}</div>
+                <div className="mini-metric__label">策略配置</div>
+                <div className="mini-metric__value">
+                  {snapshot.config.strategyProfiles?.find((item) => item.id === strategyProfileId)?.name || strategyProfileId || "--"}
+                </div>
               </div>
               <div className="mini-metric">
                 <div className="mini-metric__label">手续费</div>
@@ -330,9 +352,19 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                 </select>
               </label>
               <label className="field">
-                <span className="field__label">策略模式</span>
-                <select className="input" value={strategyMode} onChange={(event) => setStrategyMode(event.target.value)}>
-                  {STRATEGY_MODE_OPTIONS.map((option) => (
+                <span className="field__label">策略配置</span>
+                <select className="input" value={strategyProfileId} onChange={(event) => setStrategyProfileId(event.target.value)}>
+                  {(snapshot.config.strategyProfiles ?? []).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span className="field__label">AI动态策略</span>
+                <select className="input" value={aiDynamicStrategy} onChange={(event) => setAiDynamicStrategy(event.target.value)}>
+                  {AI_DYNAMIC_STRATEGY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -407,7 +439,11 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                     await resource.runAction("save", {
                       intervalMinutes,
                       analysisTimeframe,
-                      strategyMode,
+                      strategyMode: "auto",
+                      strategyProfileId,
+                      aiDynamicStrategy,
+                      aiDynamicStrength,
+                      aiDynamicLookback,
                       market,
                       autoExecute,
                       commissionRatePct,
@@ -461,7 +497,11 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                     await resource.runAction("start", {
                       intervalMinutes,
                       analysisTimeframe,
-                      strategyMode,
+                      strategyMode: "auto",
+                      strategyProfileId,
+                      aiDynamicStrategy,
+                      aiDynamicStrength,
+                      aiDynamicLookback,
                       market,
                       autoExecute,
                       commissionRatePct,

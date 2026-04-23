@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import math
+import time
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -544,7 +545,7 @@ def _discover_rows(context: Any) -> list[dict[str, Any]]:
 def _normalize_discover_strategy_selection(payload: dict[str, Any]) -> list[str]:
     raw = payload.get("strategies") or payload.get("strategy") or payload.get("strategyKey")
     if raw is None or raw == "":
-        return ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]
+        return ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"]
 
     values: list[str]
     if isinstance(raw, list):
@@ -565,7 +566,7 @@ def _normalize_discover_strategy_selection(payload: dict[str, Any]) -> list[str]
     for key, synonyms in aliases.items():
         if any(value in synonyms for value in values):
             selected.append(key)
-    return selected or ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]
+    return selected or ["main_force", "low_price_bull", "small_cap", "profit_growth", "value_stock"]
 
 
 def _build_main_force_discover_result(stocks_df: Any, top_n: int) -> dict[str, Any]:
@@ -765,6 +766,7 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
     latest_row = rows[0] if rows else {}
     latest_selected_at = _txt(latest_snapshot.get("selected_at") or latest_row.get("selectedAt") or _now())
     latest_count = len(rows)
+    top_names = "、".join(_txt(row.get("name")) for row in rows[:3] if _txt(row.get("name")))
     strategy_lookup = {str(snapshot.get("key")): snapshot for snapshot in snapshots}
     strategy_defs = _discover_strategy_defs()
     strategy_cards = []
@@ -783,6 +785,25 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
                 "count": len(snapshot_rows),
             }
         )
+    recommendation_body = t("This section keeps priority targets after model aggregation, with single/batch add to watchlist.")
+    if top_names:
+        recommendation_body = _txt(
+            t(
+                "This section keeps priority targets after model aggregation, with single/batch add to watchlist."
+            )
+            + " "
+            + t("Priority candidates: {names}.", names=top_names)
+        )
+    recommendation_chips = [
+        t("⭐ Latest {count} candidates", count=latest_count),
+        t("📌 {count} strategies", count=len(snapshots)),
+        t("⭐ Add selected to watchlist"),
+        t("⭐ Add single to watchlist"),
+    ]
+    strategy_name_chips = [f"📌 {_txt(snapshot.get('name'))}" for snapshot in snapshots[:3] if _txt(snapshot.get("name"))]
+    for chip in strategy_name_chips:
+        if chip not in recommendation_chips:
+            recommendation_chips.append(chip)
     latest_task = task_job or discover_task_manager.latest_task()
     return {
         "updatedAt": _now(),
@@ -833,13 +854,8 @@ def _snapshot_discover(context: Any, *, task_job: dict[str, Any] | None = None) 
         ),
         "recommendation": {
             "title": t("Top recommendations"),
-            "body": t("This section keeps priority targets after model aggregation, with single/batch add to watchlist."),
-            "chips": [
-                t("⭐ Latest {count} candidates", count=latest_count),
-                t("📌 {count} strategies", count=len(snapshots)),
-                t("⭐ Add selected to watchlist"),
-                t("⭐ Add single to watchlist"),
-            ],
+            "body": recommendation_body,
+            "chips": recommendation_chips,
         },
         "taskJob": discover_task_manager.job_view(latest_task, txt=_txt, int_fn=_int),
     }
@@ -900,6 +916,14 @@ def _action_discover_run_strategy(context: Any, payload: Any) -> dict[str, Any]:
         args=(context, task_id, body),
         name_prefix="discover-task",
     )
+    wait_ms = max(0, _int(body.get("waitMs"), 600) or 600)
+    if wait_ms > 0:
+        deadline = time.monotonic() + (wait_ms / 1000.0)
+        while time.monotonic() < deadline:
+            task = discover_task_manager.get_task(task_id)
+            if not task or task.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
     snapshot = _snapshot_discover(context, task_job=discover_task_manager.get_task(task_id))
     snapshot["taskId"] = task_id
     return snapshot
