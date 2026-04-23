@@ -301,6 +301,47 @@ def test_backend_api_dataflow_from_discover_and_research_to_watchlist_and_quant_
         assert "actions" not in row or not row["actions"]
 
 
+def test_workbench_watchlist_updates_immediately_after_discover_and_research_watchlist_actions(tmp_path):
+    module = _load_backend_api_module()
+    selector_dir = tmp_path / "selector_results"
+    selector_dir.mkdir(parents=True, exist_ok=True)
+    _seed_main_force_result(selector_dir)
+    _seed_research_result(selector_dir)
+
+    context = module.UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=selector_dir,
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio_stocks.db",
+        monitor_db_file=tmp_path / "stock_monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
+        quote_fetcher=lambda code, market=None: {
+            "stock_code": code,
+            "stock_name": {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
+            "latest_price": {"600519": 1453.96, "000001": 10.12}.get(code, 1.0),
+        },
+    )
+    app = module.create_app(context=context)
+    client = TestClient(app)
+
+    discover_add = client.post("/api/v1/discover/actions/item-watchlist", json={"code": "600519"})
+    assert discover_add.status_code == 200
+    workbench_after_discover = client.get("/api/v1/workbench")
+    assert workbench_after_discover.status_code == 200
+    discover_rows = workbench_after_discover.json()["watchlist"]["rows"]
+    assert any(row["code"] == "600519" and row["name"] == "贵州茅台" for row in discover_rows)
+
+    research_add = client.post("/api/v1/research/actions/item-watchlist", json={"code": "000001"})
+    assert research_add.status_code == 200
+    workbench_after_research = client.get("/api/v1/workbench")
+    assert workbench_after_research.status_code == 200
+    research_rows = workbench_after_research.json()["watchlist"]["rows"]
+    assert any(row["code"] == "600519" for row in research_rows)
+    assert any(row["code"] == "000001" and row["name"] == "平安银行" for row in research_rows)
+
+
 def test_signal_detail_prefers_canonical_breakdown_and_clean_audit_labels(tmp_path):
     context = _make_context(tmp_path)
     signal_id = _seed_structured_signal_for_detail(context)
