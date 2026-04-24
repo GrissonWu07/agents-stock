@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { ApiClient } from "../../lib/api-client";
+import { apiClient, type ApiClient } from "../../lib/api-client";
 import { PageHeader } from "../../components/ui/page-header";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
 import { PageEmptyState, PageErrorState, PageLoadingState } from "../../components/ui/page-state";
 import { Sparkline } from "../../components/ui/sparkline";
 import { usePageData } from "../../lib/use-page-data";
-import type { TableAction, TableRow, TableSection } from "../../lib/page-models";
+import type { ReplaySnapshot, TableAction, TableRow, TableSection } from "../../lib/page-models";
 import { summarizeTaskStatuses, toDisplayText } from "./quant-display";
 import { QuantTableSectionCard } from "./quant-table-section";
 
@@ -27,6 +27,9 @@ const AI_DYNAMIC_STRATEGY_OPTIONS = [
 ];
 
 const MARKET_OPTIONS = ["CN", "HK", "US"] as const;
+const REPLAY_PROGRESS_REFRESH_MS = 5 * 60 * 1000;
+type ReplayProgressSnapshot = Pick<ReplaySnapshot, "updatedAt" | "tasks"> &
+  Partial<Pick<ReplaySnapshot, "holdings" | "trades" | "signals">>;
 
 function parseDateRange(range: string) {
   const match = String(range).match(/(\d{4}-\d{2}-\d{2})\s*->\s*(\d{4}-\d{2}-\d{2}|now)/);
@@ -105,6 +108,44 @@ function pickPreferredReplayTaskId(
   return tasks[0]?.id ?? "";
 }
 
+function mergeReplayProgress(snapshot: ReplaySnapshot, progress: ReplayProgressSnapshot | null): ReplaySnapshot {
+  if (!progress) {
+    return snapshot;
+  }
+
+  const existingTasks = new Map(snapshot.tasks.map((task) => [task.id, task]));
+  const refreshedTaskIds = new Set(progress.tasks.map((task) => task.id));
+  const refreshedTasks = progress.tasks.map((task) => {
+    const previous = existingTasks.get(task.id);
+    return {
+      ...(previous ?? {}),
+      ...task,
+      holdings: task.holdings ?? previous?.holdings,
+    };
+  });
+
+  return {
+    ...snapshot,
+    updatedAt: progress.updatedAt || snapshot.updatedAt,
+    tasks: [...refreshedTasks, ...snapshot.tasks.filter((task) => !refreshedTaskIds.has(task.id))],
+    holdings: progress.holdings ?? snapshot.holdings,
+    trades: progress.trades ?? snapshot.trades,
+    signals: progress.signals ?? snapshot.signals,
+  };
+}
+
+function parseReplayStageLabel(stage: string) {
+  const text = String(stage || "").trim();
+  const match = text.match(/^检查点\s+(.+?)：\s*(.+)$/);
+  if (!match) {
+    return { checkpoint: "", detail: text || "--" };
+  }
+  return {
+    checkpoint: `检查点 ${match[1]}`,
+    detail: match[2],
+  };
+}
+
 type HisReplayPageProps = {
   client?: ApiClient;
 };
@@ -155,9 +196,12 @@ function removeExecutionResultColumn(table: TableSection): TableSection {
 
 export function HisReplayPage({ client }: HisReplayPageProps) {
   const navigate = useNavigate();
-  const resource = usePageData("his-replay", client);
-  const snapshot = resource.data;
-  const snapshotVersion = snapshot?.updatedAt ?? "loading";
+  const activeClient = client ?? apiClient;
+  const resource = usePageData("his-replay", activeClient);
+  const rawSnapshot = resource.data;
+  const snapshotVersion = rawSnapshot?.updatedAt ?? "loading";
+  const [progressSnapshot, setProgressSnapshot] = useState<ReplayProgressSnapshot | null>(null);
+  const snapshot = rawSnapshot ? mergeReplayProgress(rawSnapshot, progressSnapshot) : rawSnapshot;
   const [replayMode, setReplayMode] = useState("historical_range");
   const [startDate, setStartDate] = useState("2026-03-11");
   const [endDate, setEndDate] = useState("2026-04-10");
@@ -178,7 +222,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   const [tradeStockFilter, setTradeStockFilter] = useState("");
   const [tradeActionFilter, setTradeActionFilter] = useState("ALL");
   const [signalStockFilter, setSignalStockFilter] = useState("");
-  const [signalActionFilter, setSignalActionFilter] = useState("TRADE");
+  const [signalActionFilter, setSignalActionFilter] = useState("ALL");
   const [tradePage, setTradePage] = useState(1);
   const [signalPage, setSignalPage] = useState(1);
 
@@ -208,12 +252,41 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   }, [snapshotVersion]);
 
   useEffect(() => {
-    if (!snapshot) {
+    if (!rawSnapshot) {
       return;
     }
     setTradePage(1);
     setSignalPage(1);
-  }, [snapshotVersion, snapshot]);
+  }, [snapshotVersion, rawSnapshot]);
+
+  useEffect(() => {
+    setProgressSnapshot(null);
+  }, [snapshotVersion]);
+
+  useEffect(() => {
+    if (!rawSnapshot || typeof activeClient.getReplayProgress !== "function") {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshProgress = async () => {
+      try {
+        const next = await activeClient.getReplayProgress<ReplayProgressSnapshot>();
+        if (!cancelled) {
+          setProgressSnapshot(next);
+        }
+      } catch {
+        // Keep the current snapshot visible when lightweight polling is temporarily unavailable.
+      }
+    };
+
+    const timer = window.setInterval(refreshProgress, REPLAY_PROGRESS_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeClient, snapshotVersion, rawSnapshot]);
 
   useEffect(() => {
     setTradePage(1);
@@ -255,6 +328,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   const selectedTaskRange = selectedTask?.range || snapshot.config.range;
   const selectedTaskStatusLabel = selectedTask ? localizeTaskStatus(selectedTask.status) : "--";
   const selectedTaskStageLabel = selectedTask?.stage || "--";
+  const selectedTaskStageParts = parseReplayStageLabel(selectedTaskStageLabel);
   const selectedTaskStartedAt = selectedTask?.startAt || "--";
   const selectedTaskEndedAt = selectedTask?.endAt || "--";
   const selectedTaskModeLabel = localizeReplayMode(selectedTask?.mode || snapshot.config.mode);
@@ -662,30 +736,39 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                 </label>
                 {selectedTask ? (
                   <div className="summary-list" aria-label="已选回放任务详情">
-                    <div className="summary-item">
-                      <div className="summary-item__title">回放结论</div>
-                      <div className="summary-item__body">{`${selectedTask.id} · ${selectedTaskStatusLabel}`}</div>
-                      <div className="summary-item__body">{`执行阶段：${selectedTaskStageLabel}`}</div>
-                      <div className="summary-item__body">{`开始时间：${selectedTaskStartedAt}`}</div>
-                      <div className="summary-item__body">{`结束时间：${selectedTaskEndedAt}`}</div>
-                      <div className="summary-item__body">{`区间：${selectedTaskRange}`}</div>
-                      <div className="summary-item__body">{`模式：${selectedTaskModeLabel} · 粒度：${selectedTaskTimeframe} · 市场：${selectedTaskMarket}`}</div>
-                      <div className="summary-item__body">
-                        {`策略配置：${selectedTask.strategyProfileName || selectedTask.strategyProfileId || strategyProfileId || "--"}${selectedTask.strategyProfileVersionId ? ` · 版本#${selectedTask.strategyProfileVersionId}` : ""}`}
+                    <div className="summary-item replay-task-overview">
+                      <div className="replay-task-overview__topline">
+                        <div>
+                          <div className="summary-item__title">回放结论与进度</div>
+                          <div className="summary-item__body">{`${selectedTask.id} · ${selectedTaskStatusLabel}`}</div>
+                        </div>
+                        <span className="badge badge--accent">{`${selectedTaskProgressPct}%`}</span>
                       </div>
-                    </div>
-                    <div className="summary-item">
-                      <div className="summary-item__title">回放进度</div>
-                      <div className="summary-item__body">{`检查点进度：${selectedTaskProgressText} · ${selectedTaskProgressPct}%`}</div>
-                      <div className="summary-item__body">{`已写入检查点：${selectedTaskCheckpointCount}`}</div>
-                      <div className="summary-item__body">{`最近检查点：${selectedTaskLatestCheckpointAt}`}</div>
+                      <div className="replay-task-stage">
+                        {selectedTaskStageParts.checkpoint ? (
+                          <div className="replay-task-stage__checkpoint">{selectedTaskStageParts.checkpoint}</div>
+                        ) : null}
+                        <div className="replay-task-stage__detail">{selectedTaskStageParts.detail}</div>
+                      </div>
                       <div className="replay-task-progress" aria-label={`回放进度 ${selectedTaskProgressPct}%`}>
                         <div className="replay-task-progress__bar">
                           <div className="replay-task-progress__fill" style={{ width: `${selectedTaskProgressPct}%` }} />
                         </div>
                         <div className="replay-task-progress__meta">
-                          <span>{selectedTaskStageLabel}</span>
-                          <span>{`${selectedTaskProgressPct}%`}</span>
+                          <span>{`检查点进度：${selectedTaskProgressText} · ${selectedTaskProgressPct}%`}</span>
+                          <span>{`已写入：${selectedTaskCheckpointCount}`}</span>
+                        </div>
+                      </div>
+                      <div className="replay-task-overview__grid">
+                        <div className="summary-item__body">{`开始时间：${selectedTaskStartedAt}`}</div>
+                        <div className="summary-item__body">{`结束时间：${selectedTaskEndedAt}`}</div>
+                        <div className="summary-item__body">{`最近检查点：${selectedTaskLatestCheckpointAt}`}</div>
+                        <div className="summary-item__body">{`已写入检查点：${selectedTaskCheckpointCount}`}</div>
+                        <div className="summary-item__body">{`回放节点：${selectedTaskProgressTotal > 0 ? selectedTaskProgressTotal : selectedTaskCheckpointCount}`}</div>
+                        <div className="summary-item__body">{`区间：${selectedTaskRange}`}</div>
+                        <div className="summary-item__body">{`模式：${selectedTaskModeLabel} · 粒度：${selectedTaskTimeframe} · 市场：${selectedTaskMarket}`}</div>
+                        <div className="summary-item__body replay-task-overview__wide">
+                          {`策略配置：${selectedTask.strategyProfileName || selectedTask.strategyProfileId || strategyProfileId || "--"}${selectedTask.strategyProfileVersionId ? ` · 版本#${selectedTask.strategyProfileVersionId}` : ""}`}
                         </div>
                       </div>
                     </div>

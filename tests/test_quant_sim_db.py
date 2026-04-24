@@ -1,3 +1,5 @@
+import sqlite3
+
 from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_sim.db import QuantSimDB
 
@@ -19,6 +21,36 @@ def _piecewise_score(value: float, bands: list[float], scores: list[float]) -> f
         idx += 1
     idx = min(idx, len(scores) - 1)
     return float(scores[idx])
+
+
+def test_quant_db_reuses_initialized_schema_when_database_is_locked(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    QuantSimDB(db_file)
+
+    lock_conn = sqlite3.connect(db_file, timeout=0.1)
+    try:
+        lock_conn.execute("BEGIN EXCLUSIVE")
+
+        QuantSimDB(db_file)
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
+
+
+def test_quant_db_skips_schema_init_for_existing_locked_database(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    QuantSimDB(db_file)
+    cache_key = QuantSimDB._cache_key(db_file)
+    QuantSimDB._initialized_db_files.discard(cache_key)
+
+    lock_conn = sqlite3.connect(db_file, timeout=0.1)
+    try:
+        lock_conn.execute("BEGIN EXCLUSIVE")
+
+        QuantSimDB(db_file)
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
 
 
 def test_add_candidate_records_source_and_status(tmp_path):
@@ -379,6 +411,72 @@ def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
     assert signals[0]["checkpoint_at"] == "2026-04-01 10:00:00"
     assert len(trades) == 1
     assert trades[0]["signal_id"] == signals[0]["id"]
+
+
+def test_replace_sim_run_runtime_results_preserves_incremental_signals(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2026-04-01 09:30:00",
+        end_datetime="2026-04-09 15:00:00",
+        initial_cash=100000.0,
+        status="running",
+    )
+    db.upsert_sim_run_signals(
+        run_id,
+        [
+            {
+                "id": 101,
+                "stock_code": "300390",
+                "stock_name": "天华新能",
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "回放策略买入",
+                "checkpoint_at": "2026-04-01 10:00:00",
+            }
+        ],
+    )
+
+    db.replace_sim_run_runtime_results(
+        run_id,
+        trades=[
+            {
+                "signal_id": 101,
+                "stock_code": "300390",
+                "stock_name": "天华新能",
+                "action": "BUY",
+                "price": 10.0,
+                "quantity": 100,
+                "amount": 1000.0,
+                "realized_pnl": 0.0,
+                "executed_at": "2026-04-01 10:00:00",
+            }
+        ],
+        snapshots=[
+            {
+                "run_reason": "historical_range@2026-04-01 10:00:00",
+                "initial_cash": 100000.0,
+                "available_cash": 99000.0,
+                "market_value": 1000.0,
+                "total_equity": 100000.0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "created_at": "2026-04-01 10:00:00",
+            }
+        ],
+        positions=[],
+    )
+
+    signals = db.get_sim_run_signals(run_id)
+    trades = db.get_sim_run_trades(run_id)
+    snapshots = db.get_sim_run_snapshots(run_id)
+
+    assert len(signals) == 1
+    assert len(trades) == 1
+    assert trades[0]["signal_id"] == signals[0]["id"]
+    assert len(snapshots) == 1
 
 
 def test_upsert_sim_run_signals_updates_existing_checkpoint_signal(tmp_path):

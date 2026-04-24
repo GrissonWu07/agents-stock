@@ -189,6 +189,9 @@ export function createApiClient(options: ApiClientOptions = {}) {
     return await requestLive<T>(`/api/v1/tasks/${taskId}`);
   };
 
+  const getReplayProgress = async <T,>(): Promise<T> =>
+    requestLive<T>("/api/v1/quant/his-replay/progress");
+
   const requestPortfolioPosition = async <T,>(symbol: string): Promise<T> => {
     if (!symbol.trim()) {
       throw new ApiError(t("Missing stock code"), 400, `/api/v1/portfolio_v2/positions/${symbol}`);
@@ -274,6 +277,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     getPageSnapshot: requestPage,
     runPageAction: requestAction,
     getTaskStatus: requestTask,
+    getReplayProgress,
     getPortfolioPosition: requestPortfolioPosition,
     patchPortfolioPosition,
     listStrategyProfiles,

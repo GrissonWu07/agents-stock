@@ -90,3 +90,27 @@ def test_watchlist_service_refresh_quotes_ignores_placeholder_name_when_fetching
     assert summary["success_count"] == 1
     assert quote_calls == [("600519", None)]
     assert watch["stock_name"] == "贵州茅台"
+
+
+def test_watchlist_service_refresh_quotes_fetches_required_basic_info_even_if_legacy_env_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHLIST_BASIC_INFO_ENABLED", "false")
+    basic_info_calls: list[str] = []
+    service = WatchlistService(
+        db_file=tmp_path / "watchlist.db",
+        quote_fetcher=lambda code, preferred_name=None: {
+            "current_price": 21.35,
+            "name": code,
+        },
+        basic_info_fetcher=lambda code: basic_info_calls.append(code) or {"name": "慢接口", "industry": "半导体"},
+    )
+
+    service.add_manual_stock("301550")
+    summary = service.refresh_quotes()
+    watch = service.get_watch("301550")
+
+    assert summary["attempted"] == 1
+    assert summary["success_count"] == 1
+    assert basic_info_calls == ["301550"]
+    assert watch["latest_price"] == 21.35
+    assert watch["stock_name"] == "慢接口"
+    assert watch["metadata"]["industry"] == "半导体"

@@ -637,6 +637,21 @@ class QuantSimReplayService:
                 replay_signals.extend(checkpoint_signals)
                 if checkpoint_signals:
                     self.db.upsert_sim_run_signals(run_id, checkpoint_signals)
+                if int(checkpoint_summary.get("auto_executed") or 0) > 0:
+                    incremental_trades = temp_db.get_trade_history(limit=10000)
+                    incremental_snapshots = self._sort_snapshots_chronologically(
+                        [
+                            snapshot
+                            for snapshot in temp_db.get_account_snapshots(limit=10000)
+                            if str(snapshot.get("run_reason") or "").startswith("historical_range@")
+                        ]
+                    )
+                    self.db.replace_sim_run_runtime_results(
+                        run_id,
+                        trades=incremental_trades,
+                        snapshots=incremental_snapshots,
+                        positions=temp_portfolio.list_positions(),
+                    )
                 self.db.add_sim_run_checkpoint(
                     run_id,
                     checkpoint_at=checkpoint_text,

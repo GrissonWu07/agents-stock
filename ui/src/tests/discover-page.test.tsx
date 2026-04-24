@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../lib/api-client";
@@ -91,7 +91,8 @@ describe("DiscoverPage", () => {
     });
     expect(checkbox).toBeChecked();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add selected to watchlist" }));
+    const toolbar = screen.getByTestId("discover-candidate-toolbar");
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Add selected to watchlist" }));
     await waitFor(() => {
       expect(runPageAction).toHaveBeenCalledWith("discover", "batch-watchlist", { codes: ["600519"] });
     });

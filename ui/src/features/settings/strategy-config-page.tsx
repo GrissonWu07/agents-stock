@@ -499,7 +499,7 @@ export function StrategyConfigPage({ client }: StrategyConfigPageProps) {
   const strategyProfiles = useMemo(() => (resource.data?.strategyProfiles ?? []) as StrategyProfile[], [resource.data?.strategyProfiles]);
   const orderedProfiles = useMemo(() => {
     const list = [...strategyProfiles];
-    const order = new Map(BUILTIN_PROFILE_IDS.map((id, index) => [id, index]));
+    const order = new Map<string, number>(BUILTIN_PROFILE_IDS.map((id, index) => [id, index]));
     return list.sort((a, b) => {
       const ai = order.get(a.id);
       const bi = order.get(b.id);

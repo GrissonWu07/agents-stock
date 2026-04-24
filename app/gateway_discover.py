@@ -542,6 +542,31 @@ def _discover_rows(context: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip().replace(",", "")
+    if text in {"", "-", "--", "N/A", "NA", "nan", "None"}:
+        return None
+    try:
+        number = float(text)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _add_discover_row_to_watchlist(context: Any, row: dict[str, Any]) -> None:
+    add_stock_to_watchlist(
+        row["code"],
+        row["name"],
+        row.get("source") or t("Main force selection"),
+        latest_price=_optional_float(row.get("latestPrice")),
+        notes=row.get("reason"),
+        metadata={"industry": row.get("industry")},
+        db_file=context.watchlist_db_file,
+    )
+
+
 def _normalize_discover_strategy_selection(payload: dict[str, Any]) -> list[str]:
     raw = payload.get("strategies") or payload.get("strategy") or payload.get("strategyKey")
     if raw is None or raw == "":
@@ -868,15 +893,7 @@ def _action_discover_item(context: Any, payload: dict[str, Any]) -> dict[str, An
     row = next((item for item in _discover_rows(context) if item["code"] == code), None)
     if not row:
         raise HTTPException(status_code=404, detail=f"Discover row not found: {code}")
-    add_stock_to_watchlist(
-        code,
-        row["name"],
-        row.get("source") or t("Main force selection"),
-        latest_price=float(row.get("latestPrice") or 0) if row.get("latestPrice") else None,
-        notes=row.get("reason"),
-        metadata={"industry": row.get("industry")},
-        db_file=context.watchlist_db_file,
-    )
+    _add_discover_row_to_watchlist(context, row)
     return _snapshot_discover(context)
 
 
@@ -884,15 +901,7 @@ def _action_discover_batch(context: Any, payload: dict[str, Any]) -> dict[str, A
     codes = _normalize_codes(payload)
     rows = [item for item in _discover_rows(context) if item["code"] in codes or not codes]
     for row in rows:
-        add_stock_to_watchlist(
-            row["code"],
-            row["name"],
-            row.get("source") or t("Main force selection"),
-            latest_price=float(row.get("latestPrice") or 0) if row.get("latestPrice") else None,
-            notes=row.get("reason"),
-            metadata={"industry": row.get("industry")},
-            db_file=context.watchlist_db_file,
-        )
+        _add_discover_row_to_watchlist(context, row)
     return _snapshot_discover(context)
 
 

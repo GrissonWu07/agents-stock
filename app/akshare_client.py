@@ -34,6 +34,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 AKSHARE_MAX_RETRIES = max(1, _env_int("AKSHARE_MAX_RETRIES", 3))
+AKSHARE_BASIC_INFO_MAX_RETRIES = max(1, _env_int("AKSHARE_BASIC_INFO_MAX_RETRIES", 1))
 AKSHARE_BASE_BACKOFF_SECONDS = max(0.0, _env_float("AKSHARE_BASE_BACKOFF_SECONDS", 0.8))
 AKSHARE_MAX_BACKOFF_SECONDS = max(AKSHARE_BASE_BACKOFF_SECONDS, _env_float("AKSHARE_MAX_BACKOFF_SECONDS", 6.0))
 AKSHARE_MIN_INTERVAL_SECONDS = max(0.0, _env_float("AKSHARE_MIN_INTERVAL_SECONDS", 0.35))
@@ -41,6 +42,15 @@ AKSHARE_MIN_INTERVAL_SECONDS = max(0.0, _env_float("AKSHARE_MIN_INTERVAL_SECONDS
 
 _CALL_LOCK = threading.Lock()
 _LAST_CALL_AT = 0.0
+_SHUTDOWN_EVENT = threading.Event()
+
+
+def request_shutdown() -> None:
+    _SHUTDOWN_EVENT.set()
+
+
+def reset_shutdown() -> None:
+    _SHUTDOWN_EVENT.clear()
 
 
 def _throttle() -> None:
@@ -55,15 +65,22 @@ def _throttle() -> None:
         _LAST_CALL_AT = time.monotonic()
 
 
+def _max_retries_for(func: Callable[..., Any]) -> int:
+    if getattr(func, "__name__", "") == "stock_individual_info_em":
+        return AKSHARE_BASIC_INFO_MAX_RETRIES
+    return AKSHARE_MAX_RETRIES
+
+
 def _call_with_retries(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     last_error: Exception | None = None
-    for attempt in range(1, AKSHARE_MAX_RETRIES + 1):
+    max_retries = max(1, _max_retries_for(func))
+    for attempt in range(1, max_retries + 1):
         try:
             _throttle()
             return func(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
-            if attempt >= AKSHARE_MAX_RETRIES:
+            if attempt >= max_retries or _SHUTDOWN_EVENT.is_set():
                 break
             backoff = min(AKSHARE_MAX_BACKOFF_SECONDS, AKSHARE_BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)))
             jitter = random.uniform(0.0, 0.2)
@@ -72,11 +89,13 @@ def _call_with_retries(func: Callable[..., Any], *args: Any, **kwargs: Any) -> A
                 "[Akshare] call failed (%s), retry %s/%s in %.2fs: %s",
                 getattr(func, "__name__", "unknown"),
                 attempt,
-                AKSHARE_MAX_RETRIES,
+                max_retries,
                 wait_seconds,
                 exc,
             )
-            time.sleep(wait_seconds)
+            _SHUTDOWN_EVENT.wait(wait_seconds)
+            if _SHUTDOWN_EVENT.is_set():
+                break
     if last_error is not None:
         raise last_error
     return func(*args, **kwargs)
@@ -101,5 +120,14 @@ class AkshareProxy:
 ak = AkshareProxy(_akshare)
 
 
-__all__ = ["ak", "AKSHARE_MAX_RETRIES", "AKSHARE_BASE_BACKOFF_SECONDS", "AKSHARE_MAX_BACKOFF_SECONDS", "AKSHARE_MIN_INTERVAL_SECONDS"]
+__all__ = [
+    "ak",
+    "AKSHARE_MAX_RETRIES",
+    "AKSHARE_BASIC_INFO_MAX_RETRIES",
+    "AKSHARE_BASE_BACKOFF_SECONDS",
+    "AKSHARE_MAX_BACKOFF_SECONDS",
+    "AKSHARE_MIN_INTERVAL_SECONDS",
+    "request_shutdown",
+    "reset_shutdown",
+]
 

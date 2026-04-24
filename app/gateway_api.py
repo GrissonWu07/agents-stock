@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import akshare_client
 from app.config_manager import ConfigManager, config_manager
 from app.database import StockAnalysisDatabase
 from app import stock_analysis_service
@@ -95,6 +96,7 @@ from app.workbench_analysis_tasks import analysis_task_manager
 SERVICE_NAME = "xuanwu-api"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 UI_DIST_DIR = PROJECT_ROOT / "ui" / "dist"
+REPLAY_TABLE_PAGE_SIZE = 20
 
 
 async def _json(request: Request) -> Any:
@@ -1223,8 +1225,244 @@ def _snapshot_live_sim(context: UIApiContext) -> dict[str, Any]:
     }
 
 
+def _build_his_replay_task_items(
+    db: QuantSimDB,
+    runs: list[dict[str, Any]],
+    *,
+    include_positions: bool = True,
+) -> list[dict[str, Any]]:
+    task_items: list[dict[str, Any]] = []
+    for item in runs[:10]:
+        run_id = int(item.get("id") or 0)
+        status_text = _txt(item.get("status"), "completed")
+        progress_total = int(_float(item.get("progress_total"), 0.0) or 0.0)
+        progress_current = int(_float(item.get("progress_current"), 0.0) or 0.0)
+        if progress_total > 0:
+            progress_pct = max(0, min(int(round((progress_current / progress_total) * 100)), 100))
+        elif status_text in {"completed", "failed", "cancelled"}:
+            progress_pct = 100
+        else:
+            progress_pct = 0
+
+        task = {
+            "id": f"#{item.get('id')}",
+            "runId": _txt(item.get("id")),
+            "status": status_text,
+            "stage": _txt(item.get("status_message") or f"{item.get('checkpoint_count', 0)} 个检查点"),
+            "progress": progress_pct,
+            "progressCurrent": progress_current,
+            "progressTotal": progress_total,
+            "checkpointCount": int(_float(item.get("checkpoint_count"), 0.0) or 0.0),
+            "latestCheckpointAt": _txt(item.get("latest_checkpoint_at"), "--"),
+            "startAt": _txt(item.get("start_datetime"), "--"),
+            "endAt": _txt(item.get("end_datetime"), "--"),
+            "range": f"{_txt(item.get('start_datetime'), '--')} -> {_txt(item.get('end_datetime'), 'now')}",
+            "mode": _txt(item.get("mode"), "historical_range"),
+            "timeframe": _txt(item.get("timeframe"), "30m"),
+            "market": _txt(item.get("market"), "CN"),
+            "strategyMode": _txt(item.get("selected_strategy_mode") or item.get("strategy_mode"), "auto"),
+            "returnPct": _pct(item.get("total_return_pct")),
+            "finalEquity": _num(item.get("final_equity"), 0),
+            "tradeCount": _txt(item.get("trade_count"), "0"),
+            "winRate": _pct(item.get("win_rate")),
+            "strategyProfileId": _txt(item.get("selected_strategy_profile_id")),
+            "strategyProfileName": _txt(item.get("selected_strategy_profile_name")),
+            "strategyProfileVersionId": _txt(item.get("selected_strategy_profile_version_id")),
+        }
+
+        if include_positions:
+            position_rows: list[dict[str, Any]] = []
+            for idx, position in enumerate(db.get_sim_run_positions(run_id)):
+                avg_price = _float(position.get("avg_price"), 0.0) or 0.0
+                latest_price = _float(position.get("latest_price"), 0.0) or 0.0
+                unrealized_pnl = _float(position.get("unrealized_pnl"), 0.0) or 0.0
+                unrealized_pnl_pct = ((latest_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
+                position_rows.append(
+                    {
+                        "id": _txt(position.get("stock_code"), str(idx)),
+                        "cells": [
+                            _txt(position.get("stock_code")),
+                            _txt(position.get("stock_name")),
+                            _txt(position.get("quantity"), "0"),
+                            _num(position.get("avg_price")),
+                            _num(position.get("latest_price")),
+                            _num(unrealized_pnl),
+                            _pct(unrealized_pnl_pct),
+                        ],
+                        "code": _txt(position.get("stock_code")),
+                        "name": _txt(position.get("stock_name")),
+                    }
+                )
+            task["holdings"] = position_rows
+
+        task_items.append(task)
+    return task_items
+
+
+def _build_his_replay_trade_rows(db: QuantSimDB, run_id: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": _txt(item.get("id"), str(i)),
+            "cells": [
+                _txt(item.get("executed_at") or item.get("created_at"), "--"),
+                f"#{_txt(item.get('signal_id'))}" if _txt(item.get("signal_id")) else "--",
+                _txt(item.get("stock_code")),
+                _txt(item.get("action"), "HOLD").upper(),
+                _txt(item.get("quantity"), "0"),
+                _num(item.get("price")),
+            ],
+            "code": _txt(item.get("stock_code")),
+            "name": _txt(item.get("stock_name")),
+        }
+        for i, item in enumerate(db.get_sim_run_trades(run_id, limit=REPLAY_TABLE_PAGE_SIZE))
+    ]
+
+
+def _build_his_replay_signal_rows(db: QuantSimDB, run_id: int) -> list[dict[str, Any]]:
+    signal_rows: list[dict[str, Any]] = []
+    for i, item in enumerate(db.get_sim_run_signals(run_id, limit=REPLAY_TABLE_PAGE_SIZE, include_strategy_profile=False)):
+        signal_id = _txt(item.get("id"), str(i))
+        checkpoint_at = _txt(item.get("checkpoint_at") or item.get("created_at"), "--")
+        action_text = _txt(item.get("action"), "HOLD").upper()
+        signal_rows.append(
+            {
+                "id": signal_id,
+                "cells": [
+                    f"#{signal_id}",
+                    checkpoint_at,
+                    _txt(item.get("stock_code")),
+                    action_text,
+                    _txt(item.get("decision_type"), "自动"),
+                    _txt(item.get("signal_status") or item.get("execution_note"), "待处理"),
+                ],
+                "actions": [{"label": "详情", "icon": "🔎", "tone": "accent", "action": "show-signal-detail"}],
+                "analysis": _txt(item.get("reasoning"), "暂无分析数据"),
+                "votes": "暂无投票数据",
+                "decisionType": _txt(item.get("decision_type"), "自动"),
+                "signalStatus": _txt(item.get("signal_status") or item.get("execution_note"), "待处理"),
+                "confidence": _txt(item.get("confidence"), "0"),
+                "techScore": _txt(item.get("tech_score"), "0"),
+                "contextScore": _txt(item.get("context_score"), "0"),
+                "checkpointAt": checkpoint_at,
+                "code": _txt(item.get("stock_code")),
+                "name": _txt(item.get("stock_name")),
+            }
+        )
+    return signal_rows
+
+
+def _build_his_replay_holdings_rows(db: QuantSimDB, run_id: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": _txt(item.get("stock_code"), str(i)),
+            "cells": [
+                _txt(item.get("stock_code")),
+                _txt(item.get("stock_name")),
+                _txt(item.get("quantity"), "0"),
+                _num(item.get("avg_price")),
+                _num(item.get("latest_price")),
+                _pct(item.get("unrealized_pnl")),
+            ],
+            "code": _txt(item.get("stock_code")),
+            "name": _txt(item.get("stock_name")),
+        }
+        for i, item in enumerate(db.get_sim_run_positions(run_id))
+    ]
+
+
+def _calculate_replay_equity_metrics(initial_cash: float, equity_values: list[float]) -> tuple[float, float, float]:
+    final_equity = equity_values[-1] if equity_values else initial_cash
+    total_return_pct = ((final_equity - initial_cash) / initial_cash * 100) if initial_cash > 0 else 0.0
+    peak = initial_cash
+    max_drawdown_pct = 0.0
+    for value in equity_values:
+        peak = max(peak, value)
+        if peak > 0:
+            max_drawdown_pct = max(max_drawdown_pct, (peak - value) / peak * 100)
+    return final_equity, total_return_pct, max_drawdown_pct
+
+
+def _reconcile_stale_his_replay_runs(db: QuantSimDB) -> None:
+    from app.quant_sim.replay_runner import _is_pid_running
+
+    for run in db.get_sim_runs(limit=20):
+        status = _txt(run.get("status")).lower()
+        if status not in {"queued", "running"}:
+            continue
+        progress_total = int(_float(run.get("progress_total"), 0.0) or 0.0)
+        progress_current = int(_float(run.get("progress_current"), 0.0) or 0.0)
+        if progress_total <= 0 or progress_current < progress_total:
+            continue
+        worker_pid = int(_float(run.get("worker_pid"), 0.0) or 0.0)
+        if worker_pid > 0 and _is_pid_running(worker_pid):
+            continue
+
+        run_id = int(run.get("id") or 0)
+        checkpoints = db.get_sim_run_checkpoints(run_id)
+        trades = db.get_sim_run_trades(run_id)
+        snapshots = db.get_sim_run_snapshots(run_id)
+        checkpoint_equity = [float(item.get("total_equity") or 0) for item in checkpoints if item.get("total_equity") is not None]
+        snapshot_equity = [float(item.get("total_equity") or 0) for item in snapshots if item.get("total_equity") is not None]
+        equity_values = snapshot_equity or checkpoint_equity
+        initial_cash = float(run.get("initial_cash") or 0)
+        final_equity, total_return_pct, max_drawdown_pct = _calculate_replay_equity_metrics(initial_cash, equity_values)
+        sell_trades = [trade for trade in trades if _txt(trade.get("action")).upper() == "SELL"]
+        wins = [trade for trade in sell_trades if float(trade.get("realized_pnl") or 0) > 0]
+        win_rate = (len(wins) / len(sell_trades) * 100) if sell_trades else 0.0
+        auto_executed = sum(int(_float(item.get("auto_executed"), 0.0) or 0.0) for item in checkpoints)
+
+        if auto_executed > 0 and not trades:
+            db.finalize_sim_run(
+                run_id,
+                status="failed",
+                final_equity=final_equity,
+                total_return_pct=total_return_pct,
+                max_drawdown_pct=max_drawdown_pct,
+                win_rate=win_rate,
+                trade_count=0,
+                status_message="回放检查点已完成，但最终成交汇总未落库，请重新回放。",
+                metadata={"reconciled_stale_run": True, "auto_executed": auto_executed},
+            )
+            db.append_sim_run_event(run_id, "回放检查点已完成，但最终成交汇总未落库，已标记为失败。", level="error")
+            continue
+
+        db.finalize_sim_run(
+            run_id,
+            status="completed",
+            final_equity=final_equity,
+            total_return_pct=total_return_pct,
+            max_drawdown_pct=max_drawdown_pct,
+            win_rate=win_rate,
+            trade_count=len(trades),
+            status_message="回放任务已完成",
+            metadata={"reconciled_stale_run": True},
+        )
+        db.append_sim_run_event(run_id, "回放任务已完成，已自动修正任务终态。", level="success")
+
+
+def _snapshot_his_replay_progress(context: UIApiContext) -> dict[str, Any]:
+    db = context.quant_db()
+    _reconcile_stale_his_replay_runs(db)
+    runs = db.get_sim_runs(limit=20)
+    payload: dict[str, Any] = {
+        "updatedAt": _now(),
+        "tasks": _build_his_replay_task_items(db, runs, include_positions=False),
+    }
+    if runs:
+        run_id = int(runs[0].get("id") or 0)
+        payload.update(
+            {
+                "holdings": _table(["代码", "名称", "数量", "成本", "现价", "浮盈亏"], _build_his_replay_holdings_rows(db, run_id), "暂无持仓"),
+                "trades": _table(["时间", "信号ID", "代码", "动作", "数量", "价格"], _build_his_replay_trade_rows(db, run_id), "暂无交易记录"),
+                "signals": _table(["信号ID", "时间", "代码", "动作", "策略", "执行结果"], _build_his_replay_signal_rows(db, run_id), "暂无信号"),
+            }
+        )
+    return payload
+
+
 def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
     db = context.quant_db()
+    _reconcile_stale_his_replay_runs(db)
     scheduler_status = context.scheduler().get_status()
     strategy_profiles = [
         {
@@ -1286,213 +1524,10 @@ def _snapshot_his_replay(context: UIApiContext) -> dict[str, Any]:
 
     rid = int(run["id"])
 
-    def _format_vote_summary(raw_value: Any) -> str:
-        if isinstance(raw_value, dict):
-            parts = [f"{_txt(key)}: {_txt(value)}" for key, value in raw_value.items() if _txt(key)]
-            return "；".join(parts)
-        if isinstance(raw_value, list):
-            parts = []
-            for item in raw_value:
-                if isinstance(item, dict):
-                    title = _txt(item.get("name") or item.get("analyst") or item.get("source"))
-                    vote = _txt(item.get("vote") or item.get("decision") or item.get("action"))
-                    score = _txt(item.get("score") or item.get("confidence"))
-                    values = [text for text in [title, vote, score] if text]
-                    if values:
-                        parts.append(" / ".join(values))
-                else:
-                    text = _txt(item)
-                    if text:
-                        parts.append(text)
-            return "；".join(parts)
-        return _txt(raw_value)
+    signal_rows = _build_his_replay_signal_rows(db, rid)
+    trade_rows = _build_his_replay_trade_rows(db, rid)
 
-    def _format_explainability_votes(strategy_profile: dict[str, Any]) -> str:
-        explainability = strategy_profile.get("explainability") if isinstance(strategy_profile.get("explainability"), dict) else {}
-        if not explainability:
-            return ""
-
-        lines: list[str] = []
-        tech_votes = explainability.get("tech_votes")
-        if isinstance(tech_votes, list) and tech_votes:
-            lines.append("技术投票")
-            for item in tech_votes:
-                if not isinstance(item, dict):
-                    continue
-                factor = _txt(item.get("factor") or item.get("name") or item.get("title"))
-                signal = _txt(item.get("signal") or item.get("vote") or item.get("decision"))
-                score = _txt(item.get("score"))
-                reason = _txt(item.get("reason"))
-                chunks = [part for part in [factor, signal, f"score={score}" if score else "", reason] if part]
-                if chunks:
-                    lines.append(f"- {' | '.join(chunks)}")
-
-        context_votes = explainability.get("context_votes")
-        if isinstance(context_votes, list) and context_votes:
-            lines.append("环境投票")
-            for item in context_votes:
-                if not isinstance(item, dict):
-                    continue
-                component = _txt(item.get("component") or item.get("factor") or item.get("name"))
-                score = _txt(item.get("score"))
-                reason = _txt(item.get("reason"))
-                chunks = [part for part in [component, f"score={score}" if score else "", reason] if part]
-                if chunks:
-                    lines.append(f"- {' | '.join(chunks)}")
-
-        dual_track = explainability.get("dual_track")
-        if isinstance(dual_track, dict) and dual_track:
-            lines.append("双轨决策")
-            pairs = [
-                ("tech", _txt(dual_track.get("tech_signal"))),
-                ("context", _txt(dual_track.get("context_signal"))),
-                ("resonance", _txt(dual_track.get("resonance_type"))),
-                ("rule", _txt(dual_track.get("rule_hit"))),
-                ("final", _txt(dual_track.get("final_action"))),
-            ]
-            summary = " | ".join([f"{k}={v}" for k, v in pairs if v])
-            if summary:
-                lines.append(f"- {summary}")
-
-        return "\n".join(lines)
-
-    signal_rows: list[dict[str, Any]] = []
-    for i, item in enumerate(db.get_sim_run_signals(rid)):
-        signal_id = _txt(item.get("id"), str(i))
-        strategy_profile = item.get("strategy_profile") if isinstance(item.get("strategy_profile"), dict) else {}
-        explainability = strategy_profile.get("explainability") if isinstance(strategy_profile.get("explainability"), dict) else {}
-        dual_track = explainability.get("dual_track") if isinstance(explainability.get("dual_track"), dict) else {}
-        vote_payload = (
-            strategy_profile.get("vote_summary")
-            or strategy_profile.get("votes")
-            or strategy_profile.get("vote")
-            or strategy_profile.get("voting")
-        )
-        vote_text = (
-            _format_vote_summary(vote_payload)
-            or _format_explainability_votes(strategy_profile)
-            or _txt(strategy_profile.get("vote_text"), "暂无投票数据")
-        )
-        analysis_text = _txt(
-            strategy_profile.get("analysis")
-            or strategy_profile.get("analysis_summary")
-            or strategy_profile.get("decision_reason")
-            or dual_track.get("final_reason")
-            or item.get("reasoning"),
-            "暂无分析数据",
-        )
-        decision_type = _txt(item.get("decision_type"), "自动")
-        signal_status = _txt(item.get("signal_status") or item.get("execution_note"), "待处理")
-        confidence = _txt(item.get("confidence"), "0")
-        tech_score = _txt(item.get("tech_score"), "0")
-        context_score = _txt(item.get("context_score"), "0")
-        checkpoint_at = _txt(item.get("checkpoint_at") or item.get("created_at"), "--")
-        action_text = _txt(item.get("action"), "HOLD").upper()
-        signal_rows.append(
-            {
-                "id": signal_id,
-                "cells": [
-                    f"#{signal_id}",
-                    checkpoint_at,
-                    _txt(item.get("stock_code")),
-                    action_text,
-                    decision_type,
-                    signal_status,
-                ],
-                "actions": [{"label": "详情", "icon": "🔎", "tone": "accent", "action": "show-signal-detail"}],
-                "analysis": analysis_text,
-                "votes": vote_text,
-                "decisionType": decision_type,
-                "signalStatus": signal_status,
-                "confidence": confidence,
-                "techScore": tech_score,
-                "contextScore": context_score,
-                "checkpointAt": checkpoint_at,
-                "code": _txt(item.get("stock_code")),
-                "name": _txt(item.get("stock_name")),
-            }
-        )
-
-    trade_rows = [
-        {
-            "id": _txt(item.get("id"), str(i)),
-            "cells": [
-                _txt(item.get("executed_at") or item.get("created_at"), "--"),
-                f"#{_txt(item.get('signal_id'))}" if _txt(item.get("signal_id")) else "--",
-                _txt(item.get("stock_code")),
-                _txt(item.get("action"), "HOLD").upper(),
-                _txt(item.get("quantity"), "0"),
-                _num(item.get("price")),
-            ],
-            "code": _txt(item.get("stock_code")),
-            "name": _txt(item.get("stock_name")),
-        }
-        for i, item in enumerate(db.get_sim_run_trades(rid))
-    ]
-
-    task_items: list[dict[str, Any]] = []
-    for item in runs[:10]:
-        run_id = int(item.get("id") or 0)
-        status_text = _txt(item.get("status"), "completed")
-        progress_total = int(_float(item.get("progress_total"), 0.0) or 0.0)
-        progress_current = int(_float(item.get("progress_current"), 0.0) or 0.0)
-        if progress_total > 0:
-            progress_pct = max(0, min(int(round((progress_current / progress_total) * 100)), 100))
-        elif status_text in {"completed", "failed", "cancelled"}:
-            progress_pct = 100
-        else:
-            progress_pct = 0
-        position_rows: list[dict[str, Any]] = []
-        for idx, position in enumerate(db.get_sim_run_positions(run_id)):
-            avg_price = _float(position.get("avg_price"), 0.0) or 0.0
-            latest_price = _float(position.get("latest_price"), 0.0) or 0.0
-            unrealized_pnl = _float(position.get("unrealized_pnl"), 0.0) or 0.0
-            unrealized_pnl_pct = ((latest_price - avg_price) / avg_price * 100) if avg_price > 0 else 0.0
-            position_rows.append(
-                {
-                    "id": _txt(position.get("stock_code"), str(idx)),
-                    "cells": [
-                        _txt(position.get("stock_code")),
-                        _txt(position.get("stock_name")),
-                        _txt(position.get("quantity"), "0"),
-                        _num(position.get("avg_price")),
-                        _num(position.get("latest_price")),
-                        _num(unrealized_pnl),
-                        _pct(unrealized_pnl_pct),
-                    ],
-                    "code": _txt(position.get("stock_code")),
-                    "name": _txt(position.get("stock_name")),
-                }
-            )
-
-        task_items.append(
-            {
-                "id": f"#{item.get('id')}",
-                "runId": _txt(item.get("id")),
-                "status": status_text,
-                "stage": _txt(item.get("status_message") or f"{item.get('checkpoint_count', 0)} 个检查点"),
-                "progress": progress_pct,
-                "progressCurrent": progress_current,
-                "progressTotal": progress_total,
-                "checkpointCount": int(_float(item.get("checkpoint_count"), 0.0) or 0.0),
-                "latestCheckpointAt": _txt(item.get("latest_checkpoint_at"), "--"),
-                "startAt": _txt(item.get("start_datetime"), "--"),
-                "endAt": _txt(item.get("end_datetime"), "--"),
-                "range": f"{_txt(item.get('start_datetime'), '--')} -> {_txt(item.get('end_datetime'), 'now')}",
-                "mode": _txt(item.get("mode"), "historical_range"),
-                "timeframe": _txt(item.get("timeframe"), "30m"),
-                "market": _txt(item.get("market"), "CN"),
-                "strategyMode": _txt(item.get("selected_strategy_mode") or item.get("strategy_mode"), "auto"),
-                "returnPct": _pct(item.get("total_return_pct")),
-                "finalEquity": _num(item.get("final_equity"), 0),
-                "tradeCount": _txt(item.get("trade_count"), "0"),
-                "winRate": _pct(item.get("win_rate")),
-                "strategyProfileId": _txt(item.get("selected_strategy_profile_id")),
-                "strategyProfileName": _txt(item.get("selected_strategy_profile_name")),
-                "strategyProfileVersionId": _txt(item.get("selected_strategy_profile_version_id")),
-                "holdings": position_rows,
-            }
-        )
+    task_items = _build_his_replay_task_items(db, runs, include_positions=True)
 
     run_metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
     replay_commission_rate = _normalize_fee_rate(
@@ -2468,6 +2503,7 @@ def _build_parameter_details(
     *,
     decision: dict[str, Any],
     runtime_context: dict[str, Any],
+    strategy_profile: dict[str, Any],
     technical_indicators: list[dict[str, str]],
     effective_thresholds: dict[str, Any],
     tech_votes_raw: list[dict[str, Any]],
@@ -2482,6 +2518,27 @@ def _build_parameter_details(
             "derivation": _txt(derivation),
         }
 
+    def _adjustment_name(path: Any) -> str:
+        text = _txt(path, "")
+        if not text:
+            return "unknown"
+        if "track_weights." in text:
+            return f"track_weights.{text.rsplit('track_weights.', 1)[-1]}"
+        if "dual_track." in text:
+            return text.rsplit("dual_track.", 1)[-1]
+        if "group_weights." in text:
+            return f"group_weights.{text.rsplit('group_weights.', 1)[-1]}"
+        if "dimension_weights." in text:
+            return f"dimension_weights.{text.rsplit('dimension_weights.', 1)[-1]}"
+        return text
+
+    def _adjustment_value(item: dict[str, Any]) -> str:
+        before = _float(item.get("before"))
+        after = _float(item.get("after"))
+        if before is None or after is None:
+            return _txt(item.get("value"), "--")
+        return f"{before:.4f} -> {after:.4f} (Δ{after - before:+.4f})"
+
     explain_obj = explainability if isinstance(explainability, dict) else {}
     if _is_structured_explainability(explain_obj):
         technical_breakdown = _safe_json_load(explain_obj.get("technical_breakdown"))
@@ -2492,6 +2549,7 @@ def _build_parameter_details(
 
         tech_track = _safe_json_load(technical_breakdown.get("track"))
         context_track = _safe_json_load(context_breakdown.get("track"))
+        dynamic_strategy = strategy_profile.get("dynamic_strategy") if isinstance(strategy_profile.get("dynamic_strategy"), dict) else {}
         position_metric_label = _position_metric_label(decision.get("action"))
         position_metric_value = _position_metric_value(decision.get("action"), decision.get("positionSizePct"))
 
@@ -2542,6 +2600,38 @@ def _build_parameter_details(
             _item("方向冲突标记", fusion_breakdown.get("sign_conflict"), "fusion_breakdown.sign_conflict", "技术轨与环境轨符号是否冲突（0/1）。"),
             _item("veto 来源模式", fusion_breakdown.get("veto_source_mode"), "fusion_breakdown.veto_source_mode", "标记 veto 判定来源（如 legacy/new）。"),
         ]
+
+        if dynamic_strategy:
+            rows.append(
+                _item(
+                    "AI动态档位",
+                    dynamic_strategy.get("overlay_regime"),
+                    "strategy_profile.dynamic_strategy.overlay_regime",
+                    "AI 动态层将市场状态映射到 risk_on / neutral / risk_off，再由白名单规则调整参数。",
+                )
+            )
+            rows.append(
+                _item(
+                    "AI动态评分",
+                    f"{_txt(dynamic_strategy.get('score'), '--')} / {_txt(dynamic_strategy.get('confidence'), '--')}",
+                    "strategy_profile.dynamic_strategy.score/confidence",
+                    "格式为 动态评分 / 动态置信度，用于决定是否进入动态调参档位。",
+                )
+            )
+            adjustments = dynamic_strategy.get("adjustments")
+            if isinstance(adjustments, list):
+                for item in adjustments:
+                    if not isinstance(item, dict):
+                        continue
+                    label = _adjustment_name(item.get("path"))
+                    rows.append(
+                        _item(
+                            f"AI动态调整.{label}",
+                            _adjustment_value(item),
+                            "strategy_profile.dynamic_strategy.adjustments",
+                            _txt(item.get("reason"), "AI 动态层白名单参数调整。"),
+                        )
+                    )
 
         buy_base = _float(fusion_breakdown.get("buy_threshold_base"))
         buy_eff = _float(fusion_breakdown.get("buy_threshold_eff"))
@@ -3138,6 +3228,7 @@ def _build_signal_detail_payload(
     parameter_details = _build_parameter_details(
         decision=decision,
         runtime_context=runtime_context,
+        strategy_profile=strategy_profile,
         technical_indicators=technical_indicators,
         effective_thresholds=effective_thresholds,
         tech_votes_raw=tech_votes_raw,
@@ -4107,6 +4198,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
     @asynccontextmanager
     async def app_lifespan(app: FastAPI):
         try:
+            akshare_client.reset_shutdown()
             unified_stock_refresh_scheduler = get_unified_stock_refresh_scheduler(api_context)
             unified_stock_refresh_scheduler.start()
             app.state.unified_stock_refresh_scheduler = unified_stock_refresh_scheduler
@@ -4115,6 +4207,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
         try:
             yield
         finally:
+            akshare_client.request_shutdown()
             scheduler = getattr(app.state, "unified_stock_refresh_scheduler", None)
             if scheduler:
                 scheduler.stop()
@@ -4303,6 +4396,10 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
             return {"updatedAt": _now(), "ok": True, **updated}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/v1/quant/his-replay/progress")
+    def get_his_replay_progress() -> dict[str, Any]:
+        return _snapshot_his_replay_progress(api_context)
 
     for path, page in {
         "/api/v1/workbench": "workbench",

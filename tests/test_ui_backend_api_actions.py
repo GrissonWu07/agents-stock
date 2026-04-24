@@ -1088,6 +1088,38 @@ def test_discover_run_strategy_executes_real_selector_runners_and_persists_resul
     assert {"688111", "000001", "300750", "600519", "600036"}.issubset(persisted_codes)
 
 
+def test_discover_watchlist_action_handles_dash_latest_price(tmp_path):
+    context = _make_context(tmp_path)
+    save_latest_result(
+        "ai_scanner",
+        {
+            "stocks_df": pd.DataFrame(
+                [
+                    {
+                        "股票代码": "920414",
+                        "股票简称": "欧普泰",
+                        "所属行业": "半导体",
+                        "最新价": "--",
+                        "理由": "AI候选",
+                    }
+                ]
+            ),
+            "selected_at": "2026-04-24 00:12:29",
+        },
+        base_dir=context.selector_result_dir,
+    )
+    client = TestClient(create_app(context=context))
+
+    response = client.post("/api/v1/discover/actions/batch-watchlist", json={"codes": ["920414"]})
+
+    assert response.status_code == 200
+    watch = context.watchlist().get_watch("920414")
+    assert watch is not None
+    assert watch["stock_code"] == "920414"
+    assert watch["stock_name"] == "欧普泰"
+    assert watch["latest_price"] == 0.0
+
+
 def test_live_sim_actions_use_scheduler_and_candidate_pool(tmp_path, monkeypatch):
     context = _make_context(tmp_path)
     watchlist = context.watchlist()
@@ -1194,6 +1226,157 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
     delete_resp = client.post("/api/v1/quant/his-replay/actions/delete", json={"id": run_id})
     assert delete_resp.status_code == 200
     assert all(int(item["id"]) != run_id for item in context.quant_db().get_sim_runs(limit=20))
+
+
+def test_his_replay_progress_endpoint_returns_lightweight_task_progress(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.quant_db()
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2025-12-01 09:30:00",
+        end_datetime="2026-01-06 15:00:00",
+        initial_cash=100000,
+        status="running",
+        metadata={"selected_strategy_mode": "auto"},
+    )
+    db.update_sim_run_progress(
+        run_id,
+        progress_current=1497,
+        progress_total=1992,
+        latest_checkpoint_at="2026-01-06 10:30:00",
+        status_message="检查点 2026-01-06 10:30:00：分析候选股 1/9 002463",
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/quant/his-replay/progress")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"updatedAt", "tasks", "holdings", "trades", "signals"}
+    task = payload["tasks"][0]
+    assert task["runId"] == str(run_id)
+    assert task["status"] == "running"
+    assert task["stage"] == "检查点 2026-01-06 10:30:00：分析候选股 1/9 002463"
+    assert task["progressCurrent"] == 1497
+    assert task["progressTotal"] == 1992
+    assert task["progress"] == 75
+    assert payload["signals"]["rows"] == []
+    assert payload["trades"]["rows"] == []
+    assert "curve" not in payload
+
+
+def test_his_replay_snapshot_returns_only_first_page_for_heavy_tables(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.quant_db()
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2025-12-01 09:30:00",
+        end_datetime="2026-01-06 15:00:00",
+        initial_cash=100000,
+        status="completed",
+        metadata={"selected_strategy_mode": "auto"},
+    )
+    signals = [
+        {
+            "id": index + 1,
+            "stock_code": f"300{index:03d}",
+            "stock_name": f"测试{index}",
+            "action": "BUY",
+            "confidence": 80,
+            "reasoning": f"signal {index}",
+            "checkpoint_at": f"2026-01-06 10:{index:02d}:00",
+            "created_at": f"2026-01-06 10:{index:02d}:00",
+        }
+        for index in range(25)
+    ]
+    trades = [
+        {
+            "signal_id": index + 1,
+            "stock_code": f"300{index:03d}",
+            "stock_name": f"测试{index}",
+            "action": "BUY",
+            "price": 10 + index,
+            "quantity": 100,
+            "amount": (10 + index) * 100,
+            "executed_at": f"2026-01-06 10:{index:02d}:30",
+            "created_at": f"2026-01-06 10:{index:02d}:30",
+        }
+        for index in range(25)
+    ]
+    db.replace_sim_run_results(run_id, trades=trades, snapshots=[], positions=[], signals=signals)
+
+    client = TestClient(create_app(context=context))
+    snapshot = client.get("/api/v1/quant/his-replay").json()
+    progress = client.get("/api/v1/quant/his-replay/progress").json()
+
+    assert len(snapshot["signals"]["rows"]) == 20
+    assert len(snapshot["trades"]["rows"]) == 20
+    assert len(progress["signals"]["rows"]) == 20
+    assert len(progress["trades"]["rows"]) == 20
+    assert snapshot["signals"]["rows"][0]["code"] == "300024"
+    assert snapshot["signals"]["rows"][-1]["code"] == "300005"
+
+
+def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_failed(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.quant_db()
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2025-12-01 09:30:00",
+        end_datetime="2026-01-06 15:00:00",
+        initial_cash=50000,
+        status="running",
+        metadata={"selected_strategy_mode": "auto"},
+    )
+    db.set_sim_run_worker_pid(run_id, 99999999)
+    db.update_sim_run_progress(
+        run_id,
+        progress_current=10,
+        progress_total=10,
+        latest_checkpoint_at="2026-01-06 15:00:00",
+        status_message="已完成第 10/10 个检查点",
+    )
+    db.add_sim_run_checkpoint(
+        run_id,
+        checkpoint_at="2026-01-06 15:00:00",
+        candidates_scanned=2,
+        positions_checked=1,
+        signals_created=2,
+        auto_executed=1,
+        available_cash=49000,
+        market_value=2000,
+        total_equity=51000,
+    )
+    db.upsert_sim_run_signals(
+        run_id,
+        [
+            {
+                "id": 101,
+                "stock_code": "300390",
+                "stock_name": "天华新能",
+                "action": "BUY",
+                "confidence": 82,
+                "reasoning": "已产生交易信号但成交未汇总",
+                "checkpoint_at": "2026-01-06 15:00:00",
+            }
+        ],
+    )
+
+    client = TestClient(create_app(context=context))
+    payload = client.get("/api/v1/quant/his-replay").json()
+
+    task = payload["tasks"][0]
+    assert task["runId"] == str(run_id)
+    assert task["status"] == "failed"
+    assert "最终成交汇总未落库" in task["stage"]
+    assert task["finalEquity"] == "51000"
+    assert task["tradeCount"] == "0"
 
 
 def test_his_replay_start_returns_400_when_active_replay_exists(tmp_path):

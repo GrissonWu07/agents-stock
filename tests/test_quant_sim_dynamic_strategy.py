@@ -155,7 +155,17 @@ def test_resolve_binding_weights_mode_uses_risk_on_overlay_bucket(tmp_path, monk
     assert dynamic["overlay_regime"] == "risk_on"
     assert candidate["dual_track"]["track_weights"] == {"tech": 1.11, "context": 0.89}
     assert candidate["dual_track"]["fusion_buy_threshold"] == 0.39
+    assert candidate["dual_track"]["fusion_sell_threshold"] == -0.28
+    assert candidate["dual_track"]["sell_precedence_gate"] == -0.38
     assert candidate["dual_track"]["min_fusion_confidence"] == 0.44
+    adjustments = {item["path"]: item for item in dynamic["adjustments"]}
+    assert adjustments["profiles.candidate.dual_track.fusion_buy_threshold"]["before"] == 0.43
+    assert adjustments["profiles.candidate.dual_track.fusion_buy_threshold"]["after"] == 0.39
+    assert adjustments["profiles.candidate.dual_track.fusion_sell_threshold"]["before"] == -0.26
+    assert adjustments["profiles.candidate.dual_track.fusion_sell_threshold"]["after"] == -0.28
+    assert adjustments["profiles.candidate.dual_track.sell_precedence_gate"]["before"] == -0.34
+    assert adjustments["profiles.candidate.dual_track.sell_precedence_gate"]["after"] == -0.38
+    assert adjustments["profiles.candidate.dual_track.min_fusion_confidence"]["after"] == 0.44
 
 
 def test_resolve_binding_weights_mode_uses_risk_off_overlay_bucket(tmp_path, monkeypatch):
@@ -195,7 +205,14 @@ def test_resolve_binding_weights_mode_uses_risk_off_overlay_bucket(tmp_path, mon
     assert dynamic["overlay_regime"] == "risk_off"
     assert candidate["dual_track"]["track_weights"] == {"tech": 0.89, "context": 1.11}
     assert candidate["dual_track"]["fusion_buy_threshold"] == 0.46
+    assert candidate["dual_track"]["fusion_sell_threshold"] == -0.24
+    assert candidate["dual_track"]["sell_precedence_gate"] == -0.30
     assert candidate["dual_track"]["min_fusion_confidence"] == 0.49
+    adjustments = {item["path"]: item for item in dynamic["adjustments"]}
+    assert adjustments["profiles.candidate.dual_track.fusion_sell_threshold"]["before"] == -0.26
+    assert adjustments["profiles.candidate.dual_track.fusion_sell_threshold"]["after"] == -0.24
+    assert adjustments["profiles.candidate.dual_track.sell_precedence_gate"]["before"] == -0.34
+    assert adjustments["profiles.candidate.dual_track.sell_precedence_gate"]["after"] == -0.30
 
 
 def test_resolve_binding_weights_mode_stays_neutral_without_confident_signal(tmp_path, monkeypatch):
@@ -233,6 +250,9 @@ def test_resolve_binding_weights_mode_stays_neutral_without_confident_signal(tmp
     candidate = scoring.resolve("candidate")
 
     assert dynamic["overlay_regime"] == "neutral"
+    assert dynamic["adjustments"] == []
     assert candidate["dual_track"]["track_weights"] == {"tech": 1.0, "context": 1.0}
     assert candidate["dual_track"]["fusion_buy_threshold"] == 0.43
+    assert candidate["dual_track"]["fusion_sell_threshold"] == -0.26
+    assert candidate["dual_track"]["sell_precedence_gate"] == -0.34
     assert candidate["dual_track"]["min_fusion_confidence"] == 0.46

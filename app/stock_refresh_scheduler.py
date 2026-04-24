@@ -368,6 +368,8 @@ class UnifiedStockRefreshScheduler:
     ) -> dict[str, Any]:
         existing_entry = existing if isinstance(existing, dict) else {}
         existing_name = _valid_name(existing_entry.get("stock_name"))
+        if existing_name.upper() == stock_code.upper():
+            existing_name = ""
         existing_sector = _valid_sector(existing_entry.get("sector"))
         existing_price = _price(existing_entry.get("latest_price"))
 
@@ -389,9 +391,16 @@ class UnifiedStockRefreshScheduler:
             except Exception:
                 basic_info = {}
 
+        quote_name = _valid_name(quote.get("name"))
+        if quote_name.upper() == stock_code.upper():
+            quote_name = ""
+        info_name = _valid_name(basic_info.get("name"))
+        if info_name.upper() == stock_code.upper():
+            info_name = ""
+
         stock_name = (
-            _valid_name(quote.get("name"))
-            or _valid_name(basic_info.get("name"))
+            quote_name
+            or info_name
             or existing_name
             or stock_code
         )

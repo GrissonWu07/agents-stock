@@ -888,6 +888,14 @@ function _classifyDecisionMetric(item: ParameterDetailRow): { key: string; label
   if (normalized.includes("兼容") || normalized.includes("派生") || normalized.includes("legacy")) {
     return { key: "legacy", label: "兼容派生字段", note: "兼容旧语义或派生说明，仅作辅助阅读。" };
   }
+  if (
+    normalized.startsWith("ai动态调整.")
+    || normalized.includes("ai动态档位")
+    || normalized.includes("ai动态评分")
+    || source.includes("dynamic_strategy.adjustments")
+  ) {
+    return { key: "dynamic", label: "AI动态调参", note: "记录 AI 动态层在白名单内实际调整过的参数和值。" };
+  }
   if (source.includes("technical_breakdown") || normalized.includes("技术轨")) {
     return { key: "technical", label: "技术轨", note: "来自技术轨结构化 breakdown 的方向、分值或置信度。" };
   }
@@ -1110,7 +1118,7 @@ export function SignalDetailPage() {
       }
       groupMap.set(category.key, { ...category, rows: [row] });
     }
-    const orderedKeys = ["fusion", "technical", "context", "runtime", "legacy"];
+    const orderedKeys = ["fusion", "technical", "context", "dynamic", "runtime", "legacy"];
     return orderedKeys
       .map((key) => groupMap.get(key))
       .filter((item): item is DecisionMetricGroup => Boolean(item && item.rows.length > 0));

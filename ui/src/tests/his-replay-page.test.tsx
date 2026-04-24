@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../lib/api-client";
 import { HisReplayPage } from "../features/quant/his-replay-page";
 
@@ -104,6 +104,37 @@ const startedSnapshot = {
   ],
 };
 
+const progressedReplayProgress = {
+  updatedAt: "2026-04-23 22:10:00",
+  tasks: [
+    {
+      ...startedSnapshot.tasks[0],
+      stage: "检查点 2026-01-06 10:30:00：分析候选股 1/9 002463",
+      progress: 75,
+      progressCurrent: 1497,
+      progressTotal: 1992,
+      checkpointCount: 1497,
+      latestCheckpointAt: "2026-01-06 10:30:00",
+    },
+    ...initialSnapshot.tasks,
+  ],
+  holdings: emptyTable,
+  trades: emptyTable,
+  signals: {
+    columns: ["信号ID", "时间", "代码", "动作", "策略", "执行结果"],
+    rows: [
+      {
+        id: "99",
+        cells: ["#99", "2026-01-06 10:30:00", "002463", "BUY", "自动", "待处理"],
+        code: "002463",
+        name: "沪电股份",
+      },
+    ],
+    emptyLabel: "暂无信号",
+    emptyMessage: "暂无信号",
+  },
+};
+
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -118,6 +149,10 @@ beforeAll(() => {
       dispatchEvent: vi.fn(),
     })),
   });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function renderHisReplayPage(client: ApiClient) {
@@ -150,5 +185,46 @@ describe("HisReplayPage", () => {
     expect(within(updatedTaskDetails).getByText("最近检查点：2026-04-02 10:00:00")).toBeInTheDocument();
     expect(within(updatedTaskDetails).getByText("回放节点数")).toBeInTheDocument();
     expect(within(updatedTaskDetails).getByText("1/24")).toBeInTheDocument();
+  });
+
+  it("polls lightweight replay progress and updates the selected task without reloading the full snapshot", async () => {
+    const intervalCallbacks: Array<() => Promise<void>> = [];
+    const nativeSetInterval = window.setInterval.bind(window);
+    const nativeClearInterval = window.clearInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((callback: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if (timeout === 5 * 60 * 1000) {
+        intervalCallbacks.push(callback as () => Promise<void>);
+        return 1;
+      }
+      return nativeSetInterval(callback, timeout, ...args);
+    });
+    vi.spyOn(window, "clearInterval").mockImplementation((handle?: number) => {
+      if (handle === 1) return;
+      nativeClearInterval(handle);
+    });
+    const client = {
+      getPageSnapshot: vi.fn().mockResolvedValue(startedSnapshot),
+      getReplayProgress: vi.fn().mockResolvedValue(progressedReplayProgress),
+      runPageAction: vi.fn(),
+    } as unknown as ApiClient;
+
+    renderHisReplayPage(client);
+
+    const taskDetails = await screen.findByLabelText("已选回放任务详情");
+    expect(within(taskDetails).getByText("检查点进度：1/24 · 4%")).toBeInTheDocument();
+    expect(intervalCallbacks).toHaveLength(1);
+
+    await act(async () => {
+      await intervalCallbacks[0]();
+    });
+
+    const updatedTaskDetails = await screen.findByLabelText("已选回放任务详情");
+    expect(within(updatedTaskDetails).getByText("检查点进度：1497/1992 · 75%")).toBeInTheDocument();
+    expect(within(updatedTaskDetails).getByText("检查点 2026-01-06 10:30:00")).toBeInTheDocument();
+    expect(within(updatedTaskDetails).getByText("分析候选股 1/9 002463")).toBeInTheDocument();
+    expect(screen.getByText("分析候选股 1/9 002463").closest(".replay-task-stage")).toBeTruthy();
+    expect(screen.getByText("002463 沪电股份")).toBeInTheDocument();
+    expect(client.getReplayProgress).toHaveBeenCalledTimes(1);
+    expect(client.getPageSnapshot).toHaveBeenCalledTimes(1);
   });
 });

@@ -205,7 +205,13 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
     if (!canBatchWatchlist || batching) return;
     setBatching(true);
     try {
-      await resource.runAction("batch-watchlist", { codes: selectedCodes });
+      const result = await resource.runAction("batch-watchlist", {
+        codes: selectedCodes,
+      });
+      if (!result) {
+        setRunFeedback(t("Failed"));
+        return;
+      }
       selection.clear();
       setRunFeedback(t("Added to watchlist"));
     } catch (error) {
@@ -217,7 +223,11 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
 
   const handleSingleWatchlist = async (code: string) => {
     try {
-      await resource.runAction("item-watchlist", { code });
+      const result = await resource.runAction("item-watchlist", { code });
+      if (!result) {
+        setRunFeedback(t("Failed"));
+        return;
+      }
       setRunFeedback(t("Added to watchlist"));
     } catch (error) {
       setRunFeedback(`${t("Failed")}: ${error instanceof Error ? error.message : String(error)}`);
@@ -453,6 +463,13 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
+              <IconButton
+                icon="⭐"
+                label={t("Add selected to watchlist")}
+                tone="accent"
+                onClick={() => void handleBatchWatchlist()}
+                disabled={!canBatchWatchlist || batching}
+              />
             </div>
             <span className="badge badge--neutral discover-candidate-toolbar__summary">
               {t("Selected / candidate {selected} / {total}", { selected: selection.selectedCount, total: filteredRows.length })}
@@ -578,9 +595,6 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
             </div>
             <span className="toolbar__status discover-candidate-footer__page">{currentPageLabel}</span>
             <div className="discover-candidate-footer__actions">
-              <button className="button button--primary" type="button" onClick={() => void handleBatchWatchlist()} disabled={!canBatchWatchlist || batching}>
-                {t("Add selected to watchlist")}
-              </button>
               <button className="button button--secondary" type="button" onClick={() => setCurrentPage((current) => Math.max(0, current - 1))} disabled={currentPage === 0}>
                 {t("Previous")}
               </button>

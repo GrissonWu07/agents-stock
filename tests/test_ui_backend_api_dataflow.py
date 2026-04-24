@@ -223,6 +223,45 @@ def _seed_structured_signal_for_detail(context: gateway_api.UIApiContext) -> int
         },
         "analysis": "旧自然语言摘要：技术评分 0.11，上下文评分 0.48。",
         "decision_reason": "旧自然语言摘要：技术评分 0.11，上下文评分 0.48。",
+        "dynamic_strategy": {
+            "mode": "hybrid",
+            "enabled": True,
+            "score": 0.34,
+            "confidence": 0.82,
+            "overlay_regime": "risk_on",
+            "template_switch_applied": True,
+            "template_switch_reason": "strong_opposite_signal",
+            "adjustments": [
+                {
+                    "path": "base.dual_track.track_weights.tech",
+                    "before": 1.0,
+                    "after": 1.11,
+                    "delta": 0.11,
+                    "reason": "risk_on 技术轨权重上调",
+                },
+                {
+                    "path": "profiles.candidate.dual_track.fusion_buy_threshold",
+                    "before": 0.43,
+                    "after": 0.39,
+                    "delta": -0.04,
+                    "reason": "risk_on 降低 BUY 触发阈值",
+                },
+                {
+                    "path": "profiles.candidate.dual_track.fusion_sell_threshold",
+                    "before": -0.26,
+                    "after": -0.28,
+                    "delta": -0.02,
+                    "reason": "risk_on 延后 SELL 触发",
+                },
+                {
+                    "path": "profiles.candidate.dual_track.sell_precedence_gate",
+                    "before": -0.34,
+                    "after": -0.38,
+                    "delta": -0.04,
+                    "reason": "risk_on 提高强卖覆盖门槛",
+                },
+            ],
+        },
         "explainability": explainability,
     }
     return db.add_signal(
@@ -365,6 +404,12 @@ def test_signal_detail_prefers_canonical_breakdown_and_clean_audit_labels(tmp_pa
     assert rows["阈值.min_tech_score_for_buy"]["value"] == "0.08"
     assert rows["阈值.min_context_score_for_buy"]["value"] == "0.1"
     assert rows["AI动态调整模式"]["value"] == "hybrid"
+    assert rows["AI动态档位"]["value"] == "risk_on"
+    assert rows["AI动态评分"]["value"] == "0.34 / 0.82"
+    assert rows["AI动态调整.fusion_buy_threshold"]["value"] == "0.4300 -> 0.3900 (Δ-0.0400)"
+    assert rows["AI动态调整.fusion_sell_threshold"]["value"] == "-0.2600 -> -0.2800 (Δ-0.0200)"
+    assert rows["AI动态调整.sell_precedence_gate"]["value"] == "-0.3400 -> -0.3800 (Δ-0.0400)"
+    assert rows["AI动态调整.track_weights.tech"]["value"] == "1.0000 -> 1.1100 (Δ+0.1100)"
     assert rows["双轨融合模式"]["value"] == "hybrid"
     assert "兼容派生" in rows["规则命中（兼容派生）"]["name"]
     assert "兼容派生" in rows["共振类型（兼容派生）"]["name"]

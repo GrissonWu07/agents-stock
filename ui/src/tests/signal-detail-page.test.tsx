@@ -127,6 +127,24 @@ const mockPayload = {
       derivation: "AI 动态调整模式控制模板/权重是否可按市场动态放大。",
     },
     {
+      name: "AI动态档位",
+      value: "risk_on",
+      source: "strategy_profile.dynamic_strategy.overlay_regime",
+      derivation: "AI 动态层将市场状态映射到 risk_on / neutral / risk_off。",
+    },
+    {
+      name: "AI动态调整.fusion_buy_threshold",
+      value: "0.4300 -> 0.3900 (Δ-0.0400)",
+      source: "strategy_profile.dynamic_strategy.adjustments",
+      derivation: "risk_on 降低 BUY 触发阈值",
+    },
+    {
+      name: "AI动态调整.sell_precedence_gate",
+      value: "-0.3400 -> -0.3800 (Δ-0.0400)",
+      source: "strategy_profile.dynamic_strategy.adjustments",
+      derivation: "risk_on 提高强卖覆盖门槛",
+    },
+    {
       name: "双轨融合模式",
       value: "hybrid",
       source: "fusion_breakdown.mode",
@@ -351,6 +369,10 @@ describe("SignalDetailPage", () => {
     expect(screen.getByText("技术轨方向")).toBeInTheDocument();
     expect(screen.getByText("环境轨方向")).toBeInTheDocument();
     expect(screen.getByText("AI动态调整模式")).toBeInTheDocument();
+    expect(screen.getByText("AI动态调参")).toBeInTheDocument();
+    expect(screen.getByText("AI动态调整.fusion_buy_threshold")).toBeInTheDocument();
+    expect(screen.getByText("0.4300 -> 0.3900 (Δ-0.0400)")).toBeInTheDocument();
+    expect(screen.getByText("AI动态调整.sell_precedence_gate")).toBeInTheDocument();
     expect(screen.getByText("双轨融合模式")).toBeInTheDocument();
     expect(screen.getAllByText(/技术轨/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/环境轨/).length).toBeGreaterThan(0);

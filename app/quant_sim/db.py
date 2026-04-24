@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -55,17 +56,53 @@ BUILTIN_STRATEGY_PROFILES: tuple[dict[str, str], ...] = (
 class QuantSimDB:
     """Persistence layer for candidate pool, strategy signals, and sim positions."""
 
+    _init_lock = threading.Lock()
+    _initialized_db_files: set[str] = set()
+
     def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
         self.db_file = str(db_file)
-        self._init_database()
+        self._db_cache_key = self._cache_key(self.db_file)
+        self._ensure_initialized()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_file)
+    def _connect(self, *, timeout: float = 30.0) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_file, timeout=timeout)
+        conn.execute(f"PRAGMA busy_timeout = {max(0, int(timeout * 1000))}")
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _ensure_initialized(self) -> None:
+        if self._is_initialized():
+            return
+        with self._init_lock:
+            if self._is_initialized():
+                return
+            try:
+                self._init_database()
+            except sqlite3.OperationalError as exc:
+                if self._can_assume_existing_schema(exc):
+                    self._initialized_db_files.add(self._db_cache_key)
+                    return
+                raise
+            self._initialized_db_files.add(self._db_cache_key)
+
+    def _is_initialized(self) -> bool:
+        if self.db_file == ":memory:":
+            return False
+        if self._db_cache_key not in self._initialized_db_files:
+            return False
+        return Path(self.db_file).exists()
+
+    def _can_assume_existing_schema(self, exc: sqlite3.OperationalError) -> bool:
+        if "database is locked" not in str(exc).lower():
+            return False
+        db_path = Path(self.db_file)
+        try:
+            return db_path.exists() and db_path.stat().st_size > 0
+        except OSError:
+            return False
+
     def _init_database(self) -> None:
-        conn = self._connect()
+        conn = self._connect(timeout=1.0)
         cursor = conn.cursor()
 
         cursor.execute(
@@ -1157,6 +1194,105 @@ class QuantSimDB:
         conn.close()
         return bool(row["cancel_requested"]) if row is not None else False
 
+    def _insert_sim_run_snapshots_with_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        run_id: int,
+        snapshots: list[dict[str, Any]],
+    ) -> None:
+        for snapshot in snapshots:
+            cursor.execute(
+                """
+                INSERT INTO sim_run_snapshots
+                (
+                    run_id, run_reason, initial_cash, available_cash, market_value,
+                    total_equity, realized_pnl, unrealized_pnl, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    snapshot.get("run_reason") or "historical_range",
+                    float(snapshot.get("initial_cash") or 0),
+                    float(snapshot.get("available_cash") or 0),
+                    float(snapshot.get("market_value") or 0),
+                    float(snapshot.get("total_equity") or 0),
+                    float(snapshot.get("realized_pnl") or 0),
+                    float(snapshot.get("unrealized_pnl") or 0),
+                    snapshot.get("created_at") or self._now(),
+                ),
+            )
+
+    def _insert_sim_run_positions_with_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        run_id: int,
+        positions: list[dict[str, Any]],
+    ) -> None:
+        for position in positions:
+            cursor.execute(
+                """
+                INSERT INTO sim_run_positions
+                (
+                    run_id, stock_code, stock_name, quantity, avg_price, latest_price,
+                    market_value, unrealized_pnl, sellable_quantity, locked_quantity, status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    position.get("stock_code"),
+                    position.get("stock_name"),
+                    int(position.get("quantity") or 0),
+                    float(position.get("avg_price") or 0),
+                    float(position.get("latest_price") or 0),
+                    float(position.get("market_value") or 0),
+                    float(position.get("unrealized_pnl") or 0),
+                    int(position.get("sellable_quantity") or 0),
+                    int(position.get("locked_quantity") or 0),
+                    position.get("status") or "holding",
+                    self._now(),
+                ),
+            )
+
+    def _insert_sim_run_trades_with_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        run_id: int,
+        trades: list[dict[str, Any]],
+        persisted_signal_ids_by_source_id: dict[int, int],
+    ) -> None:
+        for trade in trades:
+            source_signal_id = trade.get("signal_id")
+            if source_signal_id is None:
+                persisted_signal_id = None
+            else:
+                persisted_signal_id = persisted_signal_ids_by_source_id.get(int(source_signal_id), int(source_signal_id))
+            cursor.execute(
+                """
+                INSERT INTO sim_run_trades
+                (
+                    run_id, signal_id, stock_code, stock_name, action, price, quantity, amount,
+                    realized_pnl, note, executed_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    persisted_signal_id,
+                    trade.get("stock_code"),
+                    trade.get("stock_name"),
+                    str(trade.get("action") or "").upper(),
+                    float(trade.get("price") or 0),
+                    int(trade.get("quantity") or 0),
+                    float(trade.get("amount") or 0),
+                    float(trade.get("realized_pnl") or 0),
+                    trade.get("note"),
+                    trade.get("executed_at") or self._now(),
+                    trade.get("created_at") or self._now(),
+                ),
+            )
+
     def replace_sim_run_results(
         self,
         run_id: int,
@@ -1258,6 +1394,51 @@ class QuantSimDB:
         conn.commit()
         conn.close()
 
+    def replace_sim_run_runtime_results(
+        self,
+        run_id: int,
+        *,
+        trades: list[dict[str, Any]],
+        snapshots: list[dict[str, Any]],
+        positions: list[dict[str, Any]],
+    ) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sim_run_trades WHERE run_id = ?", (run_id,))
+        cursor.execute("DELETE FROM sim_run_snapshots WHERE run_id = ?", (run_id,))
+        cursor.execute("DELETE FROM sim_run_positions WHERE run_id = ?", (run_id,))
+
+        source_signal_ids = sorted(
+            {
+                int(trade.get("signal_id"))
+                for trade in trades
+                if self._normalize_optional_int(trade.get("signal_id")) is not None
+            }
+        )
+        persisted_signal_ids_by_source_id: dict[int, int] = {}
+        if source_signal_ids:
+            placeholders = ",".join("?" for _ in source_signal_ids)
+            cursor.execute(
+                f"""
+                SELECT source_signal_id, id
+                FROM sim_run_signals
+                WHERE run_id = ? AND source_signal_id IN ({placeholders})
+                """,
+                (run_id, *source_signal_ids),
+            )
+            persisted_signal_ids_by_source_id = {
+                int(row["source_signal_id"]): int(row["id"])
+                for row in cursor.fetchall()
+                if row["source_signal_id"] is not None
+            }
+
+        self._insert_sim_run_snapshots_with_cursor(cursor, run_id, snapshots)
+        self._insert_sim_run_positions_with_cursor(cursor, run_id, positions)
+        self._insert_sim_run_trades_with_cursor(cursor, run_id, trades, persisted_signal_ids_by_source_id)
+
+        conn.commit()
+        conn.close()
+
     def finalize_sim_run(
         self,
         run_id: int,
@@ -1328,17 +1509,19 @@ class QuantSimDB:
         conn.close()
         return rows
 
-    def get_sim_run_trades(self, run_id: int) -> list[dict[str, Any]]:
+    def get_sim_run_trades(self, run_id: int, *, limit: int | None = None) -> list[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute(
-            """
+        query = """
             SELECT * FROM sim_run_trades
             WHERE run_id = ?
             ORDER BY executed_at DESC, id DESC
-            """,
-            (run_id,),
-        )
+            """
+        params: tuple[Any, ...] = (run_id,)
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (run_id, max(0, int(limit)))
+        cursor.execute(query, params)
         rows = [self._row_to_dict(row) for row in cursor.fetchall()]
         conn.close()
         return rows
@@ -1373,18 +1556,29 @@ class QuantSimDB:
         conn.close()
         return rows
 
-    def get_sim_run_signals(self, run_id: int) -> list[dict[str, Any]]:
+    def get_sim_run_signals(
+        self,
+        run_id: int,
+        *,
+        limit: int | None = None,
+        include_strategy_profile: bool = True,
+    ) -> list[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute(
-            """
+        query = """
             SELECT * FROM sim_run_signals
             WHERE run_id = ?
             ORDER BY COALESCE(checkpoint_at, created_at) DESC, id DESC
-            """,
-            (run_id,),
-        )
-        rows = [self._signal_row_to_dict(row) for row in cursor.fetchall()]
+            """
+        params: tuple[Any, ...] = (run_id,)
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (run_id, max(0, int(limit)))
+        cursor.execute(query, params)
+        rows = [
+            self._signal_row_to_dict(row, include_strategy_profile=include_strategy_profile)
+            for row in cursor.fetchall()
+        ]
         conn.close()
         return rows
 
@@ -3376,13 +3570,20 @@ class QuantSimDB:
         payload["sources"] = self._get_candidate_sources(cursor, int(row["id"]))
         return payload
 
-    def _signal_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _signal_row_to_dict(self, row: sqlite3.Row, *, include_strategy_profile: bool = True) -> dict[str, Any]:
         payload = self._row_to_dict(row)
         if "metadata_json" in payload:
             payload["metadata"] = self._loads_metadata(payload.get("metadata_json"))
-        payload["strategy_profile"] = self._loads_metadata(payload.pop("strategy_profile_json", None))
-        if "strategy_profile_snapshot_json" in payload:
+        if include_strategy_profile:
+            payload["strategy_profile"] = self._loads_metadata(payload.pop("strategy_profile_json", None))
+        else:
+            payload.pop("strategy_profile_json", None)
+            payload["strategy_profile"] = {}
+        if "strategy_profile_snapshot_json" in payload and include_strategy_profile:
             payload["strategy_profile_snapshot"] = self._loads_metadata(payload.pop("strategy_profile_snapshot_json", None))
+        elif "strategy_profile_snapshot_json" in payload:
+            payload.pop("strategy_profile_snapshot_json", None)
+            payload["strategy_profile_snapshot"] = {}
         return payload
 
     def _get_candidate_sources(self, cursor: sqlite3.Cursor, candidate_id: int) -> list[str]:
@@ -3558,6 +3759,13 @@ class QuantSimDB:
                 """,
                 (lot_id, entry_date, int(row["id"])),
             )
+
+    @staticmethod
+    def _cache_key(db_file: str | Path) -> str:
+        text = str(db_file)
+        if text == ":memory:":
+            return text
+        return str(Path(text).resolve())
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
