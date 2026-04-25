@@ -25,7 +25,34 @@ const panelStyle: React.CSSProperties = {
   gap: "16px",
 };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
+const MAX_VISIBLE_PAGE_BUTTONS = 10;
+
+const buildVisiblePageItems = (currentPage: number, pageCount: number): Array<number | "ellipsis-start" | "ellipsis-end"> => {
+  if (pageCount <= MAX_VISIBLE_PAGE_BUTTONS) {
+    return Array.from({ length: pageCount }, (_, index) => index + 1);
+  }
+
+  const halfWindow = Math.floor(MAX_VISIBLE_PAGE_BUTTONS / 2);
+  let start = Math.max(1, currentPage - halfWindow);
+  let end = start + MAX_VISIBLE_PAGE_BUTTONS - 1;
+  if (end > pageCount) {
+    end = pageCount;
+    start = Math.max(1, end - MAX_VISIBLE_PAGE_BUTTONS + 1);
+  }
+
+  const pages: Array<number | "ellipsis-start" | "ellipsis-end"> = [];
+  if (start > 1) {
+    pages.push("ellipsis-start");
+  }
+  for (let pageNumber = start; pageNumber <= end; pageNumber += 1) {
+    pages.push(pageNumber);
+  }
+  if (end < pageCount) {
+    pages.push("ellipsis-end");
+  }
+  return pages;
+};
 
 export function WatchlistPanel({
   watchlist,
@@ -57,6 +84,7 @@ export function WatchlistPanel({
   const pageCount = Math.max(1, Number(watchlist.pagination?.totalPages ?? 1));
   const currentPage = Math.min(Number(watchlist.pagination?.page ?? page), pageCount);
   const totalRows = Number(watchlist.pagination?.totalRows ?? watchlist.rows.length);
+  const visiblePageItems = useMemo(() => buildVisiblePageItems(currentPage, pageCount), [currentPage, pageCount]);
   const pageRows = watchlist.rows;
   const rowIds = useMemo(() => pageRows.map((row) => row.id), [pageRows]);
   const selection = useSelection(rowIds);
@@ -583,17 +611,24 @@ export function WatchlistPanel({
             >
               {t("Previous")}
             </button>
-            {Array.from({ length: pageCount }, (_, index) => index + 1).map((number) => (
-              <button
-                key={number}
-                className={`button watchlist-pagination__page${number === currentPage ? " watchlist-pagination__page--active" : ""}`}
-                type="button"
-                onClick={() => setPage(number)}
-                aria-current={number === currentPage ? "page" : undefined}
-              >
-                {number}
-              </button>
-            ))}
+            {visiblePageItems.map((item) =>
+              typeof item === "number" ? (
+                <button
+                  key={item}
+                  className={`button watchlist-pagination__page${item === currentPage ? " watchlist-pagination__page--active" : ""}`}
+                  type="button"
+                  onClick={() => setPage(item)}
+                  aria-current={item === currentPage ? "page" : undefined}
+                  aria-label={`第 ${item} 页`}
+                >
+                  {item}
+                </button>
+              ) : (
+                <span className="watchlist-pagination__ellipsis" key={item} aria-hidden="true">
+                  ...
+                </span>
+              ),
+            )}
             <button
               className="button"
               type="button"

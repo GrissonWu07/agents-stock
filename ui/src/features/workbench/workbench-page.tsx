@@ -21,7 +21,14 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
   const activeClient = client ?? apiClient;
   const resource = usePageData("workbench", activeClient);
   const [tableSnapshot, setTableSnapshot] = useState<typeof resource.data | null>(null);
-  const snapshot = tableSnapshot ?? resource.data;
+  const snapshot =
+    resource.data && tableSnapshot
+      ? {
+          ...resource.data,
+          watchlist: tableSnapshot.watchlist,
+          watchlistMeta: tableSnapshot.watchlistMeta ?? resource.data.watchlistMeta,
+        }
+      : (resource.data ?? tableSnapshot);
   const analysisJob = snapshot?.analysisJob ?? null;
   const [localAnalysisPending, setLocalAnalysisPending] = useState(false);
   const [analysisInputSeed, setAnalysisInputSeed] = useState("");
@@ -162,6 +169,7 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
     if (codes.length === 0) return;
     await resource.runAction("refresh-watchlist", { codes, fullRefresh: true, triggerAt: Date.now() });
     await resource.refresh();
+    setTableSnapshot(null);
   };
 
   const defaultAnalysts = (() => {
@@ -193,12 +201,13 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
               if (!result) {
                 throw new Error(resource.error ?? t("Invalid stock code"));
               }
+              setTableSnapshot(null);
             }}
             onRefresh={(codes) => {
               void handleRefreshWatchlist(codes);
             }}
             onBatchQuant={(codes) => {
-              void resource.runAction("batch-quant", { codes });
+              void resource.runAction("batch-quant", { codes }).then(() => setTableSnapshot(null));
             }}
             onBatchPortfolio={async (codes, options) => {
               await resource.runAction("batch-portfolio", {
@@ -206,6 +215,7 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
                 costPrice: options?.costPrice,
                 quantity: options?.quantity,
               });
+              setTableSnapshot(null);
             }}
             onBatchAnalyze={handleBatchAnalyzeFromWatchlist}
             analysisBusy={showAnalysisBusy}
@@ -214,7 +224,7 @@ export function WorkbenchPage({ client }: WorkbenchPageProps) {
               void resource.runAction("clear-selection");
             }}
             onRemoveWatchlist={(code) => {
-              void resource.runAction("delete-watchlist", { code });
+              void resource.runAction("delete-watchlist", { code }).then(() => setTableSnapshot(null));
             }}
             onTableQueryChange={handleWatchlistTableQuery}
           />

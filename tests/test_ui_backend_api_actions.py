@@ -426,6 +426,70 @@ def test_workbench_analysis_action_returns_job_immediately_and_completes_in_back
     assert completed_snapshot["analysisJob"]["progress"] == 100
 
 
+def test_workbench_watchlist_page_size_is_capped_at_twenty(tmp_path):
+    context = _make_context(tmp_path)
+    for index in range(25):
+        context.watchlist().add_manual_stock(f"60{index:04d}")
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/workbench?pageSize=50&page=1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["watchlist"]["pagination"]["pageSize"] == 20
+    assert payload["watchlist"]["pagination"]["totalRows"] == 25
+    assert payload["watchlist"]["pagination"]["totalPages"] == 2
+    assert len(payload["watchlist"]["rows"]) == 20
+
+
+def test_workbench_batch_analysis_snapshot_keeps_pending_symbols_visible(tmp_path):
+    from app.gateway_workbench import build_workbench_snapshot
+
+    context = _make_context(tmp_path)
+    context.watchlist().add_manual_stock("600519")
+    context.watchlist().add_manual_stock("000001")
+    finished_result = {
+        "symbol": "600519",
+        "stockName": "贵州茅台",
+        "analysts": [],
+        "mode": "批量分析",
+        "cycle": "1y",
+        "inputHint": "600519",
+        "summaryTitle": "贵州茅台分析完成",
+        "summaryBody": "第一只股票已经完成。",
+        "generatedAt": "2026-04-25 10:00:00",
+        "indicators": [],
+        "decision": "持有",
+        "insights": [],
+        "curve": [],
+    }
+    snapshot = build_workbench_snapshot(
+        context,
+        analysis_job={
+            "id": "analysis-test",
+            "status": "running",
+            "title": "股票分析任务",
+            "message": "正在分析 000001",
+            "stage": "fetch",
+            "progress": 50,
+            "symbol": "000001",
+            "codes": ["600519", "000001"],
+            "selected": ["technical"],
+            "cycle": "1y",
+            "mode": "批量分析",
+            "results": [finished_result],
+            "errors": [],
+        },
+    )
+
+    symbols = [item["symbol"] for item in snapshot["analysis"]["results"]]
+    assert symbols == ["600519", "000001"]
+    pending = snapshot["analysis"]["results"][1]
+    assert pending["stockName"] == "000001"
+    assert "分析" in pending["summaryTitle"]
+    assert "排队" in pending["summaryBody"] or "等待" in pending["summaryBody"]
+
+
 def test_workbench_analysis_condenses_raw_markdown_into_readable_summaries(tmp_path, monkeypatch):
     import app.stock_analysis_service as app_module
 

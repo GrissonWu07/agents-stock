@@ -1475,6 +1475,17 @@ a {
   box-shadow: 0 10px 22px rgba(79, 110, 247, 0.14);
 }
 
+.watchlist-pagination__ellipsis {
+  min-width: 34px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
 .discover-candidate-toolbar {
   display: flex;
   align-items: center;

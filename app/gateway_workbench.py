@@ -108,10 +108,18 @@ def _normalize_codes(payload: Any) -> list[str]:
     return [code] if code else []
 
 
-def _table_page_query(table_query: dict[str, Any] | None, *, default_page_size: int = 50) -> tuple[str, int, int]:
+WORKBENCH_WATCHLIST_PAGE_SIZE = 20
+
+
+def _table_page_query(
+    table_query: dict[str, Any] | None,
+    *,
+    default_page_size: int = WORKBENCH_WATCHLIST_PAGE_SIZE,
+    max_page_size: int = WORKBENCH_WATCHLIST_PAGE_SIZE,
+) -> tuple[str, int, int]:
     search = _txt(_query_value(table_query, "search"))
     try:
-        page_size = max(1, min(int(_query_value(table_query, "pageSize", default_page_size)), 100))
+        page_size = max(1, min(int(_query_value(table_query, "pageSize", default_page_size)), max_page_size))
     except (TypeError, ValueError):
         page_size = default_page_size
     try:
@@ -248,16 +256,55 @@ def build_workbench_snapshot(
         analysis_results = [item for item in task_results if isinstance(item, dict)]
     else:
         analysis_results = list(base_analysis.get("results")) if isinstance(base_analysis.get("results"), list) else []
-    if not analysis_results and isinstance(latest_task, dict):
+    if isinstance(latest_task, dict):
         task_codes = [normalize_stock_code(code) for code in latest_task.get("codes") or [] if _txt(code)]
         deduped_codes: list[str] = []
         for code in task_codes:
             if code and code not in deduped_codes:
                 deduped_codes.append(code)
+        if not analysis_results:
+            for code in deduped_codes:
+                latest_record = context.stock_analysis_db().get_latest_record_by_symbol(code)
+                if latest_record:
+                    analysis_results.append(_analysis_from_record(latest_record, code))
+        result_symbols = {normalize_stock_code(item.get("symbol")) for item in analysis_results if isinstance(item, dict)}
+        selected = [str(item) for item in latest_task.get("selected") or [] if _txt(item)]
+        mode = _txt(latest_task.get("mode"), _txt(base_analysis.get("mode"), t("Batch analysis")))
+        cycle = _txt(latest_task.get("cycle"), _txt(base_analysis.get("cycle"), "1y"))
+        running_symbol = normalize_stock_code(latest_task.get("symbol"))
+        failed_by_symbol = {
+            normalize_stock_code(item.get("symbol")): _txt(item.get("message"), t("Analysis failed"))
+            for item in latest_task.get("errors") or []
+            if isinstance(item, dict) and normalize_stock_code(item.get("symbol"))
+        }
         for code in deduped_codes:
-            latest_record = context.stock_analysis_db().get_latest_record_by_symbol(code)
-            if latest_record:
-                analysis_results.append(_analysis_from_record(latest_record, code))
+            if code in result_symbols:
+                continue
+            state = t("Failed") if code in failed_by_symbol else t("In progress") if code == running_symbol else t("Queued")
+            message = (
+                failed_by_symbol[code]
+                if code in failed_by_symbol
+                else f"{code} 已提交到本次批量分析任务，当前状态：{state}，正在排队等待或执行中。真实分析由后台任务逐只执行，完成后会自动替换为完整结论。"
+            )
+            analysis_results.append(
+                {
+                    "symbol": code,
+                    "stockName": code,
+                    "analysts": _analysis_options(selected),
+                    "mode": mode,
+                    "cycle": cycle,
+                    "inputHint": t("Example: 600519 / 300390 / AAPL"),
+                    "summaryTitle": f"{code} {'分析中' if code not in failed_by_symbol else '分析失败'}",
+                    "summaryBody": message,
+                    "generatedAt": _txt(latest_task.get("updated_at") or latest_task.get("updatedAt"), _now()),
+                    "indicators": [],
+                    "decision": t("Waiting for analysis result"),
+                    "finalDecisionText": t("Waiting for analysis result"),
+                    "insights": [_insight(t("Task status"), message, "accent" if code not in failed_by_symbol else "danger")],
+                    "analystViews": [],
+                    "curve": [],
+                }
+            )
     if not analysis_results and _txt(base_analysis.get("generatedAt")):
         analysis_results = [{key: value for key, value in base_analysis.items() if key != "results"}]
     analysis_payload = {**base_analysis, "results": analysis_results}
