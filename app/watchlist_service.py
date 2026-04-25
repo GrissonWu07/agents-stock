@@ -216,9 +216,22 @@ class WatchlistService:
             from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
             fetcher = SmartMonitorTDXDataFetcher()
-            return fetcher.get_realtime_quote(stock_code, preferred_name=preferred_name)
+            quote = fetcher.get_realtime_quote(stock_code, preferred_name=preferred_name)
+            if quote:
+                return quote
         except Exception:
-            return None
+            pass
+        try:
+            from app.data_source_manager import data_source_manager
+
+            quote = data_source_manager.get_realtime_quotes(stock_code)
+            if isinstance(quote, dict) and quote:
+                if preferred_name and not quote.get("name"):
+                    quote["name"] = preferred_name
+                return quote
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _fetch_basic_info(stock_code: str) -> dict[str, Any] | None:

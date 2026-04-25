@@ -61,6 +61,7 @@ class StockAnalysisDailyScheduler:
         self._run_lock = threading.Lock()
         self.last_run_at: str | None = None
         self.last_summary: dict[str, Any] | None = None
+        self._active_run_thread: threading.Thread | None = None
 
     def set_context_provider(self, provider: Callable[[], Any]) -> None:
         self._context_provider = provider
@@ -82,6 +83,9 @@ class StockAnalysisDailyScheduler:
         self.running = False
         self.stop_event.set()
         self._clear_jobs()
+        active_run_thread = self._active_run_thread
+        if active_run_thread and active_run_thread.is_alive() and active_run_thread is not threading.current_thread():
+            active_run_thread.join(timeout=5)
         if self.thread:
             self.thread.join(timeout=5)
             self.thread = None
@@ -109,6 +113,8 @@ class StockAnalysisDailyScheduler:
             ctx = context or self._context_provider()
             if ctx is None:
                 return {"reason": run_reason, "updated": 0, "failed": 0, "skippedExisting": 0, "totalCodes": 0, "updatedAt": _now()}
+            if self.stop_event.is_set():
+                return {"reason": run_reason, "updated": 0, "failed": 0, "skippedExisting": 0, "totalCodes": 0, "stopped": True, "updatedAt": _now()}
 
             codes = sorted(self._collect_codes(ctx))[: self.max_codes]
             db = ctx.stock_analysis_db()
@@ -118,6 +124,8 @@ class StockAnalysisDailyScheduler:
             skipped_existing = 0
             failures: list[str] = []
             for code in codes:
+                if self.stop_event.is_set():
+                    break
                 if not force and db.has_analysis_for_symbol_on_date(code, today):
                     skipped_existing += 1
                     continue
@@ -151,6 +159,8 @@ class StockAnalysisDailyScheduler:
                 "totalCodes": len(codes),
                 "updatedAt": _now(),
             }
+            if self.stop_event.is_set():
+                summary["stopped"] = True
             if failures:
                 summary["failures"] = failures[:20]
             self.last_run_at = summary["updatedAt"]
@@ -180,12 +190,21 @@ class StockAnalysisDailyScheduler:
         context = self._context_provider()
         if context is None:
             return
+        if self.stop_event.is_set():
+            return
+
+        def _run_and_clear() -> None:
+            try:
+                self.run_once(context=context, force=False, run_reason="scheduled")
+            finally:
+                self._active_run_thread = None
+
         thread = threading.Thread(
-            target=self.run_once,
-            kwargs={"context": context, "force": False, "run_reason": "scheduled"},
+            target=_run_and_clear,
             daemon=True,
             name="stock-analysis-daily-run",
         )
+        self._active_run_thread = thread
         thread.start()
 
     @staticmethod

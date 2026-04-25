@@ -1010,6 +1010,206 @@ def test_workbench_snapshot_prefers_latest_complete_cached_record_over_newer_inc
     assert len(analysis["curve"]) == 2
 
 
+def test_portfolio_position_detail_includes_cached_stock_analysis(tmp_path):
+    context = _make_context(tmp_path)
+    context.stock_analysis_db().save_analysis(
+        symbol="600519",
+        stock_name="贵州茅台",
+        period="1y",
+        stock_info={"symbol": "600519", "name": "贵州茅台", "current_price": 1453.96, "industry": "白酒"},
+        agents_results={
+            "technical": {"agent_name": "技术分析师", "summary": "趋势稳健，等待回踩更合适。"},
+            "risk": {"agent_name": "风险管理师", "summary": "高位波动，需要控制仓位。"},
+        },
+        discussion_result="团队判断趋势仍在，但当前位置不建议追高。",
+        final_decision={
+            "rating": "持有",
+            "position_size": "轻仓",
+            "operation_advice": "建议继续跟踪，等待更舒适的参与位置。",
+        },
+        indicators={"rsi": 53.79, "ma20": 1441.86, "volume_ratio": 1.13, "macd": 6.2792},
+        historical_data=[
+            {"date": "2026-04-11", "close": 1430.0},
+            {"date": "2026-04-12", "close": 1453.96},
+        ],
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/portfolio_v2/positions/600519")
+
+    assert response.status_code == 200
+    stock_analysis = response.json()["detail"]["stockAnalysis"]
+    assert stock_analysis["symbol"] == "600519"
+    assert stock_analysis["stockName"] == "贵州茅台"
+    assert "不建议追高" in stock_analysis["summaryBody"]
+    assert any(item["label"] == "RSI" and item["value"] != "--" for item in stock_analysis["indicators"])
+    assert any(item["title"] == "技术分析师" for item in stock_analysis["analystViews"])
+
+
+def test_portfolio_position_detail_keeps_full_cached_stock_analysis_text(tmp_path):
+    context = _make_context(tmp_path)
+    discussion_tail = "团队讨论完整结论末尾标记"
+    analyst_tail = "技术观点完整结论末尾标记"
+    advice_tail = "操作建议完整结论末尾标记"
+    context.stock_analysis_db().save_analysis(
+        symbol="600519",
+        stock_name="贵州茅台",
+        period="1y",
+        stock_info={"symbol": "600519", "name": "贵州茅台", "current_price": 1453.96, "industry": "白酒"},
+        agents_results={
+            "technical": {
+                "agent_name": "技术分析师",
+                "summary": "技术面分析：" + "趋势延续、量价配合，" * 30 + analyst_tail,
+            },
+        },
+        discussion_result={"summary": "团队讨论：" + "基本面稳定、趋势仍在，" * 30 + discussion_tail},
+        final_decision={
+            "rating": "持有",
+            "operation_advice": "操作建议：" + "等待回踩确认，控制仓位，" * 30 + advice_tail,
+        },
+        indicators={"rsi": 53.79, "ma20": 1441.86, "volume_ratio": 1.13, "macd": 6.2792},
+        historical_data=[{"date": "2026-04-12", "close": 1453.96}],
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/portfolio_v2/positions/600519")
+
+    assert response.status_code == 200
+    stock_analysis = response.json()["detail"]["stockAnalysis"]
+    assert discussion_tail in stock_analysis["summaryBody"]
+    assert any(analyst_tail in item["body"] for item in stock_analysis["analystViews"])
+    assert any(advice_tail in item["body"] for item in stock_analysis["insights"])
+
+
+def test_portfolio_position_detail_uses_cached_watchlist_metadata_without_blocking_remote_refresh(tmp_path, monkeypatch):
+    quote_calls: list[str] = []
+    basic_info_calls: list[str] = []
+    selector_dir = tmp_path / "selector_results"
+    selector_dir.mkdir(parents=True, exist_ok=True)
+    context = UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=selector_dir,
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio.db",
+        monitor_db_file=tmp_path / "monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_analysis_db_file=tmp_path / "analysis.db",
+        main_force_batch_db_file=tmp_path / "main_force_batch.db",
+        stock_name_resolver=lambda code: code,
+        quote_fetcher=lambda code, preferred_name=None: quote_calls.append(code)
+        or {"stock_code": code, "name": "欧普泰", "current_price": 18.88},
+        basic_info_fetcher=lambda code: basic_info_calls.append(code)
+        or {"name": "欧普泰", "industry": "半导体"},
+    )
+    context.watchlist().add_stock(
+        "920414",
+        "欧普泰",
+        "AI选股",
+        latest_price=18.88,
+        metadata={"industry": "半导体", "sector": "半导体"},
+    )
+    monkeypatch.setattr(
+        gateway_api,
+        "_portfolio_technical_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("technical snapshot should not block watchlist detail load")),
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/portfolio_v2/positions/920414")
+
+    assert response.status_code == 200
+    detail = response.json()["detail"]
+    assert quote_calls == []
+    assert basic_info_calls == []
+    assert detail["stockName"] == "欧普泰"
+    assert detail["sector"] == "半导体"
+    assert detail["marketSnapshot"]["latestPrice"] == "18.88"
+    assert detail["marketSnapshot"]["source"] == "AI选股"
+
+
+def test_portfolio_refresh_indicators_fetches_and_persists_watchlist_snapshot(tmp_path, monkeypatch):
+    quote_calls: list[tuple[str, str | None]] = []
+    basic_info_calls: list[str] = []
+    context = UIApiContext(
+        data_dir=tmp_path,
+        selector_result_dir=tmp_path / "selector_results",
+        watchlist_db_file=tmp_path / "watchlist.db",
+        quant_sim_db_file=tmp_path / "quant_sim.db",
+        portfolio_db_file=tmp_path / "portfolio.db",
+        monitor_db_file=tmp_path / "monitor.db",
+        smart_monitor_db_file=tmp_path / "smart_monitor.db",
+        stock_analysis_db_file=tmp_path / "analysis.db",
+        main_force_batch_db_file=tmp_path / "main_force_batch.db",
+        quote_fetcher=lambda code, preferred_name=None: quote_calls.append((code, preferred_name))
+        or {"stock_code": code, "name": "欧普泰", "current_price": 18.88},
+        basic_info_fetcher=lambda code: basic_info_calls.append(code)
+        or {"name": "欧普泰", "industry": "半导体"},
+    )
+    context.selector_result_dir.mkdir(parents=True, exist_ok=True)
+    context.watchlist().add_stock("920414", "920414", "AI选股", latest_price=None, metadata={"industry": "半导体"})
+    monkeypatch.setattr(
+        gateway_api,
+        "_portfolio_technical_snapshot",
+        lambda symbol, cycle="1y", force_refresh=False: {
+            "symbol": symbol,
+            "stockName": "欧普泰",
+            "sector": "半导体",
+            "kline": [{"label": "2026-04-24", "value": 18.88, "open": 18.1, "high": 19.0, "low": 18.0, "close": 18.88}],
+            "indicators": [{"label": "Price", "value": "18.88", "hint": "Latest traded price."}],
+        },
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.post(
+        "/api/v1/portfolio_v2/actions/refresh-indicators",
+        json={"symbols": ["920414"], "selectedSymbol": "920414", "cycle": "1y"},
+    )
+
+    assert response.status_code == 200
+    detail = response.json()["detail"]
+    watch = context.watchlist().get_watch("920414")
+    assert quote_calls == [("920414", None)]
+    assert basic_info_calls == ["920414"]
+    assert watch is not None
+    assert watch["stock_name"] == "欧普泰"
+    assert watch["latest_price"] == 18.88
+    assert watch["metadata"]["industry"] == "半导体"
+    assert detail["marketSnapshot"]["latestPrice"] == "18.88"
+    assert detail["stockName"] == "欧普泰"
+    assert detail["kline"][0]["close"] == 18.88
+
+
+def test_portfolio_position_detail_does_not_block_on_technical_snapshot_for_holdings(tmp_path, monkeypatch):
+    context = _make_context(tmp_path)
+    manager = context.portfolio_manager()
+    success, _, stock_id = manager.add_stock("600519", "贵州茅台", "白酒", cost_price=1400.0, quantity=100)
+    assert success is True
+    assert stock_id is not None
+    manager.db.save_analysis(
+        stock_id=stock_id,
+        rating="持有",
+        confidence=7.5,
+        current_price=1453.96,
+        summary="持仓分析缓存",
+    )
+    monkeypatch.setattr(
+        gateway_api,
+        "_portfolio_technical_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("technical snapshot should only run on manual refresh")),
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/portfolio_v2/positions/600519")
+
+    assert response.status_code == 200
+    detail = response.json()["detail"]
+    assert detail["stockName"] == "贵州茅台"
+    assert detail["sector"] == "白酒"
+    assert detail["indicators"] == []
+    assert detail["decision"]["summary"] == "持仓分析缓存"
+
+
 def test_discover_snapshot_aggregates_selector_results(tmp_path):
     context = _make_context(tmp_path)
     selector_dir = tmp_path / "selector_results"

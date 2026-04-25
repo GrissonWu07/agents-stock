@@ -110,6 +110,11 @@ export type TaskJob = {
   completedSymbols?: string[];
   failedSymbols?: string[];
   resultCount?: number;
+  results?: WorkbenchAnalysisResult[];
+  errors?: {
+    symbol?: string;
+    message: string;
+  }[];
   startedAt?: string;
   updatedAt?: string;
   logs?: {
@@ -232,6 +237,17 @@ export type PortfolioSnapshot = {
       summary: string;
       updatedAt: string;
     };
+    marketSnapshot?: {
+      code: string;
+      name: string;
+      sector: string;
+      latestPrice: string;
+      latestSignal: string;
+      source: string;
+      updatedAt: string;
+      inQuantPool: boolean;
+    };
+    stockAnalysis?: WorkbenchSnapshot["analysis"] | null;
     positionForm: {
       quantity: string;
       costPrice: string;

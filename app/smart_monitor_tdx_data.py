@@ -33,6 +33,7 @@ DEFAULT_DEPRIORITIZED_TDX_HOSTS = {
     ("218.6.170.47", 7709),
 }
 DEFAULT_DEPRIORITIZED_TDX_NAME_KEYWORDS = ("长城国瑞",)
+_SHUTDOWN_EVENT = threading.Event()
 
 KLINE_TYPE_MAP = {
     "minute5": 0,
@@ -44,6 +45,14 @@ KLINE_TYPE_MAP = {
     "month": 6,
     "minute1": 8,
 }
+
+
+def request_shutdown() -> None:
+    _SHUTDOWN_EVENT.set()
+
+
+def reset_shutdown() -> None:
+    _SHUTDOWN_EVENT.clear()
 
 
 class SmartMonitorTDXDataFetcher:
@@ -496,6 +505,8 @@ class SmartMonitorTDXDataFetcher:
         return self._call_with_failover(operation) or []
 
     def _call_with_failover(self, operation):
+        if _SHUTDOWN_EVENT.is_set():
+            return None
         last_error = None
         now = time.monotonic()
         sorted_hosts = self._prioritize_hosts(self.hosts)
@@ -523,6 +534,8 @@ class SmartMonitorTDXDataFetcher:
             self.logger.debug(f"TDX节点冷却中，已跳过 {blocked_count} 个节点，本次最多尝试 {len(active_hosts)} 个节点")
 
         for name, host, port in active_hosts:
+            if _SHUTDOWN_EVENT.is_set():
+                break
             api = TdxHq_API(multithread=False, heartbeat=False, auto_retry=True, raise_exception=True)
             try:
                 connection = api.connect(host, port, self.timeout)
@@ -541,6 +554,8 @@ class SmartMonitorTDXDataFetcher:
                     api.disconnect()
                 except Exception:
                     pass
+                if _SHUTDOWN_EVENT.is_set():
+                    break
 
         if last_error is not None:
             raise last_error

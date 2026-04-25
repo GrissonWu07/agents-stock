@@ -75,6 +75,38 @@ def test_daily_scheduler_dedupes_codes_and_skips_existing_today(tmp_path, monkey
     assert summary["updated"] == 3
 
 
+def test_daily_scheduler_stops_before_next_symbol_after_shutdown_signal(tmp_path, monkeypatch):
+    db = StockAnalysisDatabase(tmp_path / "analysis.db")
+    scheduler: StockAnalysisDailyScheduler
+    calls: list[str] = []
+
+    def fake_analyze(symbol, period, **kwargs):
+        calls.append(symbol)
+        db.save_analysis(**_analysis_payload(symbol), replace_same_day=True)
+        scheduler.stop_event.set()
+        return {"success": True, "symbol": symbol}
+
+    import app.stock_analysis_daily_scheduler as module
+
+    monkeypatch.setattr(module.stock_analysis_service, "analyze_single_stock_for_batch", fake_analyze)
+
+    watchlist = SimpleNamespace(list_watches=lambda: [{"stock_code": "000001"}, {"stock_code": "002463"}, {"stock_code": "300750"}])
+    context = SimpleNamespace(
+        watchlist=lambda: watchlist,
+        quant_db=lambda: SimpleNamespace(get_candidates=lambda status="active": [], get_positions=lambda: []),
+        portfolio_manager=lambda: SimpleNamespace(get_all_stocks=lambda: []),
+        stock_analysis_db=lambda: db,
+        stock_analysis_db_file=tmp_path / "analysis.db",
+    )
+    scheduler = StockAnalysisDailyScheduler(lambda: context)
+
+    summary = scheduler.run_once(context=context, force=True)
+
+    assert calls == ["000001"]
+    assert summary["updated"] == 1
+    assert summary["stopped"] is True
+
+
 def test_daily_scheduler_treats_unsaved_analysis_as_failure(tmp_path, monkeypatch):
     db = StockAnalysisDatabase(tmp_path / "analysis.db")
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { IconButton } from "../../components/ui/icon-button";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
-import type { TableSection } from "../../lib/page-models";
+import type { TableRow, TableSection } from "../../lib/page-models";
 import { useCompactLayout } from "../../lib/use-compact-layout";
 import { useSelection } from "../../lib/use-selection";
 import { t } from "../../lib/i18n";
@@ -12,9 +13,6 @@ type WatchlistPanelProps = {
   onRefresh: (codes: string[]) => void;
   onBatchQuant: (codes: string[]) => void;
   onBatchPortfolio: (codes: string[], options?: { costPrice?: string; quantity?: string }) => Promise<void> | void;
-  onBatchAnalyze: (codes: string[]) => void;
-  analysisBusy?: boolean;
-  analysisBusyMessage?: string;
   onClearSelection: () => void;
   onRemoveWatchlist: (code: string) => void;
   onTableQueryChange?: (query: { search: string; page: number; pageSize: number }) => void;
@@ -60,9 +58,6 @@ export function WatchlistPanel({
   onRefresh,
   onBatchQuant,
   onBatchPortfolio,
-  onBatchAnalyze,
-  analysisBusy = false,
-  analysisBusyMessage = "",
   onClearSelection,
   onRemoveWatchlist,
   onTableQueryChange,
@@ -89,6 +84,22 @@ export function WatchlistPanel({
   const rowIds = useMemo(() => pageRows.map((row) => row.id), [pageRows]);
   const selection = useSelection(rowIds);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
+  const renderStockCodeLink = (row: TableRow) => {
+    const code = String(row.code ?? row.id ?? row.cells[0] ?? "").trim();
+    const label = typeof row.cells[0] === "string" ? row.cells[0] : code;
+    if (!code) {
+      return typeof label === "string" ? t(label) : label;
+    }
+    return (
+      <Link
+        className="table-link"
+        to={`/portfolio/position/${encodeURIComponent(code)}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {typeof label === "string" ? t(label) : label}
+      </Link>
+    );
+  };
 
   useEffect(() => {
     if (selectAllRef.current) {
@@ -146,12 +157,6 @@ export function WatchlistPanel({
   const handleBatchQuant = () => {
     if (selectedCodes.length > 0) {
       onBatchQuant(selectedCodes);
-    }
-  };
-
-  const handleBatchAnalyze = () => {
-    if (!analysisBusy && selectedCodes.length > 0) {
-      onBatchAnalyze(selectedCodes);
     }
   };
 
@@ -239,13 +244,6 @@ export function WatchlistPanel({
                 {t("Register holdings")}
               </button>
               <IconButton
-                icon="🔎"
-                label={analysisBusy ? t("Analysis in progress") : t("Start analysis")}
-                tone="accent"
-                onClick={handleBatchAnalyze}
-                disabled={selectedCodes.length === 0 || analysisBusy}
-              />
-              <IconButton
                 icon="✕"
                 label={t("Clear selection")}
                 tone="neutral"
@@ -257,11 +255,6 @@ export function WatchlistPanel({
             </div>
             <div className="watchlist-toolbar__status" data-testid="watchlist-toolbar-status">
               <span className="watchlist-toolbar__count">{t("Selected {count} stocks", { count: selectedCodes.length })}</span>
-              {analysisBusy ? (
-                <span className="badge badge--accent" style={{ marginLeft: "8px" }}>
-                  {analysisBusyMessage || t("Analysis in progress")}
-                </span>
-              ) : null}
             </div>
           </div>
         </div>
@@ -460,7 +453,7 @@ export function WatchlistPanel({
                               onChange={() => selection.toggle(row.id)}
                             />
                           </td>
-                          <td className="table__cell-strong">{typeof row.cells[0] === "string" ? t(String(row.cells[0])) : row.cells[0]}</td>
+                          <td className="table__cell-strong">{renderStockCodeLink(row)}</td>
                           <td>{typeof row.cells[1] === "string" ? t(String(row.cells[1])) : row.cells[1]}</td>
                           <td>{typeof row.cells[4] === "string" ? t(String(row.cells[4])) : row.cells[4] ?? "-"}</td>
                           <td className="table__compact-control-cell">
@@ -558,7 +551,7 @@ export function WatchlistPanel({
                           </td>
                           {row.cells.map((cell, index) => (
                             <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                              {typeof cell === "string" ? t(cell) : cell}
+                              {index === 0 ? renderStockCodeLink(row) : typeof cell === "string" ? t(cell) : cell}
                             </td>
                           ))}
                           <td className="table__actions-cell">

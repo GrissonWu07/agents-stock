@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import akshare_client
+from app import smart_monitor_tdx_data
 from app.config_manager import ConfigManager, config_manager
 from app.database import StockAnalysisDatabase
 from app import stock_analysis_service
@@ -279,9 +280,11 @@ def _build_portfolio_kline(stock_data: Any) -> list[dict[str, Any]]:
     return points
 
 
-def _portfolio_technical_snapshot(symbol: str, cycle: str = "1y") -> dict[str, Any]:
+def _portfolio_technical_snapshot(symbol: str, cycle: str = "1y", *, force_refresh: bool = False) -> dict[str, Any]:
     if not symbol:
         return {"symbol": "", "stockName": "", "sector": "", "kline": [], "indicators": []}
+    if force_refresh and hasattr(stock_analysis_service.get_stock_data, "cache_clear"):
+        stock_analysis_service.get_stock_data.cache_clear()
     stock_info, stock_data, indicators = stock_analysis_service.get_stock_data(symbol, cycle)
     info = stock_info if isinstance(stock_info, dict) else {}
     indicator_map = indicators if isinstance(indicators, dict) else {}
@@ -296,6 +299,116 @@ def _portfolio_technical_snapshot(symbol: str, cycle: str = "1y") -> dict[str, A
         "kline": _build_portfolio_kline(stock_data),
         "indicators": _build_portfolio_indicator_cards(indicator_map, indicator_explanations),
     }
+
+
+_INVALID_STOCK_INFO_TEXTS = {"", "-", "--", "N/A", "NA", "UNKNOWN", "NONE", "NULL", "未知"}
+
+
+def _stock_info_text(value: Any) -> str:
+    text = _txt(value)
+    if not text:
+        return ""
+    if text.strip().upper() in _INVALID_STOCK_INFO_TEXTS or text.strip() in _INVALID_STOCK_INFO_TEXTS:
+        return ""
+    return text
+
+
+def _first_stock_info(*values: Any, default: str = "") -> str:
+    for value in values:
+        text = _stock_info_text(value)
+        if text:
+            return text
+    return default
+
+
+def _refresh_watchlist_detail_item(context: "UIApiContext", symbol: str) -> dict[str, Any] | None:
+    if not symbol:
+        return None
+    # Detail first paint must stay cache-only; background jobs/manual refresh own remote fetches.
+    return context.watchlist().get_watch(symbol)
+
+
+def _watchlist_sector(item: dict[str, Any] | None) -> str:
+    if not isinstance(item, dict):
+        return ""
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    return _first_stock_info(
+        metadata.get("industry"),
+        metadata.get("sector"),
+        metadata.get("board"),
+        metadata.get("所属行业"),
+        item.get("source_summary"),
+    )
+
+
+def _market_snapshot_from_watchlist(
+    *,
+    symbol: str,
+    stock_name: str,
+    sector: str,
+    watch_item: dict[str, Any] | None,
+) -> dict[str, Any]:
+    watch = watch_item if isinstance(watch_item, dict) else {}
+    sources = watch.get("sources") if isinstance(watch.get("sources"), list) else []
+    source = _txt(watch.get("source_summary"), _txt(sources[0] if sources else "", "--"))
+    latest_price = _float(watch.get("latest_price")) if watch else None
+    return {
+        "code": symbol,
+        "name": stock_name,
+        "sector": sector,
+        "latestPrice": _num(latest_price, default="--") if latest_price is not None and latest_price > 0 else "--",
+        "latestSignal": _txt(watch.get("latest_signal"), "--") if watch else "--",
+        "source": source,
+        "updatedAt": _txt(watch.get("updated_at"), "--") if watch else "--",
+        "inQuantPool": bool(watch.get("in_quant_pool")) if watch else False,
+    }
+
+
+def _technical_snapshot_latest_price(technical: dict[str, Any]) -> float | None:
+    kline = technical.get("kline") if isinstance(technical.get("kline"), list) else []
+    for point in reversed(kline):
+        if not isinstance(point, dict):
+            continue
+        for key in ("close", "value"):
+            price = _float(point.get(key))
+            if price is not None and price > 0:
+                return price
+    indicators = technical.get("indicators") if isinstance(technical.get("indicators"), list) else []
+    for item in indicators:
+        if not isinstance(item, dict):
+            continue
+        label = _txt(item.get("label")).lower()
+        if label not in {"price", "current price", "latest price", "当前价", "最新价"}:
+            continue
+        price = _float(item.get("value"))
+        if price is not None and price > 0:
+            return price
+    return None
+
+
+def _persist_watchlist_snapshot_from_technical(context: "UIApiContext", symbol: str, technical: dict[str, Any]) -> None:
+    if not symbol or not isinstance(technical, dict):
+        return
+    stock_name = _stock_info_text(technical.get("stockName"))
+    sector = _stock_info_text(technical.get("sector"))
+    latest_price = _technical_snapshot_latest_price(technical)
+    metadata: dict[str, Any] = {}
+    if sector:
+        metadata["industry"] = sector
+        metadata["sector"] = sector
+    if not stock_name or stock_name == symbol:
+        stock_name = None
+    if latest_price is None and not stock_name and not metadata:
+        return
+    try:
+        context.watchlist().update_watch_snapshot(
+            symbol,
+            latest_price=latest_price,
+            stock_name=stock_name,
+            metadata=metadata or None,
+        )
+    except Exception:
+        pass
 
 
 def _portfolio_pending_signal_rows(context: "UIApiContext", symbol: str | None = None) -> list[dict[str, Any]]:
@@ -445,6 +558,7 @@ class UIApiContext:
     config_manager: ConfigManager = config_manager
     stock_name_resolver: Callable[[str], str] | None = None
     quote_fetcher: Callable[[str, str | None], dict[str, Any] | None] | None = None
+    basic_info_fetcher: Callable[[str], dict[str, Any] | None] | None = None
     discover_result_key: str = "main_force"
     research_result_key: str = "research"
     workbench_analysis_cache: dict[str, Any] | None = None
@@ -463,7 +577,12 @@ class UIApiContext:
         self.logs_dir = _p(self.logs_dir)
 
     def watchlist(self) -> WatchlistService:
-        return WatchlistService(self.watchlist_db_file, stock_name_resolver=self.stock_name_resolver, quote_fetcher=self.quote_fetcher)
+        return WatchlistService(
+            self.watchlist_db_file,
+            stock_name_resolver=self.stock_name_resolver,
+            quote_fetcher=self.quote_fetcher,
+            basic_info_fetcher=self.basic_info_fetcher,
+        )
 
     def candidate_pool(self) -> CandidatePoolService:
         return CandidatePoolService(self.quant_sim_db_file)
@@ -877,24 +996,25 @@ def _run_single_workbench_analysis(
     return payload
 
 
-def _hydrate_cached_workbench_analysis(
+def _build_cached_workbench_analysis_payload(
     context: UIApiContext,
     *,
     code: str,
     selected: list[str] | None,
     cycle: str,
     mode: str,
-) -> str:
+    allow_backfill: bool = True,
+) -> dict[str, Any] | None:
     symbol = normalize_stock_code(code)
     if not symbol:
-        return ""
+        return None
     record = _pick_best_cached_record(context, symbol)
     if not record:
-        return ""
+        return None
     stock_info = record.get("stock_info") if isinstance(record.get("stock_info"), dict) else {}
     indicators = record.get("indicators") if isinstance(record.get("indicators"), dict) else {}
     historical_data = record.get("historical_data") if isinstance(record.get("historical_data"), list) else []
-    if not indicators or not historical_data:
+    if allow_backfill and (not indicators or not historical_data):
         try:
             rt_stock_info, rt_data, rt_indicators = stock_analysis_service.get_stock_data(symbol, cycle)
             if isinstance(rt_stock_info, dict):
@@ -920,16 +1040,30 @@ def _hydrate_cached_workbench_analysis(
         agents_results=record.get("agents_results") if isinstance(record.get("agents_results"), dict) else {},
         historical_data=historical_data,
     )
-    payload = _normalize_workbench_payload(
-        payload=payload,
-        indicators=indicators,
-        discussion_result=record.get("discussion_result"),
-        final_decision=record.get("final_decision") if isinstance(record.get("final_decision"), dict) else {},
-        agents_results=record.get("agents_results") if isinstance(record.get("agents_results"), dict) else {},
-    )
     payload["summaryBody"] = payload.get("summaryBody", "").replace("最近一次有效分析时间", "").strip()
+    return payload
+
+
+def _hydrate_cached_workbench_analysis(
+    context: UIApiContext,
+    *,
+    code: str,
+    selected: list[str] | None,
+    cycle: str,
+    mode: str,
+) -> str:
+    payload = _build_cached_workbench_analysis_payload(
+        context,
+        code=code,
+        selected=selected,
+        cycle=cycle,
+        mode=mode,
+        allow_backfill=True,
+    )
+    if not payload:
+        return ""
     context.set_workbench_analysis(payload)
-    return stock_name
+    return _txt(payload.get("stockName"), normalize_stock_code(code))
 
 
 def _workbench_analysis_needs_refresh(payload: dict[str, Any]) -> bool:
@@ -1087,13 +1221,12 @@ def _snapshot_portfolio(
     if not selected and rows:
         selected = _txt(rows[0].get("code"))
     selected_item = latest_by_symbol.get(selected) if selected else None
+    watch_item = _refresh_watchlist_detail_item(context, selected) if selected else None
 
     technical = {}
     if selected:
         if indicator_overrides and isinstance(indicator_overrides.get(selected), dict):
             technical = indicator_overrides[selected]
-        else:
-            technical = _portfolio_technical_snapshot(selected, cycle="1y")
 
     history = None
     if selected_item:
@@ -1101,16 +1234,32 @@ def _snapshot_portfolio(
         if stock_id is not None:
             history = manager.get_latest_analysis(stock_id)
 
+    selected_item_name = (selected_item or {}).get("name") or (selected_item or {}).get("stock_name")
+    selected_item_sector = (
+        (selected_item or {}).get("sector")
+        or (selected_item or {}).get("industry")
+        or (selected_item or {}).get("board")
+        or (selected_item or {}).get("所属行业")
+    )
+    watch_name = (watch_item or {}).get("stock_name")
+    watch_sector = _watchlist_sector(watch_item)
+    detail_stock_name = _first_stock_info(
+        selected_item_name,
+        watch_name,
+        technical.get("stockName"),
+        default=selected,
+    )
+    detail_sector = _first_stock_info(
+        selected_item_sector,
+        watch_sector,
+        technical.get("sector"),
+        default="-",
+    )
+
     detail = {
         "symbol": selected,
-        "stockName": _txt(
-            technical.get("stockName"),
-            _txt(selected_item.get("name") if selected_item else "", selected),
-        ),
-        "sector": _txt(
-            selected_item.get("sector") if selected_item else technical.get("sector"),
-            _txt(technical.get("sector"), "-"),
-        ),
+        "stockName": detail_stock_name,
+        "sector": detail_sector,
         "kline": technical.get("kline") if isinstance(technical.get("kline"), list) else [],
         "indicators": technical.get("indicators") if isinstance(technical.get("indicators"), list) else [],
         "pendingSignals": _table(
@@ -1126,6 +1275,22 @@ def _snapshot_portfolio(
             "summary": _txt((history or {}).get("summary"), "可点击“实时分析”获取最新结论。"),
             "updatedAt": _txt((selected_item or {}).get("analysis_time"), "--"),
         },
+        "marketSnapshot": _market_snapshot_from_watchlist(
+            symbol=selected,
+            stock_name=detail_stock_name,
+            sector=detail_sector,
+            watch_item=watch_item,
+        ),
+        "stockAnalysis": _build_cached_workbench_analysis_payload(
+            context,
+            code=selected,
+            selected=None,
+            cycle="1y",
+            mode="单个分析",
+            allow_backfill=False,
+        )
+        if selected
+        else None,
         "positionForm": {
             "quantity": _txt((selected_item or {}).get("quantity"), "0"),
             "costPrice": _num((selected_item or {}).get("cost_price")),
@@ -4516,8 +4681,22 @@ def _action_portfolio_refresh_indicators(context: UIApiContext, payload: Any) ->
             ][:50]
     overrides: dict[str, dict[str, Any]] = {}
     manager = context.portfolio_manager()
+    watchlist_refresh_summary: dict[str, Any] | None = None
+    if symbols:
+        try:
+            watchlist_refresh_summary = context.watchlist().refresh_quotes(
+                symbols,
+                full_refresh=len(symbols) <= 5,
+            )
+        except Exception as exc:
+            watchlist_refresh_summary = {
+                "attempted": len(symbols),
+                "success_count": 0,
+                "failures": [str(exc)],
+            }
     for symbol in symbols:
-        overrides[symbol] = _portfolio_technical_snapshot(symbol, cycle=_txt(body.get("cycle"), "1y"))
+        overrides[symbol] = _portfolio_technical_snapshot(symbol, cycle=_txt(body.get("cycle"), "1y"), force_refresh=True)
+        _persist_watchlist_snapshot_from_technical(context, symbol, overrides[symbol])
         sector = _txt(overrides[symbol].get("sector"))
         if sector:
             existing = manager.db.get_stock_by_code(symbol)
@@ -4532,6 +4711,7 @@ def _action_portfolio_refresh_indicators(context: UIApiContext, payload: Any) ->
         "updatedAt": _now(),
         "scope": "indicators_only",
         "symbols": symbols,
+        "watchlistRefresh": watchlist_refresh_summary,
     }
     return snapshot
 
@@ -4759,6 +4939,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
     async def app_lifespan(app: FastAPI):
         try:
             akshare_client.reset_shutdown()
+            smart_monitor_tdx_data.reset_shutdown()
             unified_stock_refresh_scheduler = get_unified_stock_refresh_scheduler(api_context)
             unified_stock_refresh_scheduler.start()
             app.state.unified_stock_refresh_scheduler = unified_stock_refresh_scheduler
@@ -4774,6 +4955,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
             yield
         finally:
             akshare_client.request_shutdown()
+            smart_monitor_tdx_data.request_shutdown()
             analysis_scheduler = getattr(app.state, "stock_analysis_daily_scheduler", None)
             if analysis_scheduler:
                 analysis_scheduler.stop()

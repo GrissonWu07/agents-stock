@@ -16,9 +16,12 @@ const toMessage = (error: unknown) => {
   return String(error);
 };
 
+type PageQueryValue = string | number | boolean | null | undefined;
+
 export function usePageData<K extends PageKey>(
   page: K,
   client: ApiClient = apiClient,
+  query?: Record<string, PageQueryValue>,
 ): PageResourceState<PageSnapshotMap[K]> {
   const [data, setData] = useState<PageSnapshotMap[K] | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -27,7 +30,7 @@ export function usePageData<K extends PageKey>(
   const load = useCallback(async () => {
     setStatus((current) => (current === "ready" ? "loading" : current));
     try {
-      const snapshot: PageSnapshotMap[K] = (await client.getPageSnapshot(page)) as PageSnapshotMap[K];
+      const snapshot: PageSnapshotMap[K] = (await client.getPageSnapshot(page, query)) as PageSnapshotMap[K];
       setData(snapshot);
       setStatus("ready");
       setError(null);
@@ -35,7 +38,7 @@ export function usePageData<K extends PageKey>(
       setError(toMessage(err));
       setStatus("error");
     }
-  }, [client, page]);
+  }, [client, page, query]);
 
   useEffect(() => {
     void load();

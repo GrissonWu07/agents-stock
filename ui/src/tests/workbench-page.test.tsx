@@ -1,5 +1,5 @@
-import { render, waitFor } from "@testing-library/react";
-import { RouterProvider, createMemoryRouter } from "react-router-dom";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { RouterProvider, createMemoryRouter, useParams } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../lib/api-client";
 import { WorkbenchPage } from "../features/workbench/workbench-page";
@@ -69,8 +69,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function PositionDetailStub() {
+  const { symbol = "" } = useParams<{ symbol: string }>();
+  return <div data-testid="position-detail">{symbol}</div>;
+}
+
 function renderWorkbenchPage(client: ApiClient) {
-  const router = createMemoryRouter([{ path: "/workbench", element: <WorkbenchPage client={client} /> }], {
+  const router = createMemoryRouter([
+    { path: "/workbench", element: <WorkbenchPage client={client} /> },
+    { path: "/portfolio/position/:symbol", element: <PositionDetailStub /> },
+  ], {
     initialEntries: ["/workbench"],
   });
   render(<RouterProvider router={router} />);
@@ -89,6 +97,21 @@ describe("WorkbenchPage", () => {
     await waitFor(() => {
       expect(getPageSnapshot).toHaveBeenCalledWith("workbench", { search: "", page: 1, pageSize: 20 });
     });
+    expect(getPageSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render stock analysis controls on the workbench", async () => {
+    const getPageSnapshot = vi.fn().mockResolvedValue(workbenchSnapshot);
+    const client = {
+      getPageSnapshot,
+      runPageAction: vi.fn().mockResolvedValue(workbenchSnapshot),
+    } as unknown as ApiClient;
+
+    renderWorkbenchPage(client);
+
+    await screen.findByRole("link", { name: "600519" });
+    expect(screen.queryByRole("heading", { name: /股票分析|Stock analysis/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /开始分析|Start analysis/i })).toBeNull();
   });
 
   it("limits watchlist pagination to 10 page buttons and uses ellipsis for the rest", async () => {
@@ -118,5 +141,22 @@ describe("WorkbenchPage", () => {
     }
     expect(document.querySelector(`button.watchlist-pagination__page[aria-label="第 11 页"]`)).toBeNull();
     expect(document.querySelector(`button.watchlist-pagination__page[aria-label="第 12 页"]`)).toBeNull();
+  });
+
+  it("opens the portfolio stock detail when clicking a watchlist code", async () => {
+    const getPageSnapshot = vi.fn().mockResolvedValue(workbenchSnapshot);
+    const client = {
+      getPageSnapshot,
+      runPageAction: vi.fn().mockResolvedValue(workbenchSnapshot),
+    } as unknown as ApiClient;
+
+    renderWorkbenchPage(client);
+
+    const codeLink = await screen.findByRole("link", { name: "600519" });
+    fireEvent.click(codeLink);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("position-detail")).toHaveTextContent("600519");
+    });
   });
 });

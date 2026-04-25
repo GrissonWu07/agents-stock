@@ -114,3 +114,27 @@ def test_watchlist_service_refresh_quotes_fetches_required_basic_info_even_if_le
     assert watch["latest_price"] == 21.35
     assert watch["stock_name"] == "慢接口"
     assert watch["metadata"]["industry"] == "半导体"
+
+
+def test_watchlist_service_default_quote_fetcher_falls_back_to_data_source_manager(monkeypatch):
+    calls: list[str] = []
+
+    class FakeTDX:
+        def get_realtime_quote(self, stock_code, preferred_name=None):
+            calls.append(f"tdx:{stock_code}:{preferred_name}")
+            return None
+
+    class FakeDataSourceManager:
+        def get_realtime_quotes(self, stock_code):
+            calls.append(f"manager:{stock_code}")
+            return {"symbol": stock_code, "name": "欧普泰", "current_price": 18.88}
+
+    monkeypatch.setattr("app.smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", lambda: FakeTDX())
+    monkeypatch.setattr("app.data_source_manager.data_source_manager", FakeDataSourceManager())
+
+    quote = WatchlistService._fetch_realtime_quote("920414", preferred_name="欧普泰")
+
+    assert calls == ["tdx:920414:欧普泰", "manager:920414"]
+    assert quote is not None
+    assert quote["current_price"] == 18.88
+    assert quote["name"] == "欧普泰"

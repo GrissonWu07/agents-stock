@@ -282,7 +282,7 @@ class DataSourceManager:
         elif symbol.startswith('0') or symbol.startswith('3'):
             # 深圳主板和创业板
             return f"{symbol}.SZ"
-        elif symbol.startswith('8') or symbol.startswith('4'):
+        elif symbol.startswith('920') or symbol.startswith('8') or symbol.startswith('4'):
             # 北交所
             return f"{symbol}.BJ"
         else:

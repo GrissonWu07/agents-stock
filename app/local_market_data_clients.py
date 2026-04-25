@@ -23,7 +23,7 @@ def _ts_code(symbol: str) -> str:
         return f"{clean}.SH"
     if clean.startswith(("0", "3")):
         return f"{clean}.SZ"
-    if clean.startswith(("4", "8")):
+    if clean.startswith(("4", "8", "920")):
         return f"{clean}.BJ"
     return f"{clean}.SZ"
 

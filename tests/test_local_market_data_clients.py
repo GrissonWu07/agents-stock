@@ -78,6 +78,27 @@ def test_tushare_hist_source_isolation_writes_only_tushare_namespace(tmp_path):
     assert not store.path_for("akshare", "hist_daily", "000001", {"period": "daily", "adjust": "qfq"}).exists()
 
 
+def test_tushare_hist_maps_bj_920_prefix_to_beijing_exchange(tmp_path):
+    calls = []
+
+    class FakeTushare:
+        def daily(self, **kwargs):
+            calls.append(kwargs)
+            return pd.DataFrame(
+                [
+                    {"ts_code": "920414.BJ", "trade_date": "20260102", "open": 18, "high": 19, "low": 17, "close": 18.88, "vol": 10, "amount": 10},
+                ]
+            )
+
+    store = LocalMarketDataStore(tmp_path)
+    client = TushareLocalClient(store=store, tushare_api=FakeTushare())
+
+    df = client.get_stock_hist_data("920414", start_date="20260101", end_date="20260102")
+
+    assert calls[0]["ts_code"] == "920414.BJ"
+    assert df["close"].tolist() == [18.88]
+
+
 def test_tushare_hist_local_hit_works_without_remote_api(tmp_path):
     store = LocalMarketDataStore(tmp_path)
     store.merge_frame(

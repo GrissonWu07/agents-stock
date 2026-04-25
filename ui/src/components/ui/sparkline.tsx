@@ -109,8 +109,8 @@ export function Sparkline({ points, height = 88 }: SparklineProps) {
   const klinePoints = normalizeKlinePoints(points);
 
   if (klinePoints.length >= 2) {
-    const chartHeight = Math.max(height, 220);
-    const width = Math.max(420, klinePoints.length * 12);
+    const chartHeight = Math.max(height, 260);
+    const width = Math.max(780, Math.min(1180, klinePoints.length * 36));
     const hasVolume = klinePoints.some((point) => isFiniteNumber(point.volume) && point.volume > 0);
     const volumeHeight = hasVolume ? Math.max(38, Math.floor(chartHeight * 0.22)) : 0;
     const priceTop = 10;
@@ -166,7 +166,7 @@ export function Sparkline({ points, height = 88 }: SparklineProps) {
           <span>{`成交量 ${formatVolume(activePoint.volume)}`}</span>
         </div>
         <div className="sparkline__chart sparkline__chart--kline" style={{ height: chartHeight }} onMouseLeave={() => setHoveredIndex(null)}>
-          <svg className="sparkline__svg" viewBox={`0 0 ${width} ${chartHeight}`} role="img" aria-label="K线图">
+          <svg className="sparkline__svg" viewBox={`0 0 ${width} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label="K线图">
             <line x1={0} y1={topGridY} x2={width} y2={topGridY} className="sparkline__grid" />
             <line x1={0} y1={midGridY} x2={width} y2={midGridY} className="sparkline__grid" />
             <line x1={0} y1={bottomGridY} x2={width} y2={bottomGridY} className="sparkline__grid" />

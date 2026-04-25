@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 import os
 from pathlib import Path
@@ -163,6 +163,8 @@ class UnifiedStockRefreshScheduler:
         self.job_tag = "unified_stock_refresh"
         self.last_run_at: str | None = None
         self.last_summary: dict[str, Any] | None = None
+        self._executor_lock = threading.Lock()
+        self._active_executor: ThreadPoolExecutor | None = None
 
     def set_context_provider(self, provider: Callable[[], Any]) -> None:
         self._context_provider = provider
@@ -184,6 +186,9 @@ class UnifiedStockRefreshScheduler:
         self.running = False
         self.stop_event.set()
         self._clear_jobs()
+        with self._executor_lock:
+            if self._active_executor is not None:
+                self._active_executor.shutdown(wait=False, cancel_futures=True)
         if self.thread:
             self.thread.join(timeout=5)
             self.thread = None
@@ -204,6 +209,8 @@ class UnifiedStockRefreshScheduler:
         ctx = context or self._context_provider()
         if ctx is None:
             return {"reason": run_reason, "updated": 0, "failed": 0, "totalCodes": 0, "updatedAt": _now()}
+        if self.stop_event.is_set():
+            return {"reason": run_reason, "updated": 0, "failed": 0, "totalCodes": 0, "stopped": True, "updatedAt": _now()}
 
         market = self._resolve_market(ctx)
         market_is_trading = self._is_trading_time(market)
@@ -242,29 +249,59 @@ class UnifiedStockRefreshScheduler:
         next_entries = dict(existing_entries)
         failures: list[str] = []
         fetched: dict[str, dict[str, Any]] = {}
+        if self.stop_event.is_set():
+            return {
+                "reason": run_reason,
+                "updated": 0,
+                "failed": 0,
+                "totalCodes": len(codes),
+                "market": market,
+                "marketState": "trading" if market_is_trading else "last_trading_snapshot",
+                "stopped": True,
+                "updatedAt": _now(),
+            }
 
         worker_count = min(MAX_FETCH_WORKERS, len(codes))
-        with ThreadPoolExecutor(max_workers=worker_count) as pool:
-            future_map = {
-                pool.submit(
+        pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="stock-refresh-fetch")
+        with self._executor_lock:
+            self._active_executor = pool
+        try:
+            future_map = {}
+            for code in codes:
+                if self.stop_event.is_set():
+                    break
+                future = pool.submit(
                     self._fetch_runtime_entry,
                     watchlist_service=watchlist_service,
                     stock_code=code,
                     existing=existing_entries.get(code),
                     prefer_last_trading_snapshot=prefer_last_trading_snapshot,
-                ): code
-                for code in codes
-            }
-            for future in as_completed(future_map):
-                code = future_map[future]
-                try:
-                    entry = future.result()
-                except Exception as exc:
-                    failures.append(f"{code}: {exc}")
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-                fetched[code] = entry
+                    stop_event=self.stop_event,
+                )
+                future_map[future] = code
+
+            pending = set(future_map)
+            while pending:
+                if self.stop_event.is_set():
+                    for future in pending:
+                        future.cancel()
+                    break
+                done, pending = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+                for future in done:
+                    code = future_map[future]
+                    try:
+                        entry = future.result()
+                    except Exception as exc:
+                        failures.append(f"{code}: {exc}")
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    fetched[code] = entry
+        finally:
+            with self._executor_lock:
+                if self._active_executor is pool:
+                    self._active_executor = None
+            pool.shutdown(wait=not self.stop_event.is_set(), cancel_futures=True)
 
         updated = 0
         for code, entry in fetched.items():
@@ -317,6 +354,8 @@ class UnifiedStockRefreshScheduler:
             "marketState": "trading" if market_is_trading else "last_trading_snapshot",
             "updatedAt": _now(),
         }
+        if self.stop_event.is_set():
+            summary["stopped"] = True
         self.last_run_at = summary["updatedAt"]
         self.last_summary = summary
         return summary
@@ -337,6 +376,8 @@ class UnifiedStockRefreshScheduler:
             self.scheduler.cancel_job(job)
 
     def _run_scheduled_cycle(self) -> None:
+        if self.stop_event.is_set():
+            return
         context = self._context_provider()
         if context is None:
             return
@@ -376,6 +417,7 @@ class UnifiedStockRefreshScheduler:
         stock_code: str,
         existing: dict[str, Any] | None,
         prefer_last_trading_snapshot: bool = False,
+        stop_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         existing_entry = existing if isinstance(existing, dict) else {}
         existing_name = _valid_name(existing_entry.get("stock_name"))
@@ -386,23 +428,24 @@ class UnifiedStockRefreshScheduler:
         existing_price_as_of = _txt(existing_entry.get("price_as_of"))
 
         last_trading_snapshot: dict[str, Any] = {}
-        if prefer_last_trading_snapshot:
+        if prefer_last_trading_snapshot and not (stop_event and stop_event.is_set()):
             last_trading_snapshot = UnifiedStockRefreshScheduler._latest_trading_snapshot(
                 stock_code,
                 preferred_name=existing_name or None,
             )
 
         quote: dict[str, Any] = {}
-        try:
-            fetched = watchlist_service.quote_fetcher(stock_code, existing_name or None)
-            if isinstance(fetched, dict):
-                quote = fetched
-        except Exception:
-            quote = {}
+        if not (stop_event and stop_event.is_set()):
+            try:
+                fetched = watchlist_service.quote_fetcher(stock_code, existing_name or None)
+                if isinstance(fetched, dict):
+                    quote = fetched
+            except Exception:
+                quote = {}
 
         need_basic_info = not existing_sector or not existing_name
         basic_info: dict[str, Any] = {}
-        if need_basic_info:
+        if need_basic_info and not (stop_event and stop_event.is_set()):
             try:
                 fetched = watchlist_service.basic_info_fetcher(stock_code)
                 if isinstance(fetched, dict):
