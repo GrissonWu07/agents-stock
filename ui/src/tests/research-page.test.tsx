@@ -51,9 +51,15 @@ afterEach(() => {
 });
 
 function renderResearchPage(client: ApiClient) {
-  const router = createMemoryRouter([{ path: "/research", element: <ResearchPage client={client} /> }], {
-    initialEntries: ["/research"],
-  });
+  const router = createMemoryRouter(
+    [
+      { path: "/research", element: <ResearchPage client={client} /> },
+      { path: "/portfolio/position/:symbol", element: <div data-testid="stock-detail-page" /> },
+    ],
+    {
+      initialEntries: ["/research"],
+    },
+  );
   render(<RouterProvider router={router} />);
 }
 
@@ -70,8 +76,10 @@ describe("ResearchPage", () => {
 
     const checkbox = await screen.findByRole("checkbox", { name: "Select 平安银行" });
     expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole("link", { name: "000001" })).toHaveAttribute("href", "/portfolio/position/000001");
+    expect(screen.getByRole("link", { name: "平安银行" })).toHaveAttribute("href", "/portfolio/position/000001");
 
-    fireEvent.click(screen.getByText("平安银行"));
+    fireEvent.click(screen.getByText("银行"));
     expect(checkbox).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));

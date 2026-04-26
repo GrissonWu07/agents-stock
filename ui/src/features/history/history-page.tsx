@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { ApiClient } from "../../lib/api-client";
 import { apiClient } from "../../lib/api-client";
 import { PageHeader } from "../../components/ui/page-header";
@@ -11,6 +12,8 @@ import { usePageData } from "../../lib/use-page-data";
 type HistoryPageProps = {
   client?: ApiClient;
 };
+
+const stockDetailPath = (code: string) => `/portfolio/position/${encodeURIComponent(code)}`;
 
 export function HistoryPage({ client }: HistoryPageProps) {
   const resource = usePageData("history", client);
@@ -132,11 +135,19 @@ export function HistoryPage({ client }: HistoryPageProps) {
                   {hasRecords ? (
                     snapshot.records.rows.map((row) => (
                       <tr key={row.id}>
-                        {row.cells.map((cell, index) => (
-                          <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                            {cell}
-                          </td>
-                        ))}
+                        {row.cells.map((cell, index) => {
+                          const code = String(row.code || "").trim();
+                          const shouldLink = code && index === 1;
+                          return (
+                            <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                              {shouldLink ? (
+                                <Link className="stock-link" to={stockDetailPath(code)}>
+                                  {cell}
+                                </Link>
+                              ) : cell}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))
                   ) : (

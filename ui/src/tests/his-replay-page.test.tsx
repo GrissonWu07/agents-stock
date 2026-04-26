@@ -169,7 +169,10 @@ afterEach(() => {
 
 function renderHisReplayPage(client: ApiClient) {
   const router = createMemoryRouter(
-    [{ path: "/his-replay", element: <HisReplayPage client={client} /> }],
+    [
+      { path: "/his-replay", element: <HisReplayPage client={client} /> },
+      { path: "/portfolio/position/:symbol", element: <div data-testid="stock-detail-page" /> },
+    ],
     { initialEntries: ["/his-replay"] },
   );
 
@@ -248,5 +251,6 @@ describe("HisReplayPage", () => {
     expect(screen.getByText("002463 沪电股份")).toBeInTheDocument();
     expect(client.getReplayProgress).toHaveBeenCalledTimes(2);
     expect(client.getPageSnapshot).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("link", { name: /002463/ })).toHaveAttribute("href", "/portfolio/position/002463");
   });
 });

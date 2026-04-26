@@ -63,9 +63,15 @@ afterEach(() => {
 });
 
 function renderDiscoverPage(client: ApiClient) {
-  const router = createMemoryRouter([{ path: "/discover", element: <DiscoverPage client={client} /> }], {
-    initialEntries: ["/discover"],
-  });
+  const router = createMemoryRouter(
+    [
+      { path: "/discover", element: <DiscoverPage client={client} /> },
+      { path: "/portfolio/position/:symbol", element: <div data-testid="stock-detail-page" /> },
+    ],
+    {
+      initialEntries: ["/discover"],
+    },
+  );
   render(<RouterProvider router={router} />);
 }
 
@@ -81,8 +87,10 @@ describe("DiscoverPage", () => {
 
     const checkbox = await screen.findByRole("checkbox", { name: "Select 贵州茅台" });
     expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole("link", { name: "600519" })).toHaveAttribute("href", "/portfolio/position/600519");
+    expect(screen.getByRole("link", { name: "贵州茅台" })).toHaveAttribute("href", "/portfolio/position/600519");
 
-    fireEvent.click(screen.getByText("贵州茅台"));
+    fireEvent.click(screen.getByText("白酒"));
     expect(checkbox).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));

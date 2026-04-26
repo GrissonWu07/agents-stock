@@ -1002,16 +1002,257 @@ a {
   background: #eef4ff;
 }
 
+.stock-link {
+  color: var(--accent);
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.stock-link:hover {
+  text-decoration: underline;
+}
+
 .portfolio-detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
   gap: 12px;
 }
 
+.portfolio-detail-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.portfolio-detail-main-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.52fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.portfolio-detail-main-grid > .card {
+  height: 100%;
+}
+
+.portfolio-detail-primary-grid,
+.portfolio-detail-secondary-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.52fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.portfolio-decision-plan-card,
+.portfolio-key-indicators-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.portfolio-key-indicators-card .portfolio-disclosure {
+  margin-top: auto;
+}
+
+.portfolio-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.portfolio-card-heading .section-card__title {
+  margin-bottom: 0;
+}
+
+.portfolio-card-heading__eyebrow {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.portfolio-decision-panel {
+  background:
+    linear-gradient(135deg, rgba(234, 240, 255, 0.9) 0%, rgba(255, 255, 255, 0.98) 58%),
+    #ffffff;
+}
+
+.portfolio-decision-action {
+  font-size: clamp(1.8rem, 4vw, 3.2rem);
+  font-weight: 900;
+  line-height: 1.05;
+  margin-top: 4px;
+}
+
+.portfolio-decision-summary {
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  line-height: 1.65;
+  font-size: 1rem;
+}
+
+.portfolio-decision-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.portfolio-decision-metrics--merged {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.portfolio-decision-metrics .mini-metric__value {
+  font-size: 0.98rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.portfolio-decision-reasons {
+  margin-top: 14px;
+}
+
+.portfolio-kline-card .portfolio-kline-panel {
+  margin: 0;
+  min-height: 430px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.portfolio-kline-card .sparkline__chart--kline {
+  min-height: 330px;
+}
+
+.portfolio-kline-card--full .portfolio-kline-panel {
+  min-height: 600px;
+}
+
+.portfolio-kline-card--full .sparkline__chart--kline {
+  min-height: 500px;
+}
+
+.portfolio-kline-empty {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.portfolio-trade-plan-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.portfolio-trade-plan-metrics .mini-metric__value {
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.portfolio-subsection-title {
+  font-size: 1rem;
+  margin: 16px 0 10px;
+}
+
 .portfolio-position-form {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.portfolio-position-form--compact {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.portfolio-indicator-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.portfolio-indicator-group {
+  padding: 10px 12px;
+}
+
+.portfolio-indicator-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: 8px;
+  justify-content: start;
+}
+
+.portfolio-indicator-chip-grid--summary {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  align-items: stretch;
+  gap: 10px;
+}
+
+.portfolio-indicator-chip {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 72px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(217, 226, 244, 0.84);
+  align-content: start;
+}
+
+.portfolio-indicator-chip span,
+.portfolio-indicator-chip small {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.portfolio-indicator-chip strong {
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.portfolio-disclosure {
+  margin-top: 12px;
+  border: 1px solid var(--soft-line);
+  border-radius: 14px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.portfolio-disclosure > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  font-weight: 800;
+  color: var(--text-strong);
+  background: #f7faff;
+}
+
+.portfolio-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.portfolio-disclosure > summary::after {
+  content: "展开";
+  float: right;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.portfolio-disclosure[open] > summary::after {
+  content: "收起";
+}
+
+.portfolio-disclosure > :not(summary) {
+  margin: 12px 14px;
+}
+
+.portfolio-analysis-raw .content-scroll {
+  max-height: min(560px, 62vh);
 }
 
 .portfolio-stock-analysis-grid {
@@ -3474,9 +3715,29 @@ a {
   }
 
   .portfolio-detail-grid,
+  .portfolio-detail-main-grid,
+  .portfolio-detail-primary-grid,
+  .portfolio-detail-secondary-grid,
   .portfolio-stock-analysis-grid,
-  .portfolio-position-form {
+  .portfolio-position-form,
+  .portfolio-position-form--compact,
+  .portfolio-decision-metrics,
+  .portfolio-trade-plan-metrics,
+  .portfolio-indicator-chip-grid,
+  .portfolio-indicator-chip-grid--summary {
     grid-template-columns: 1fr;
+  }
+
+  .portfolio-kline-card .portfolio-kline-panel {
+    min-height: 300px;
+  }
+
+  .portfolio-kline-card .sparkline__chart--kline {
+    min-height: 250px;
+  }
+
+  .portfolio-card-heading {
+    flex-direction: column;
   }
 
   .research-modules-grid {

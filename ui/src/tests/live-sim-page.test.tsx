@@ -35,7 +35,19 @@ const snapshot = {
     candidateCount: "3",
   },
   metrics: [],
-  candidatePool: emptyTable,
+  candidatePool: {
+    columns: ["代码", "名称", "价格"],
+    rows: [
+      {
+        id: "600519",
+        cells: ["600519", "贵州茅台", "1453.96"],
+        code: "600519",
+        name: "贵州茅台",
+      },
+    ],
+    emptyLabel: "暂无数据",
+    emptyMessage: "暂无数据",
+  },
   pendingSignals: [],
   executionCenter: {
     title: "执行中心",
@@ -70,7 +82,10 @@ afterEach(() => {
 
 function renderLiveSimPage(client: ApiClient) {
   const router = createMemoryRouter(
-    [{ path: "/live-sim", element: <LiveSimPage client={client} /> }],
+    [
+      { path: "/live-sim", element: <LiveSimPage client={client} /> },
+      { path: "/portfolio/position/:symbol", element: <div data-testid="stock-detail-page" /> },
+    ],
     { initialEntries: ["/live-sim"] },
   );
 
@@ -115,6 +130,8 @@ describe("LiveSimPage", () => {
     renderLiveSimPage(client);
 
     await screen.findByText("信号记录");
+    expect(screen.getByRole("link", { name: "600519" })).toHaveAttribute("href", "/portfolio/position/600519");
+    expect(await screen.findByRole("link", { name: "600000 浦发银行" })).toHaveAttribute("href", "/portfolio/position/600000");
     expect(screen.getAllByText("策略配置")).toHaveLength(1);
     expect(screen.queryByRole("columnheader", { name: "策略" })).not.toBeInTheDocument();
     expect(await screen.findByRole("columnheader", { name: "状态" })).toBeInTheDocument();

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { apiClient, type ApiClient } from "../../lib/api-client";
 import { IconButton } from "../../components/ui/icon-button";
 import { PageHeader } from "../../components/ui/page-header";
@@ -14,6 +15,8 @@ type ResearchPageProps = {
 };
 
 const RESEARCH_AUTO_REFRESH_MS = 3 * 60 * 1000;
+
+const stockDetailPath = (code: string) => `/portfolio/position/${encodeURIComponent(code)}`;
 
 type ResearchModuleWithInsights = {
   name: string;
@@ -750,11 +753,20 @@ export function ResearchPage({ client }: ResearchPageProps) {
                           onChange={() => selection.toggle(row.id)}
                         />
                       </td>
-                      {row.cells.map((cell, index) => (
-                        <td key={`${rowKey}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {typeof cell === "string" ? localizeResearchText(cell) : cell}
-                        </td>
-                      ))}
+                      {row.cells.map((cell, index) => {
+                        const code = String(row.code || row.id || row.cells[0] || "").trim();
+                        const content = typeof cell === "string" ? localizeResearchText(cell) : cell;
+                        const shouldLink = code && (index === 0 || index === 1);
+                        return (
+                          <td key={`${rowKey}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                            {shouldLink ? (
+                              <Link className="stock-link" to={stockDetailPath(code)} onClick={(event) => event.stopPropagation()}>
+                                {content}
+                              </Link>
+                            ) : content}
+                          </td>
+                        );
+                      })}
                       <td>
                         <div className="table__actions">
                           <button

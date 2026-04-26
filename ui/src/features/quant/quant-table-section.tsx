@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { WorkbenchCard } from "../../components/ui/workbench-card";
 import type { TableAction, TableRow, TableSection } from "../../lib/page-models";
 import { useCompactLayout } from "../../lib/use-compact-layout";
@@ -31,6 +32,33 @@ const emptyShellStyle: CSSProperties = {
 
 const emptyBodyStyle: CSSProperties = {
   marginTop: "6px",
+};
+
+const STOCK_CODE_PATTERN = /\b\d{6}\b/;
+
+const normalizeStockCode = (value?: string) => {
+  const match = String(value ?? "").match(STOCK_CODE_PATTERN);
+  return match?.[0] ?? "";
+};
+
+const stockDetailPath = (code: string) => `/portfolio/position/${encodeURIComponent(code)}`;
+
+const rowStockCode = (row: TableRow) =>
+  normalizeStockCode(row.code)
+  || normalizeStockCode(row.id)
+  || normalizeStockCode(row.cells.find((cell) => STOCK_CODE_PATTERN.test(String(cell))) ?? "");
+
+const isStockReferenceColumn = (column: string, index: number) => {
+  const normalized = String(column).trim().toLowerCase();
+  if (normalized.includes("信号id") || normalized === "id") return false;
+  return (
+    normalized.includes("代码")
+    || normalized.includes("股票")
+    || normalized === "code"
+    || normalized === "symbol"
+    || normalized.includes("名称")
+    || normalized === "name"
+  );
 };
 
 export function QuantTableSectionCard({
@@ -106,10 +134,18 @@ export function QuantTableSectionCard({
     });
   };
 
-  const renderCell = (cell: string, column: string, index: number) => {
+  const renderCell = (row: TableRow, cell: string, column: string, index: number) => {
     const normalizedColumn = String(column).toLowerCase();
     const isActionColumn = normalizedColumn.includes("动作") || normalizedColumn === "action";
     const isStrategyColumn = normalizedColumn.includes("策略") || normalizedColumn === "strategy";
+    const code = rowStockCode(row);
+    if (code && isStockReferenceColumn(column, index)) {
+      return (
+        <Link className="stock-link" to={stockDetailPath(code)}>
+          {cell}
+        </Link>
+      );
+    }
     if (isActionColumn) {
       const signalAction = String(cell).trim().toUpperCase();
       if (signalAction === "BUY" || signalAction === "BUG") {
@@ -186,7 +222,7 @@ export function QuantTableSectionCard({
                           const cell = row.cells[index];
                           return (
                             <td key={`${row.id}-core-${index}`} className={index === compactCoreIndexes[0] ? "table__cell-strong" : undefined}>
-                              {renderCell(String(cell ?? ""), String(table.columns[index] ?? ""), index)}
+                              {renderCell(row, String(cell ?? ""), String(table.columns[index] ?? ""), index)}
                             </td>
                           );
                         })}
@@ -259,7 +295,7 @@ export function QuantTableSectionCard({
                               <div className="compact-detail-item" key={`${row.id}-detail-${index}`}>
                                 <div className="compact-detail-item__label">{table.columns[index]}</div>
                                 <div className="compact-detail-item__value">
-                                  {renderCell(String(row.cells[index] ?? ""), String(table.columns[index] ?? ""), index)}
+                                  {renderCell(row, String(row.cells[index] ?? ""), String(table.columns[index] ?? ""), index)}
                                 </div>
                               </div>
                             ))}
@@ -273,7 +309,7 @@ export function QuantTableSectionCard({
                     <tr key={row.id}>
                       {row.cells.map((cell, index) => (
                         <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {renderCell(String(cell), String(table.columns[index] ?? ""), index)}
+                          {renderCell(row, String(cell), String(table.columns[index] ?? ""), index)}
                         </td>
                       ))}
                       {showActions ? (

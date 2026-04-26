@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { apiClient, type ApiClient } from "../../lib/api-client";
 import { IconButton } from "../../components/ui/icon-button";
 import { PageHeader } from "../../components/ui/page-header";
@@ -27,6 +28,8 @@ const DECISION_FIELD_LABELS = [
 ] as const;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const stockDetailPath = (code: string) => `/portfolio/position/${encodeURIComponent(code)}`;
 
 const DISCOVER_TEXT_ALIASES: Record<string, string> = {
   "净利增长": "Profit growth",
@@ -539,11 +542,20 @@ export function DiscoverPage({ client }: DiscoverPageProps) {
                           onChange={() => selection.toggle(row.id)}
                         />
                       </td>
-                      {row.cells.map((cell, index) => (
-                        <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
-                          {typeof cell === "string" ? t(cell) : cell}
-                        </td>
-                      ))}
+                      {row.cells.map((cell, index) => {
+                        const code = String(row.code || row.id || row.cells[0] || "").trim();
+                        const content = typeof cell === "string" ? t(cell) : cell;
+                        const shouldLink = code && (index === 0 || index === 1);
+                        return (
+                          <td key={`${row.id}-${index}`} className={index === 0 ? "table__cell-strong" : undefined}>
+                            {shouldLink ? (
+                              <Link className="stock-link" to={stockDetailPath(code)} onClick={(event) => event.stopPropagation()}>
+                                {content}
+                              </Link>
+                            ) : content}
+                          </td>
+                        );
+                      })}
                           {showSelectedAtColumn ? (
                         <td key={`${row.id}-selected-at`}>
                           {getRowSelectedAt(row) || "-"}

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../lib/api-client";
 import type { PortfolioSnapshot } from "../lib/page-models";
 import { PortfolioPositionPage } from "../features/portfolio/portfolio-position-page";
@@ -78,7 +78,20 @@ const withRealtimeData = (snapshot: PortfolioSnapshot, summaryBody = snapshot.de
           { label: "2026-04-24", value: 1450, open: 1440, high: 1460, low: 1430, close: 1450, volume: 120000 },
           { label: "2026-04-25", value: 1453.96, open: 1450, high: 1468, low: 1448, close: 1453.96, volume: 130000 },
         ],
-        indicators: [{ label: "MA20", value: "1441.86", hint: "20日均线" }],
+        indicators: [
+          { label: "5日均量", value: "47265.40", hint: "5-period average volume." },
+          { label: "MA5", value: "1450.10", hint: "5-day moving average." },
+          { label: "MA10", value: "1448.20", hint: "10-day moving average." },
+          { label: "MA20", value: "1441.86", hint: "20日均线" },
+          { label: "MA60", value: "1430.66", hint: "60-day moving average." },
+          { label: "RSI", value: "53.79", hint: "RSI 位于 30-70 之间。" },
+          { label: "MACD", value: "6.27", hint: "MACD 大于 0。" },
+          { label: "信号线", value: "5.12", hint: "MACD signal line." },
+          { label: "布林上轨", value: "1472.20", hint: "Upper volatility band." },
+          { label: "K值", value: "64.30", hint: "KDJ fast line." },
+          { label: "D值", value: "58.10", hint: "KDJ slow line." },
+          { label: "量比", value: "1.18", hint: "Relative activity vs average volume." },
+        ],
         stockAnalysis: snapshot.detail.stockAnalysis
           ? {
               ...snapshot.detail.stockAnalysis,
@@ -124,6 +137,52 @@ function deferred<T>() {
 }
 
 describe("PortfolioPositionPage", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
+
+  it("renders the last cached detail snapshot before the detail request returns", async () => {
+    const cachedSnapshot = withRealtimeData(stockAnalysisSnapshot("本地上一版分析结论"));
+    window.localStorage.setItem("portfolio-position-snapshot:600519", JSON.stringify(cachedSnapshot));
+    const latestRequest = deferred<PortfolioSnapshot>();
+    const getPortfolioPosition = vi.fn().mockReturnValue(latestRequest.promise);
+    const runPageAction = vi.fn().mockResolvedValue(cachedSnapshot);
+    const client = {
+      getPortfolioPosition,
+      patchPortfolioPosition: vi.fn(),
+      runPageAction,
+      getTaskStatus: vi.fn(),
+    } as unknown as ApiClient;
+
+    window.localStorage.setItem("portfolio-position-snapshot:600519", JSON.stringify(cachedSnapshot));
+    renderPortfolioPositionPage(client);
+
+    expect(screen.queryByText("持仓详情加载中")).toBeNull();
+    expect(screen.getByText("本地上一版分析结论")).toBeInTheDocument();
+    expect((screen.getAllByText("MA20")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/开 1450\.0/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(runPageAction).toHaveBeenCalledWith("portfolio", "refresh-indicators", {
+        symbols: ["600519"],
+        selectedSymbol: "600519",
+        scope: "indicators_only",
+      });
+    });
+
+    latestRequest.resolve(stockAnalysisSnapshot("接口返回后的完整分析结论内容"));
+
+    await waitFor(() => {
+      expect(getPortfolioPosition).toHaveBeenCalledWith("600519");
+    });
+    expect(await screen.findByText("接口返回后的完整分析结论内容")).toBeInTheDocument();
+  });
+
   it("auto-refreshes realtime data and updates stock analysis through one button", async () => {
     const cachedSnapshot = stockAnalysisSnapshot("旧的股票分析结论");
     const realtimeSnapshot = withRealtimeData(cachedSnapshot);
@@ -155,19 +214,27 @@ describe("PortfolioPositionPage", () => {
       getTaskStatus: vi.fn(),
     } as unknown as ApiClient;
 
+    window.localStorage.setItem("portfolio-position-snapshot:600519", JSON.stringify(cachedSnapshot));
     renderPortfolioPositionPage(client);
 
-    expect(await screen.findByText("旧的股票分析结论")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "当前股票分析" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "实时分析" })).toBeNull();
     expect(screen.queryByRole("button", { name: "更新股票分析" })).toBeNull();
     expect(screen.getByRole("heading", { name: "600519 贵州茅台" })).toBeInTheDocument();
-    expect(screen.getByText("板块：白酒 · 最新价：1453.96 · 来源：关注池")).toBeInTheDocument();
+    expect(screen.getByText("板块：白酒 · 现价：1453.96 · 更新时间：2026-04-25 09:56:00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新分析" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "更新详情" })).toBeInTheDocument();
     expect(screen.queryByText("基础信息")).toBeNull();
-    expect(screen.queryByText("决策概览")).toBeNull();
+    expect(screen.getByRole("heading", { name: "决策计划" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "决策概览" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "交易计划" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "关键技术指标" })).toBeInTheDocument();
+    expect(screen.getByText("更多指标明细")).toBeInTheDocument();
+    expect(screen.getByText("完整分析原文")).toBeInTheDocument();
+    expect(document.querySelector(".portfolio-kline-card--full")).not.toBeNull();
+    expect(screen.queryByText("持仓分析结论")).toBeNull();
+    expect(screen.queryByText("当前未登记持仓，先以观察和建仓条件确认作为主线。")).toBeNull();
     expect(screen.getByText("分析日期：2026-04-25 09:55:00")).toBeInTheDocument();
-    expect(screen.getByText("暂无K线数据，点击“更新详情”拉取最新行情、K线和技术指标。")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(runPageAction).toHaveBeenCalledWith("portfolio", "refresh-indicators", {
@@ -176,7 +243,12 @@ describe("PortfolioPositionPage", () => {
         scope: "indicators_only",
       });
     });
-    expect(await screen.findByText("MA20")).toBeInTheDocument();
+    expect((await screen.findAllByText("MA20")).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(document.querySelectorAll(".portfolio-indicator-chip-grid--summary .portfolio-indicator-chip")).toHaveLength(8);
+    });
+    expect(screen.getAllByText("MA5")).toHaveLength(1);
+    expect(screen.getAllByText("K值")).toHaveLength(1);
     expect(await screen.findByText(/开 1450\.0/)).toBeInTheDocument();
     expect(document.querySelector(".analyst-layout")).not.toBeNull();
     expect(document.querySelectorAll(".analyst-tab")).toHaveLength(2);
@@ -188,9 +260,13 @@ describe("PortfolioPositionPage", () => {
     expect(screen.getByRole("button", { name: "风险管理师" })).toHaveClass("analyst-tab--active");
     expect(screen.getByText(/追高回撤/)).toBeInTheDocument();
     const pageText = document.body.textContent ?? "";
-    expect(pageText.indexOf("技术指标")).toBeGreaterThan(-1);
+    expect(pageText.indexOf("决策计划")).toBeGreaterThan(-1);
+    expect(pageText.indexOf("K线走势")).toBeGreaterThan(-1);
+    expect(pageText.indexOf("关键技术指标")).toBeGreaterThan(-1);
     expect(pageText.indexOf("当前股票分析")).toBeGreaterThan(-1);
-    expect(pageText.indexOf("技术指标")).toBeLessThan(pageText.indexOf("当前股票分析"));
+    expect(pageText.indexOf("决策计划")).toBeLessThan(pageText.indexOf("关键技术指标"));
+    expect(pageText.indexOf("关键技术指标")).toBeLessThan(pageText.indexOf("K线走势"));
+    expect(pageText.indexOf("K线走势")).toBeLessThan(pageText.indexOf("当前股票分析"));
 
     fireEvent.click(screen.getByRole("button", { name: "更新详情" }));
     await waitFor(() => {
@@ -236,14 +312,14 @@ describe("PortfolioPositionPage", () => {
         scope: "indicators_only",
       });
     });
-    expect(await screen.findByText("MA20")).toBeInTheDocument();
+    expect((await screen.findAllByText("MA20")).length).toBeGreaterThan(0);
 
     lateGet.resolve(lateCachedSnapshot);
 
     await waitFor(() => {
       expect(getPortfolioPosition).toHaveBeenCalledTimes(2);
     });
-    expect(screen.getByText("MA20")).toBeInTheDocument();
+    expect(screen.getAllByText("MA20").length).toBeGreaterThan(0);
     expect(screen.queryByText("暂无K线数据，点击“更新详情”拉取最新行情、K线和技术指标。")).toBeNull();
   });
 
