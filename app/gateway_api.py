@@ -1373,6 +1373,17 @@ def _snapshot_live_sim(context: UIApiContext, table_query: dict[str, Any] | None
             "initialCapital": _txt(account.get("initial_cash"), "0"),
             "commissionRatePct": _fee_rate_pct_text(scheduler.get("commission_rate"), DEFAULT_COMMISSION_RATE),
             "sellTaxRatePct": _fee_rate_pct_text(scheduler.get("sell_tax_rate"), DEFAULT_SELL_TAX_RATE),
+            "capitalSlotEnabled": bool(scheduler.get("capital_slot_enabled", True)),
+            "capitalPoolMinCash": _txt(scheduler.get("capital_pool_min_cash"), "20000"),
+            "capitalPoolMaxCash": _txt(scheduler.get("capital_pool_max_cash"), "1000000"),
+            "capitalSlotMinCash": _txt(scheduler.get("capital_slot_min_cash"), "20000"),
+            "capitalMaxSlots": _txt(scheduler.get("capital_max_slots"), "25"),
+            "capitalMinBuySlotFraction": _txt(scheduler.get("capital_min_buy_slot_fraction"), "0.25"),
+            "capitalFullBuyEdge": _txt(scheduler.get("capital_full_buy_edge"), "0.25"),
+            "capitalConfidenceWeight": _txt(scheduler.get("capital_confidence_weight"), "0.35"),
+            "capitalHighPriceThreshold": _txt(scheduler.get("capital_high_price_threshold"), "100"),
+            "capitalHighPriceMaxSlotUnits": _txt(scheduler.get("capital_high_price_max_slot_units"), "2"),
+            "capitalSellCashReusePolicy": _txt(scheduler.get("capital_sell_cash_reuse_policy"), "next_batch"),
         },
         "status": {
             "running": "运行中" if scheduler.get("running") else "已停止",
@@ -1386,6 +1397,23 @@ def _snapshot_live_sim(context: UIApiContext, table_query: dict[str, Any] | None
             _metric("总收益率", _pct(account.get("total_return_pct"))),
             _metric("可用现金", account.get("available_cash")),
         ],
+        "capitalSlots": _table(
+            ["Slot", "预算", "可用", "占用", "待结算"],
+            [
+                {
+                    "id": _txt(item.get("slot_index")),
+                    "cells": [
+                        _txt(item.get("slot_index")),
+                        _num(item.get("budget_cash")),
+                        _num(item.get("available_cash")),
+                        _num(item.get("occupied_cash")),
+                        _num(item.get("settling_cash")),
+                    ],
+                }
+                for item in db.get_capital_slots()
+            ],
+            "暂无资金槽",
+        ),
         "candidatePool": candidate_table,
         "pendingSignals": [
             _insight(
@@ -3132,6 +3160,57 @@ def _build_parameter_details(
                 ]
             )
 
+        position_sizing = strategy_profile.get("position_sizing") if isinstance(strategy_profile.get("position_sizing"), dict) else {}
+        if position_sizing:
+            sizing_slot_plan = _safe_json_load(position_sizing.get("slot_plan"))
+            sizing_detail = _safe_json_load(position_sizing.get("sizing"))
+            rows.extend(
+                [
+                    _item(
+                        "Slot数量",
+                        sizing_slot_plan.get("slot_count"),
+                        "strategy_profile.position_sizing.slot_plan.slot_count",
+                        "按有效资金池 / 单 slot 最低金额向下取整，并受最大 slot 数限制。",
+                    ),
+                    _item(
+                        "单Slot预算",
+                        sizing_slot_plan.get("slot_budget"),
+                        "strategy_profile.position_sizing.slot_plan.slot_budget",
+                        "每个 slot 的平均预算；BUY 默认最多使用一个 slot。",
+                    ),
+                    _item(
+                        "BUY优先级",
+                        sizing_detail.get("priority"),
+                        "strategy_profile.position_sizing.sizing.priority",
+                        "同一交易点所有 BUY 先按优先级排序，强信号优先占用 slot。",
+                    ),
+                    _item(
+                        "BUY占用Slot",
+                        sizing_detail.get("slot_units"),
+                        "strategy_profile.position_sizing.sizing.slot_units",
+                        "融合分边际和置信度映射出的 slot 使用量；高价强 BUY 可临时放大到最多两个 slot。",
+                    ),
+                    _item(
+                        "BUY预算",
+                        position_sizing.get("buy_budget"),
+                        "strategy_profile.position_sizing.buy_budget",
+                        "最终买入预算=min(slot预算×slot占用、账户可用现金、slot可用资金)。",
+                    ),
+                    _item(
+                        "自动买入股数",
+                        position_sizing.get("quantity"),
+                        "strategy_profile.position_sizing.quantity",
+                        "BUY预算按 A 股 100 股一手和手续费取整后的自动执行股数。",
+                    ),
+                    _item(
+                        "买入跳过原因",
+                        position_sizing.get("skip_reason"),
+                        "strategy_profile.position_sizing.skip_reason",
+                        "当 slot 预算、资金池门槛或一手成本不足时，记录自动执行跳过原因。",
+                    ),
+                ]
+            )
+
         if dynamic_strategy:
             if _txt(dynamic_strategy.get("as_of")):
                 rows.append(
@@ -4376,6 +4455,37 @@ def _scheduler_update_kwargs(payload: Any) -> dict[str, Any]:
         "trading_hours_only": body.get("tradingHoursOnly") if "tradingHoursOnly" in body else body.get("trading_hours_only"),
         "market": body.get("market"),
         "start_date": body.get("startDate") if "startDate" in body else body.get("start_date"),
+        "capital_slot_enabled": body.get("capitalSlotEnabled")
+        if "capitalSlotEnabled" in body
+        else body.get("capital_slot_enabled"),
+        "capital_pool_min_cash": body.get("capitalPoolMinCash")
+        if "capitalPoolMinCash" in body
+        else body.get("capital_pool_min_cash"),
+        "capital_pool_max_cash": body.get("capitalPoolMaxCash")
+        if "capitalPoolMaxCash" in body
+        else body.get("capital_pool_max_cash"),
+        "capital_slot_min_cash": body.get("capitalSlotMinCash")
+        if "capitalSlotMinCash" in body
+        else body.get("capital_slot_min_cash"),
+        "capital_max_slots": body.get("capitalMaxSlots") if "capitalMaxSlots" in body else body.get("capital_max_slots"),
+        "capital_min_buy_slot_fraction": body.get("capitalMinBuySlotFraction")
+        if "capitalMinBuySlotFraction" in body
+        else body.get("capital_min_buy_slot_fraction"),
+        "capital_full_buy_edge": body.get("capitalFullBuyEdge")
+        if "capitalFullBuyEdge" in body
+        else body.get("capital_full_buy_edge"),
+        "capital_confidence_weight": body.get("capitalConfidenceWeight")
+        if "capitalConfidenceWeight" in body
+        else body.get("capital_confidence_weight"),
+        "capital_high_price_threshold": body.get("capitalHighPriceThreshold")
+        if "capitalHighPriceThreshold" in body
+        else body.get("capital_high_price_threshold"),
+        "capital_high_price_max_slot_units": body.get("capitalHighPriceMaxSlotUnits")
+        if "capitalHighPriceMaxSlotUnits" in body
+        else body.get("capital_high_price_max_slot_units"),
+        "capital_sell_cash_reuse_policy": body.get("capitalSellCashReusePolicy")
+        if "capitalSellCashReusePolicy" in body
+        else body.get("capital_sell_cash_reuse_policy"),
     }
     if commission_present:
         mapping["commission_rate"] = commission_rate

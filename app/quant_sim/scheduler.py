@@ -131,6 +131,17 @@ class QuantSimScheduler:
         market: str | None = None,
         commission_rate: float | None = None,
         sell_tax_rate: float | None = None,
+        capital_slot_enabled: bool | None = None,
+        capital_pool_min_cash: float | None = None,
+        capital_pool_max_cash: float | None = None,
+        capital_slot_min_cash: float | None = None,
+        capital_max_slots: int | None = None,
+        capital_min_buy_slot_fraction: float | None = None,
+        capital_full_buy_edge: float | None = None,
+        capital_confidence_weight: float | None = None,
+        capital_high_price_threshold: float | None = None,
+        capital_high_price_max_slot_units: float | None = None,
+        capital_sell_cash_reuse_policy: str | None = None,
     ) -> None:
         self.db.update_scheduler_config(
             enabled=enabled,
@@ -147,6 +158,17 @@ class QuantSimScheduler:
             market=market,
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
+            capital_slot_enabled=capital_slot_enabled,
+            capital_pool_min_cash=capital_pool_min_cash,
+            capital_pool_max_cash=capital_pool_max_cash,
+            capital_slot_min_cash=capital_slot_min_cash,
+            capital_max_slots=capital_max_slots,
+            capital_min_buy_slot_fraction=capital_min_buy_slot_fraction,
+            capital_full_buy_edge=capital_full_buy_edge,
+            capital_confidence_weight=capital_confidence_weight,
+            capital_high_price_threshold=capital_high_price_threshold,
+            capital_high_price_max_slot_units=capital_high_price_max_slot_units,
+            capital_sell_cash_reuse_policy=capital_sell_cash_reuse_policy,
         )
         if self.running:
             config = self.db.get_scheduler_config()
@@ -175,6 +197,17 @@ class QuantSimScheduler:
             "market": config["market"],
             "commission_rate": config["commission_rate"],
             "sell_tax_rate": config["sell_tax_rate"],
+            "capital_slot_enabled": config.get("capital_slot_enabled"),
+            "capital_pool_min_cash": config.get("capital_pool_min_cash"),
+            "capital_pool_max_cash": config.get("capital_pool_max_cash"),
+            "capital_slot_min_cash": config.get("capital_slot_min_cash"),
+            "capital_max_slots": config.get("capital_max_slots"),
+            "capital_min_buy_slot_fraction": config.get("capital_min_buy_slot_fraction"),
+            "capital_full_buy_edge": config.get("capital_full_buy_edge"),
+            "capital_confidence_weight": config.get("capital_confidence_weight"),
+            "capital_high_price_threshold": config.get("capital_high_price_threshold"),
+            "capital_high_price_max_slot_units": config.get("capital_high_price_max_slot_units"),
+            "capital_sell_cash_reuse_policy": config.get("capital_sell_cash_reuse_policy"),
             "last_run_at": config["last_run_at"],
             "next_run": next_run,
         }
@@ -232,11 +265,7 @@ class QuantSimScheduler:
         if not config["auto_execute"]:
             return 0
 
-        executed = 0
-        for signal in self.engine.signal_center.list_pending_signals():
-            if self.portfolio.auto_execute_signal(signal):
-                executed += 1
-        return executed
+        return self.portfolio.auto_execute_pending_signals(self.engine.signal_center.list_pending_signals())
 
     def _register_jobs(self, interval_minutes: int) -> None:
         self._clear_jobs()

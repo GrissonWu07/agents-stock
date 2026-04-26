@@ -1,0 +1,172 @@
+from datetime import datetime
+
+from app.quant_sim.candidate_pool_service import CandidatePoolService
+from app.quant_sim.capital_slots import (
+    DEFAULT_CAPITAL_SLOT_CONFIG,
+    normalize_capital_slot_config,
+    calculate_slot_plan,
+    calculate_buy_priority,
+)
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.scheduler import QuantSimScheduler
+from app.quant_sim.signal_center_service import SignalCenterService
+
+
+def _fusion_signal(
+    stock_code: str,
+    *,
+    fusion_score: float,
+    buy_threshold: float = 0.5,
+    fusion_confidence: float = 0.8,
+    price: float = 10.0,
+    confidence: int = 80,
+) -> dict:
+    return {
+        "id": 0,
+        "stock_code": stock_code,
+        "stock_name": stock_code,
+        "action": "BUY",
+        "confidence": confidence,
+        "position_size_pct": 50,
+        "price": price,
+        "strategy_profile": {
+            "effective_thresholds": {"min_fusion_confidence": 0.4},
+            "explainability": {
+                "fusion_breakdown": {
+                    "fusion_score": fusion_score,
+                    "buy_threshold_eff": buy_threshold,
+                    "fusion_confidence": fusion_confidence,
+                    "tech_score": 0.55,
+                    "context_score": 0.45,
+                }
+            },
+        },
+    }
+
+
+def test_slot_plan_uses_floor_count_and_minimum_20000_slot_budget():
+    plan = calculate_slot_plan(
+        total_equity=50000,
+        config={**DEFAULT_CAPITAL_SLOT_CONFIG, "capital_max_slots": 25},
+    )
+
+    assert plan["enabled"] is True
+    assert plan["slot_count"] == 2
+    assert plan["slot_budget"] == 25000
+
+
+def test_slot_config_enforces_minimum_slot_cash_and_known_sell_reuse_policy():
+    config = normalize_capital_slot_config(
+        {
+            **DEFAULT_CAPITAL_SLOT_CONFIG,
+            "capital_slot_min_cash": 1000,
+            "capital_sell_cash_reuse_policy": "invalid",
+        }
+    )
+
+    assert config["capital_slot_min_cash"] == 20000
+    assert config["capital_sell_cash_reuse_policy"] == "next_batch"
+
+
+def test_slot_plan_blocks_pool_below_one_minimum_slot_even_if_pool_min_is_lower():
+    plan = calculate_slot_plan(
+        total_equity=10000,
+        config={**DEFAULT_CAPITAL_SLOT_CONFIG, "capital_pool_min_cash": 0, "capital_slot_min_cash": 20000},
+    )
+
+    assert plan["pool_ready"] is False
+    assert plan["slot_count"] == 0
+    assert plan["required_pool_cash"] == 20000
+
+
+def test_high_price_strong_buy_can_use_two_slots_to_buy_one_lot():
+    signal = _fusion_signal("688001", fusion_score=0.72, buy_threshold=0.5, fusion_confidence=0.88, price=260)
+    plan = calculate_slot_plan(total_equity=50000, config=DEFAULT_CAPITAL_SLOT_CONFIG)
+    priority = calculate_buy_priority(signal)
+
+    assert plan["slot_count"] == 2
+    assert priority > 0.5
+
+
+def test_auto_execute_high_price_strong_buy_uses_two_slots_and_records_slot_lot_allocation(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+    portfolio = PortfolioService(db_file=db_file)
+    portfolio.configure_account(50000)
+
+    candidate_service.add_manual_candidate("688001", "高价强势股", "main_force", latest_price=260.0)
+    candidate = candidate_service.list_candidates()[0]
+    signal = signal_service.create_signal(candidate, _fusion_signal("688001", fusion_score=0.72, price=260.0))
+
+    executed = portfolio.auto_execute_signal(signal, note="slot sizing test", executed_at="2026-04-24 10:00:00")
+
+    slots = portfolio.db.get_capital_slots()
+    allocations = portfolio.db.get_lot_slot_allocations("688001")
+    positions = portfolio.list_positions()
+
+    assert executed is True
+    assert positions[0]["quantity"] == 100
+    assert len(slots) == 2
+    assert len(allocations) >= 1
+    assert round(sum(float(item["allocated_cash"]) for item in allocations), 2) >= 26000
+
+
+def test_batch_execution_prioritizes_stronger_buy_signal_when_cash_has_one_slot(tmp_path, monkeypatch):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_manual_candidate("000001", "弱信号", "main_force", latest_price=10.0)
+    candidate_service.add_manual_candidate("000002", "强信号", "main_force", latest_price=10.0)
+
+    scheduler = QuantSimScheduler(db_file=db_file)
+    scheduler.update_config(enabled=True, auto_execute=True)
+    scheduler.portfolio.configure_account(20000)
+
+    def fake_analyze(candidate, market_snapshot=None, analysis_timeframe="30m", strategy_mode="auto"):
+        code = candidate["stock_code"]
+        if code == "000001":
+            return _fusion_signal(code, fusion_score=0.51, buy_threshold=0.5, fusion_confidence=0.45, price=10.0)
+        return _fusion_signal(code, fusion_score=0.75, buy_threshold=0.5, fusion_confidence=0.9, price=10.0)
+
+    monkeypatch.setattr(scheduler.engine.adapter, "analyze_candidate", fake_analyze)
+
+    summary = scheduler.run_once(run_reason="slot_priority_test")
+    positions = scheduler.portfolio.list_positions()
+    signals = SignalCenterService(db_file=db_file).list_signals(limit=10)
+
+    assert summary["auto_executed"] == 1
+    assert positions[0]["stock_code"] == "000002"
+    assert any(item["stock_code"] == "000001" and "slot" in str(item.get("execution_note") or "").lower() for item in signals)
+
+
+def test_sell_proceeds_are_settling_and_not_reused_in_same_batch(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+    portfolio = PortfolioService(db_file=db_file)
+    portfolio.configure_account(20000)
+
+    candidate_service.add_manual_candidate("000001", "已有持仓", "main_force", latest_price=10.0)
+    candidate_service.add_manual_candidate("000002", "新信号", "main_force", latest_price=10.0)
+    old_candidate = candidate_service.db.get_candidate("000001")
+    new_candidate = candidate_service.db.get_candidate("000002")
+    assert old_candidate and new_candidate
+
+    seed = signal_service.create_signal(old_candidate, _fusion_signal("000001", fusion_score=0.75, price=10.0))
+    portfolio.confirm_buy(seed["id"], price=10.0, quantity=1900, note="seed", executed_at="2026-04-23 10:00:00")
+
+    sell_signal = signal_service.create_signal(
+        old_candidate,
+        {"action": "SELL", "confidence": 90, "reasoning": "卖出释放资金", "position_size_pct": 0, "price": 10.0},
+    )
+    buy_signal = signal_service.create_signal(new_candidate, _fusion_signal("000002", fusion_score=0.75, price=10.0))
+
+    executed = portfolio.auto_execute_pending_signals([buy_signal, sell_signal], note="same batch", executed_at=datetime(2026, 4, 24, 10, 0))
+
+    slots = portfolio.db.get_capital_slots()
+    signals = signal_service.list_signals(limit=10)
+
+    assert executed == 1
+    assert portfolio.db.has_open_position("000002") is False
+    assert sum(float(item["settling_cash"]) for item in slots) > 0
+    assert any(item["stock_code"] == "000002" and "slot" in str(item.get("execution_note") or "").lower() for item in signals)

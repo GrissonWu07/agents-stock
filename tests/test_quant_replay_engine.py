@@ -253,9 +253,9 @@ def test_historical_replay_persists_run_artifacts_without_touching_live_account(
     assert run["status"] == "completed"
     assert run["timeframe"] == "1d"
     assert run["trade_count"] == 2
-    assert summary["final_equity"] == 112000.0
-    assert summary["total_return_pct"] == 12.0
-    assert float(run["final_equity"]) == 112000.0
+    assert summary["final_equity"] == 101800.0
+    assert summary["total_return_pct"] == 1.8
+    assert float(run["final_equity"]) == 101800.0
     assert len(checkpoints) == 2
     assert [trade["action"] for trade in trades] == ["SELL", "BUY"]
     assert len(signals) >= 2

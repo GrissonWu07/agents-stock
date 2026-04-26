@@ -7,6 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from app.quant_sim.capital_slots import (
+    build_sizing_explainability,
+    calculate_buy_priority,
+    calculate_slot_plan,
+    calculate_slot_units,
+    normalize_capital_slot_config,
+)
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 
 
@@ -87,17 +94,20 @@ class PortfolioService:
         *,
         note: Optional[str] = None,
         executed_at: str | datetime | None = None,
+        settle_slots: bool = True,
     ) -> bool:
         action = str(signal.get("action") or "").upper()
         stock_code = str(signal.get("stock_code") or "").strip()
         if action == "BUY":
             price = self._resolve_signal_price(signal)
-            quantity = self._estimate_buy_quantity(signal, price)
             if price <= 0:
                 self._record_auto_execute_skip(signal, "自动执行跳过：缺少有效最新价")
                 return False
+            quantity, sizing_evidence = self._estimate_buy_quantity(signal, price, settle_slots=settle_slots)
+            self._attach_sizing_evidence(signal, sizing_evidence)
             if quantity <= 0:
-                self._record_auto_execute_skip(signal, "自动执行跳过：建议仓位不足买入一手")
+                reason = str(sizing_evidence.get("skip_reason") or "建议仓位不足买入一手")
+                self._record_auto_execute_skip(signal, f"自动执行跳过：{reason}")
                 return False
             self.confirm_buy(
                 int(signal["id"]),
@@ -135,12 +145,110 @@ class PortfolioService:
 
         return False
 
-    def _estimate_buy_quantity(self, signal: dict, price: float) -> int:
+    def auto_execute_pending_signals(
+        self,
+        signals: list[dict],
+        *,
+        note: Optional[str] = None,
+        executed_at: str | datetime | None = None,
+    ) -> int:
+        self.db.settle_capital_slots()
+        ordered = sorted(signals, key=self._execution_sort_key)
+        executed = 0
+        buy_phase_started = False
+        config = self.db.get_scheduler_config()
+        sell_reuse_policy = str(config.get("capital_sell_cash_reuse_policy") or "next_batch").strip().lower()
+        for signal in ordered:
+            action = str(signal.get("action") or "").upper()
+            if action == "BUY" and not buy_phase_started:
+                buy_phase_started = True
+                if sell_reuse_policy == "same_batch":
+                    self.db.settle_capital_slots()
+            try:
+                did_execute = self.auto_execute_signal(signal, note=note, executed_at=executed_at, settle_slots=False)
+            except TypeError as exc:
+                if "settle_slots" not in str(exc):
+                    raise
+                did_execute = self.auto_execute_signal(signal, note=note, executed_at=executed_at)
+            if did_execute:
+                executed += 1
+        return executed
+
+    def _estimate_buy_quantity(self, signal: dict, price: float, *, settle_slots: bool = True) -> tuple[int, dict]:
         if price <= 0:
-            return 0
+            return 0, {"skip_reason": "缺少有效最新价"}
         summary = self.get_account_summary()
         scheduler_config = self.db.get_scheduler_config()
         commission_rate = max(float(scheduler_config.get("commission_rate") or 0), 0.0)
+        capital_config = normalize_capital_slot_config(scheduler_config)
+        if not capital_config["capital_slot_enabled"]:
+            quantity = self._estimate_legacy_buy_quantity(signal, price, summary, commission_rate)
+            return quantity, {"mode": "legacy_position_pct", "quantity": quantity}
+        if settle_slots:
+            self.db.settle_capital_slots()
+        slots = self.db.get_capital_slots()
+        slot_plan = calculate_slot_plan(float(summary["total_equity"] or 0), capital_config)
+        if not slot_plan["pool_ready"]:
+            return 0, build_sizing_explainability(
+                config=capital_config,
+                slot_plan=slot_plan,
+                sizing={},
+                available_cash=float(summary["available_cash"] or 0),
+                slot_available_cash=0.0,
+                buy_budget=0.0,
+                quantity=0,
+                skip_reason="slot资金池低于最低额度；建议仓位不足买入一手",
+            )
+        sizing = calculate_slot_units(
+            signal,
+            price=price,
+            slot_budget=float(slot_plan["slot_budget"] or 0),
+            commission_rate=commission_rate,
+            config=capital_config,
+        )
+        slot_available_cash = sum(float(slot.get("available_cash") or 0) for slot in slots)
+        slot_unit_budget = float(slot_plan["slot_budget"] or 0) * float(sizing["slot_units"] or 0)
+        if self._is_position_add(signal):
+            position_size_pct = self._resolve_buy_position_pct(signal)
+            slot_unit_budget = float(slot_plan["slot_budget"] or 0)
+            buy_budget = min(
+                float(summary["available_cash"]),
+                slot_available_cash,
+                slot_unit_budget,
+                float(summary["total_equity"]) * position_size_pct / 100.0,
+            )
+        else:
+            buy_budget = min(
+                float(summary["available_cash"]),
+                slot_available_cash,
+                slot_unit_budget,
+            )
+        lot_cost_with_fee = price * self.A_SHARE_LOT_SIZE * (1 + commission_rate)
+        if buy_budget < lot_cost_with_fee:
+            return 0, build_sizing_explainability(
+                config=capital_config,
+                slot_plan=slot_plan,
+                sizing=sizing,
+                available_cash=float(summary["available_cash"] or 0),
+                slot_available_cash=slot_available_cash,
+                buy_budget=buy_budget,
+                quantity=0,
+                skip_reason="slot预算不足买入一手",
+            )
+        lots = floor(buy_budget / lot_cost_with_fee)
+        quantity = int(lots * self.A_SHARE_LOT_SIZE)
+        return quantity, build_sizing_explainability(
+            config=capital_config,
+            slot_plan=slot_plan,
+            sizing=sizing,
+            available_cash=float(summary["available_cash"] or 0),
+            slot_available_cash=slot_available_cash,
+            buy_budget=buy_budget,
+            quantity=quantity,
+            skip_reason=None,
+        )
+
+    def _estimate_legacy_buy_quantity(self, signal: dict, price: float, summary: dict, commission_rate: float) -> int:
         position_size_pct = self._resolve_buy_position_pct(signal)
         if position_size_pct <= 0:
             return 0
@@ -168,6 +276,34 @@ class PortfolioService:
             return max(float(signal.get("position_size_pct") or 0), 0.0)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _is_position_add(signal: dict) -> bool:
+        strategy_profile = signal.get("strategy_profile") if isinstance(signal.get("strategy_profile"), dict) else {}
+        add_gate = strategy_profile.get("position_add_gate") if isinstance(strategy_profile.get("position_add_gate"), dict) else {}
+        intent = str(add_gate.get("intent") or strategy_profile.get("execution_intent") or "").strip().lower()
+        return intent == "position_add" and str(add_gate.get("status") or "").strip().lower() == "passed"
+
+    def _execution_sort_key(self, signal: dict) -> tuple[int, float, int]:
+        action = str(signal.get("action") or "").upper()
+        signal_id = int(signal.get("id") or 0)
+        if action == "SELL":
+            return (0, 0.0, signal_id)
+        if action == "BUY":
+            return (1, -calculate_buy_priority(signal, self.db.get_scheduler_config()), signal_id)
+        return (2, 0.0, signal_id)
+
+    def _attach_sizing_evidence(self, signal: dict, sizing_evidence: dict) -> None:
+        signal_id = signal.get("id")
+        if signal_id in (None, ""):
+            return
+        profile = signal.get("strategy_profile") if isinstance(signal.get("strategy_profile"), dict) else {}
+        next_profile = {**profile, "position_sizing": sizing_evidence}
+        signal["strategy_profile"] = next_profile
+        try:
+            self.db.update_signal_state(int(signal_id), strategy_profile=next_profile)
+        except Exception:
+            return
 
     def _resolve_signal_price(self, signal: dict, fallback: Optional[dict] = None) -> float:
         stock_code = str(signal.get("stock_code") or "").strip()

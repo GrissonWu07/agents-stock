@@ -991,7 +991,6 @@ class QuantSimReplayService:
             checkpoint_signals.append(signal)
             signals_created += 1
 
-        auto_executed = 0
         pending_signals = signal_service.list_pending_signals()
         total_pending = len(pending_signals)
         for signal_index, signal in enumerate(pending_signals, start=1):
@@ -1005,19 +1004,20 @@ class QuantSimReplayService:
                     f"{str(signal.get('action') or '').upper()} {signal.get('stock_code')}"
                 ),
             )
-            try:
-                if portfolio.auto_execute_signal(signal, note="历史回放自动执行", executed_at=checkpoint):
-                    auto_executed += 1
-            except Exception as exc:
-                if run_id is not None:
-                    stock_code = str(signal.get("stock_code") or "")
-                    action = str(signal.get("action") or "").upper()
-                    self.db.append_sim_run_event(
-                        run_id,
-                        f"检查点 {self._format_datetime(checkpoint)} 自动执行 {action} {stock_code} 失败：{exc}",
-                        level="error",
-                    )
-                continue
+        auto_executed = 0
+        try:
+            auto_executed = portfolio.auto_execute_pending_signals(
+                pending_signals,
+                note="历史回放自动执行",
+                executed_at=checkpoint,
+            )
+        except Exception as exc:
+            if run_id is not None:
+                self.db.append_sim_run_event(
+                    run_id,
+                    f"检查点 {self._format_datetime(checkpoint)} 自动执行批量信号失败：{exc}",
+                    level="error",
+                )
 
         self._update_run_step_status(
             run_id=run_id,

@@ -222,6 +222,8 @@ def build_workbench_analysis_payload(
         value = _txt(_dict_value(final_decision, key))
         if value:
             decision_detail_lines.append(f"- {label}：{value}")
+    if final_reasoning:
+        decision_detail_lines.append(f"- {t('Action advice')}：{final_reasoning}")
     final_decision_text = "\n".join(decision_detail_lines)
 
     for key, agent_result in agents_results.items():

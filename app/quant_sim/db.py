@@ -13,6 +13,11 @@ from typing import Any, Optional
 from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_kernel.replay_engine import ReplayTimepointGenerator
 from app.quant_kernel.portfolio_engine import LotStatus, PositionLot
+from app.quant_sim.capital_slots import (
+    DEFAULT_CAPITAL_SLOT_CONFIG,
+    calculate_slot_plan,
+    normalize_capital_slot_config,
+)
 from app.runtime_paths import default_db_path
 
 
@@ -28,6 +33,17 @@ DEFAULT_AI_DYNAMIC_STRATEGY = "off"
 SUPPORTED_AI_DYNAMIC_STRATEGIES = {"off", "template", "weights", "hybrid"}
 DEFAULT_AI_DYNAMIC_STRENGTH = 0.5
 DEFAULT_AI_DYNAMIC_LOOKBACK = 48
+DEFAULT_CAPITAL_SLOT_ENABLED = bool(DEFAULT_CAPITAL_SLOT_CONFIG["capital_slot_enabled"])
+DEFAULT_CAPITAL_POOL_MIN_CASH = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_pool_min_cash"])
+DEFAULT_CAPITAL_POOL_MAX_CASH = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_pool_max_cash"])
+DEFAULT_CAPITAL_SLOT_MIN_CASH = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_slot_min_cash"])
+DEFAULT_CAPITAL_MAX_SLOTS = int(DEFAULT_CAPITAL_SLOT_CONFIG["capital_max_slots"])
+DEFAULT_CAPITAL_MIN_BUY_SLOT_FRACTION = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_min_buy_slot_fraction"])
+DEFAULT_CAPITAL_FULL_BUY_EDGE = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_full_buy_edge"])
+DEFAULT_CAPITAL_CONFIDENCE_WEIGHT = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_confidence_weight"])
+DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_high_price_threshold"])
+DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS = float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_high_price_max_slot_units"])
+DEFAULT_CAPITAL_SELL_CASH_REUSE_POLICY = str(DEFAULT_CAPITAL_SLOT_CONFIG["capital_sell_cash_reuse_policy"])
 DEFAULT_STRATEGY_PROFILE_ID = "aggressive_v23"
 DEFAULT_STRATEGY_PROFILE_NAME = "积极"
 LEGACY_DEFAULT_STRATEGY_PROFILE_ID = "default_v23"
@@ -258,8 +274,51 @@ class QuantSimDB:
                 market TEXT DEFAULT 'CN',
                 commission_rate REAL DEFAULT 0.0003,
                 sell_tax_rate REAL DEFAULT 0.001,
+                capital_slot_enabled INTEGER DEFAULT 1,
+                capital_pool_min_cash REAL DEFAULT 20000,
+                capital_pool_max_cash REAL DEFAULT 1000000,
+                capital_slot_min_cash REAL DEFAULT 20000,
+                capital_max_slots INTEGER DEFAULT 25,
+                capital_min_buy_slot_fraction REAL DEFAULT 0.25,
+                capital_full_buy_edge REAL DEFAULT 0.25,
+                capital_confidence_weight REAL DEFAULT 0.35,
+                capital_high_price_threshold REAL DEFAULT 100,
+                capital_high_price_max_slot_units REAL DEFAULT 2,
+                capital_sell_cash_reuse_policy TEXT DEFAULT 'next_batch',
                 last_run_at TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sim_capital_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot_index INTEGER NOT NULL UNIQUE,
+                budget_cash REAL NOT NULL DEFAULT 0,
+                available_cash REAL NOT NULL DEFAULT 0,
+                occupied_cash REAL NOT NULL DEFAULT 0,
+                settling_cash REAL NOT NULL DEFAULT 0,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sim_lot_slot_allocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                position_lot_db_id INTEGER,
+                lot_id TEXT,
+                slot_index INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                allocated_cash REAL NOT NULL DEFAULT 0,
+                allocated_quantity INTEGER NOT NULL DEFAULT 0,
+                released_cash REAL NOT NULL DEFAULT 0,
+                released_quantity INTEGER NOT NULL DEFAULT 0,
+                status TEXT DEFAULT 'open',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(position_lot_db_id) REFERENCES sim_position_lots(id)
             )
             """
         )
@@ -459,6 +518,17 @@ class QuantSimDB:
         self._ensure_column(cursor, "sim_scheduler_config", "start_date", "TEXT")
         self._ensure_column(cursor, "sim_scheduler_config", "commission_rate", f"REAL DEFAULT {DEFAULT_COMMISSION_RATE}")
         self._ensure_column(cursor, "sim_scheduler_config", "sell_tax_rate", f"REAL DEFAULT {DEFAULT_SELL_TAX_RATE}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_slot_enabled", "INTEGER DEFAULT 1")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_pool_min_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_POOL_MIN_CASH}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_pool_max_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_POOL_MAX_CASH}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_slot_min_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_SLOT_MIN_CASH}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_max_slots", f"INTEGER DEFAULT {DEFAULT_CAPITAL_MAX_SLOTS}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_min_buy_slot_fraction", f"REAL DEFAULT {DEFAULT_CAPITAL_MIN_BUY_SLOT_FRACTION}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_full_buy_edge", f"REAL DEFAULT {DEFAULT_CAPITAL_FULL_BUY_EDGE}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_confidence_weight", f"REAL DEFAULT {DEFAULT_CAPITAL_CONFIDENCE_WEIGHT}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_threshold", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_max_slot_units", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS}")
+        self._ensure_column(cursor, "sim_scheduler_config", "capital_sell_cash_reuse_policy", "TEXT DEFAULT 'next_batch'")
         self._ensure_column(cursor, "sim_runs", "progress_current", "INTEGER DEFAULT 0")
         self._ensure_column(cursor, "sim_runs", "progress_total", "INTEGER DEFAULT 0")
         self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
@@ -900,6 +970,7 @@ class QuantSimDB:
         position_size_pct: Optional[float] = None,
         status: Optional[str] = None,
         execution_note: Optional[str] = None,
+        strategy_profile: Optional[dict[str, Any]] = None,
     ) -> None:
         updates = []
         params: list[Any] = []
@@ -919,6 +990,9 @@ class QuantSimDB:
         if execution_note is not None:
             updates.append("execution_note = ?")
             params.append(execution_note)
+        if strategy_profile is not None:
+            updates.append("strategy_profile_json = ?")
+            params.append(self._dumps_metadata(strategy_profile))
 
         if not updates:
             return
@@ -2244,6 +2318,7 @@ class QuantSimDB:
             "market": row["market"] or "CN",
             "commission_rate": self._normalize_fee_rate(row["commission_rate"], default=DEFAULT_COMMISSION_RATE),
             "sell_tax_rate": self._normalize_fee_rate(row["sell_tax_rate"], default=DEFAULT_SELL_TAX_RATE),
+            **self._normalize_capital_slot_config_from_row(row),
             "last_run_at": row["last_run_at"],
             "updated_at": row["updated_at"],
         }
@@ -2265,6 +2340,17 @@ class QuantSimDB:
         market: Optional[str] = None,
         commission_rate: Optional[float] = None,
         sell_tax_rate: Optional[float] = None,
+        capital_slot_enabled: Optional[bool] = None,
+        capital_pool_min_cash: Optional[float] = None,
+        capital_pool_max_cash: Optional[float] = None,
+        capital_slot_min_cash: Optional[float] = None,
+        capital_max_slots: Optional[int] = None,
+        capital_min_buy_slot_fraction: Optional[float] = None,
+        capital_full_buy_edge: Optional[float] = None,
+        capital_confidence_weight: Optional[float] = None,
+        capital_high_price_threshold: Optional[float] = None,
+        capital_high_price_max_slot_units: Optional[float] = None,
+        capital_sell_cash_reuse_policy: Optional[str] = None,
         last_run_at: Optional[str] = None,
     ) -> None:
         existing = self.get_scheduler_config()
@@ -2299,6 +2385,31 @@ class QuantSimDB:
                 existing["sell_tax_rate"] if sell_tax_rate is None else sell_tax_rate,
                 default=DEFAULT_SELL_TAX_RATE,
             ),
+            **normalize_capital_slot_config(
+                {
+                    "capital_slot_enabled": existing["capital_slot_enabled"] if capital_slot_enabled is None else capital_slot_enabled,
+                    "capital_pool_min_cash": existing["capital_pool_min_cash"] if capital_pool_min_cash is None else capital_pool_min_cash,
+                    "capital_pool_max_cash": existing["capital_pool_max_cash"] if capital_pool_max_cash is None else capital_pool_max_cash,
+                    "capital_slot_min_cash": existing["capital_slot_min_cash"] if capital_slot_min_cash is None else capital_slot_min_cash,
+                    "capital_max_slots": existing["capital_max_slots"] if capital_max_slots is None else capital_max_slots,
+                    "capital_min_buy_slot_fraction": existing["capital_min_buy_slot_fraction"]
+                    if capital_min_buy_slot_fraction is None
+                    else capital_min_buy_slot_fraction,
+                    "capital_full_buy_edge": existing["capital_full_buy_edge"] if capital_full_buy_edge is None else capital_full_buy_edge,
+                    "capital_confidence_weight": existing["capital_confidence_weight"]
+                    if capital_confidence_weight is None
+                    else capital_confidence_weight,
+                    "capital_high_price_threshold": existing["capital_high_price_threshold"]
+                    if capital_high_price_threshold is None
+                    else capital_high_price_threshold,
+                    "capital_high_price_max_slot_units": existing["capital_high_price_max_slot_units"]
+                    if capital_high_price_max_slot_units is None
+                    else capital_high_price_max_slot_units,
+                    "capital_sell_cash_reuse_policy": existing["capital_sell_cash_reuse_policy"]
+                    if capital_sell_cash_reuse_policy is None
+                    else capital_sell_cash_reuse_policy,
+                }
+            ),
             "last_run_at": existing["last_run_at"] if last_run_at is None else last_run_at,
         }
         if payload["interval_minutes"] <= 0:
@@ -2316,7 +2427,13 @@ class QuantSimDB:
                 analysis_timeframe = ?, strategy_mode = ?, strategy_profile_id = ?,
                 ai_dynamic_strategy = ?, ai_dynamic_strength = ?, ai_dynamic_lookback = ?,
                 start_date = ?, market = ?,
-                commission_rate = ?, sell_tax_rate = ?, last_run_at = ?, updated_at = ?
+                commission_rate = ?, sell_tax_rate = ?,
+                capital_slot_enabled = ?, capital_pool_min_cash = ?, capital_pool_max_cash = ?,
+                capital_slot_min_cash = ?, capital_max_slots = ?, capital_min_buy_slot_fraction = ?,
+                capital_full_buy_edge = ?, capital_confidence_weight = ?,
+                capital_high_price_threshold = ?, capital_high_price_max_slot_units = ?,
+                capital_sell_cash_reuse_policy = ?,
+                last_run_at = ?, updated_at = ?
             WHERE id = 1
             """,
             (
@@ -2334,6 +2451,17 @@ class QuantSimDB:
                 payload["market"],
                 payload["commission_rate"],
                 payload["sell_tax_rate"],
+                int(bool(payload["capital_slot_enabled"])),
+                payload["capital_pool_min_cash"],
+                payload["capital_pool_max_cash"],
+                payload["capital_slot_min_cash"],
+                payload["capital_max_slots"],
+                payload["capital_min_buy_slot_fraction"],
+                payload["capital_full_buy_edge"],
+                payload["capital_confidence_weight"],
+                payload["capital_high_price_threshold"],
+                payload["capital_high_price_max_slot_units"],
+                payload["capital_sell_cash_reuse_policy"],
                 payload["last_run_at"],
                 self._now(),
             ),
@@ -2527,6 +2655,8 @@ class QuantSimDB:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM strategy_signals")
+        cursor.execute("DELETE FROM sim_lot_slot_allocations")
+        cursor.execute("DELETE FROM sim_capital_slots")
         cursor.execute("DELETE FROM sim_position_lots")
         cursor.execute("DELETE FROM sim_positions")
         cursor.execute("DELETE FROM sim_trades")
@@ -2735,6 +2865,290 @@ class QuantSimDB:
         conn.commit()
         conn.close()
 
+    def get_capital_slots(self) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        self._sync_capital_slots(cursor)
+        cursor.execute(
+            """
+            SELECT * FROM sim_capital_slots
+            ORDER BY slot_index ASC
+            """
+        )
+        rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+        conn.commit()
+        conn.close()
+        return rows
+
+    def get_lot_slot_allocations(self, stock_code: str | None = None) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        params: list[Any] = []
+        where_sql = ""
+        if stock_code:
+            where_sql = "WHERE stock_code = ?"
+            params.append(str(stock_code).strip())
+        cursor.execute(
+            f"""
+            SELECT * FROM sim_lot_slot_allocations
+            {where_sql}
+            ORDER BY created_at DESC, id DESC
+            """,
+            tuple(params),
+        )
+        rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def settle_capital_slots(self) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE sim_capital_slots
+            SET available_cash = available_cash + settling_cash,
+                settling_cash = 0,
+                updated_at = ?
+            WHERE settling_cash > 0
+            """,
+            (self._now(),),
+        )
+        self._sync_capital_slots(cursor)
+        conn.commit()
+        conn.close()
+
+    def _capital_config_from_cursor(self, cursor: sqlite3.Cursor) -> dict[str, Any]:
+        cursor.execute("SELECT * FROM sim_scheduler_config WHERE id = 1")
+        row = cursor.fetchone()
+        if row is None:
+            return normalize_capital_slot_config()
+        return self._normalize_capital_slot_config_from_row(row)
+
+    def _sync_capital_slots(self, cursor: sqlite3.Cursor) -> dict[str, Any]:
+        config = self._capital_config_from_cursor(cursor)
+        if not config["capital_slot_enabled"]:
+            return {"config": config, "slot_plan": calculate_slot_plan(0, config), "slots": []}
+
+        summary = self._build_account_summary(cursor)
+        slot_plan = calculate_slot_plan(float(summary["total_equity"] or 0), config)
+        if not slot_plan["pool_ready"]:
+            return {"config": config, "slot_plan": slot_plan, "slots": []}
+
+        target_count = int(slot_plan["slot_count"])
+        cursor.execute(
+            """
+            SELECT DISTINCT slot_index
+            FROM sim_lot_slot_allocations
+            WHERE status = 'open'
+            """
+        )
+        open_indexes = [int(row["slot_index"] or 0) for row in cursor.fetchall()]
+        if open_indexes:
+            target_count = max(target_count, max(open_indexes))
+
+        slot_budget = float(slot_plan["slot_budget"] or 0)
+        now_text = self._now()
+        for slot_index in range(1, target_count + 1):
+            cursor.execute("SELECT * FROM sim_capital_slots WHERE slot_index = ?", (slot_index,))
+            row = cursor.fetchone()
+            occupied = float(row["occupied_cash"] or 0) if row else 0.0
+            settling = float(row["settling_cash"] or 0) if row else 0.0
+            budget = slot_budget if slot_index <= int(slot_plan["slot_count"]) else 0.0
+            available = max(0.0, budget - occupied - settling)
+            if row:
+                cursor.execute(
+                    """
+                    UPDATE sim_capital_slots
+                    SET budget_cash = ?, available_cash = ?, occupied_cash = ?,
+                        settling_cash = ?, updated_at = ?
+                    WHERE slot_index = ?
+                    """,
+                    (round(budget, 4), round(available, 4), round(occupied, 4), round(settling, 4), now_text, slot_index),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO sim_capital_slots
+                    (slot_index, budget_cash, available_cash, occupied_cash, settling_cash, updated_at)
+                    VALUES (?, ?, ?, 0, 0, ?)
+                    """,
+                    (slot_index, round(budget, 4), round(available, 4), now_text),
+                )
+
+        cursor.execute(
+            """
+            DELETE FROM sim_capital_slots
+            WHERE slot_index > ?
+              AND occupied_cash <= 0
+              AND settling_cash <= 0
+            """,
+            (target_count,),
+        )
+        cursor.execute("SELECT * FROM sim_capital_slots ORDER BY slot_index ASC")
+        return {
+            "config": config,
+            "slot_plan": slot_plan,
+            "slots": [self._row_to_dict(row) for row in cursor.fetchall()],
+        }
+
+    def _reserve_capital_slots(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        position_lot_db_id: int,
+        lot_id: str,
+        stock_code: str,
+        quantity: int,
+        amount: float,
+    ) -> list[dict[str, Any]]:
+        config = self._capital_config_from_cursor(cursor)
+        if not config["capital_slot_enabled"]:
+            return []
+
+        cursor.execute(
+            """
+            SELECT * FROM sim_capital_slots
+            WHERE available_cash > 0
+            ORDER BY slot_index ASC
+            """
+        )
+        slots = cursor.fetchall()
+        if not slots:
+            state = self._sync_capital_slots(cursor)
+            if not state["slot_plan"].get("pool_ready"):
+                raise ValueError("capital slot pool below minimum cash")
+            cursor.execute(
+                """
+                SELECT * FROM sim_capital_slots
+                WHERE available_cash > 0
+                ORDER BY slot_index ASC
+                """
+            )
+            slots = cursor.fetchall()
+        remaining_cash = round(float(amount or 0), 4)
+        if sum(float(slot["available_cash"] or 0) for slot in slots) + 1e-6 < remaining_cash:
+            raise ValueError("insufficient capital slot budget")
+
+        remaining_quantity = int(quantity or 0)
+        allocations: list[dict[str, Any]] = []
+        now_text = self._now()
+        for index, slot in enumerate(slots):
+            if remaining_cash <= 0:
+                break
+            slot_available = float(slot["available_cash"] or 0)
+            allocated_cash = round(min(slot_available, remaining_cash), 4)
+            if allocated_cash <= 0:
+                continue
+            if index == len(slots) - 1 or round(remaining_cash - allocated_cash, 4) <= 0:
+                allocated_quantity = remaining_quantity
+            else:
+                allocated_quantity = max(0, int(round(quantity * (allocated_cash / amount))))
+                allocated_quantity = min(allocated_quantity, remaining_quantity)
+            remaining_cash = round(remaining_cash - allocated_cash, 4)
+            remaining_quantity -= allocated_quantity
+            slot_index = int(slot["slot_index"])
+            cursor.execute(
+                """
+                UPDATE sim_capital_slots
+                SET available_cash = available_cash - ?,
+                    occupied_cash = occupied_cash + ?,
+                    updated_at = ?
+                WHERE slot_index = ?
+                """,
+                (allocated_cash, allocated_cash, now_text, slot_index),
+            )
+            cursor.execute(
+                """
+                INSERT INTO sim_lot_slot_allocations
+                (
+                    position_lot_db_id, lot_id, slot_index, stock_code,
+                    allocated_cash, allocated_quantity, released_cash,
+                    released_quantity, status, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'open', ?)
+                """,
+                (
+                    position_lot_db_id,
+                    lot_id,
+                    slot_index,
+                    stock_code,
+                    allocated_cash,
+                    allocated_quantity,
+                    now_text,
+                ),
+            )
+            allocations.append(
+                {
+                    "slot_index": slot_index,
+                    "allocated_cash": allocated_cash,
+                    "allocated_quantity": allocated_quantity,
+                }
+            )
+
+        if remaining_cash > 0.01:
+            raise ValueError("capital slot allocation did not cover buy amount")
+        return allocations
+
+    def _release_capital_slot_allocations(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        position_lot_db_id: int,
+        consumed_quantity: int,
+        proceeds: float,
+    ) -> None:
+        if consumed_quantity <= 0:
+            return
+        config = self._capital_config_from_cursor(cursor)
+        if not config["capital_slot_enabled"]:
+            return
+        cursor.execute(
+            """
+            SELECT * FROM sim_lot_slot_allocations
+            WHERE position_lot_db_id = ? AND status = 'open'
+            ORDER BY id ASC
+            """,
+            (position_lot_db_id,),
+        )
+        allocations = cursor.fetchall()
+        remaining_quantity = int(consumed_quantity)
+        now_text = self._now()
+        for allocation in allocations:
+            if remaining_quantity <= 0:
+                break
+            allocated_quantity = int(allocation["allocated_quantity"] or 0)
+            released_quantity = int(allocation["released_quantity"] or 0)
+            available_quantity = max(0, allocated_quantity - released_quantity)
+            if available_quantity <= 0:
+                continue
+            consume_quantity = min(remaining_quantity, available_quantity)
+            remaining_quantity -= consume_quantity
+            quantity_ratio = consume_quantity / max(allocated_quantity, 1)
+            occupied_release = round(float(allocation["allocated_cash"] or 0) * quantity_ratio, 4)
+            proceeds_release = round(float(proceeds or 0) * (consume_quantity / max(consumed_quantity, 1)), 4)
+            next_released_quantity = released_quantity + consume_quantity
+            next_released_cash = round(float(allocation["released_cash"] or 0) + proceeds_release, 4)
+            next_status = "closed" if next_released_quantity >= allocated_quantity else "open"
+            slot_index = int(allocation["slot_index"])
+            cursor.execute(
+                """
+                UPDATE sim_lot_slot_allocations
+                SET released_cash = ?, released_quantity = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (next_released_cash, next_released_quantity, next_status, now_text, int(allocation["id"])),
+            )
+            cursor.execute(
+                """
+                UPDATE sim_capital_slots
+                SET occupied_cash = MAX(0, occupied_cash - ?),
+                    settling_cash = settling_cash + ?,
+                    updated_at = ?
+                WHERE slot_index = ?
+                """,
+                (occupied_release, proceeds_release, now_text, slot_index),
+            )
+
     def _apply_buy(
         self,
         cursor: sqlite3.Cursor,
@@ -2756,6 +3170,7 @@ class QuantSimDB:
         available_cash = self._get_available_cash(cursor)
         if amount > available_cash:
             raise ValueError("insufficient available cash")
+        self._sync_capital_slots(cursor)
 
         cursor.execute("SELECT * FROM sim_positions WHERE stock_code = ?", (stock_code,))
         position = cursor.fetchone()
@@ -2805,6 +3220,7 @@ class QuantSimDB:
 
         lot_entry_price = round(amount / quantity, 4)
         unlock_date = self._next_trading_day(executed_at.date()).isoformat()
+        lot_id = self._build_lot_id(stock_code)
         cursor.execute(
             """
             INSERT INTO sim_position_lots
@@ -2816,7 +3232,7 @@ class QuantSimDB:
             """,
             (
                 position_id,
-                self._build_lot_id(stock_code),
+                lot_id,
                 stock_code,
                 quantity,
                 quantity,
@@ -2826,11 +3242,21 @@ class QuantSimDB:
                 unlock_date,
             ),
         )
+        lot_db_id = int(cursor.lastrowid)
+        slot_allocations = self._reserve_capital_slots(
+            cursor,
+            position_lot_db_id=lot_db_id,
+            lot_id=lot_id,
+            stock_code=stock_code,
+            quantity=quantity,
+            amount=amount,
+        )
         self._set_available_cash(cursor, available_cash - amount)
         return {
             "candidate_status": "holding",
             "amount": amount,
             "realized_pnl": 0.0,
+            "slot_allocations": slot_allocations,
         }
 
     def _apply_sell(
@@ -2861,6 +3287,7 @@ class QuantSimDB:
         remaining_to_sell = quantity
         executed_at_text = self._format_datetime(executed_at)
         realized_pnl = 0.0
+        consumed_lots: list[dict[str, Any]] = []
         for row, lot in lots:
             if remaining_to_sell <= 0:
                 break
@@ -2870,6 +3297,7 @@ class QuantSimDB:
             consumed = lot.consume(remaining_to_sell)
             remaining_to_sell -= consumed
             realized_pnl += round((price - lot.entry_price) * consumed, 4)
+            consumed_lots.append({"position_lot_db_id": int(row["id"]), "quantity": consumed})
             next_status = "closed" if lot.remaining_quantity == 0 else self._current_lot_status(lot, current_date)
             cursor.execute(
                 """
@@ -2905,6 +3333,15 @@ class QuantSimDB:
             sell_fee = round(gross_proceeds * (cost_cfg["commission_rate"] + cost_cfg["sell_tax_rate"]), 4)
         proceeds = round(gross_proceeds - sell_fee, 4)
         realized_pnl = round(realized_pnl - sell_fee, 4)
+        for consumed_lot in consumed_lots:
+            lot_quantity = int(consumed_lot["quantity"] or 0)
+            lot_proceeds = round(proceeds * (lot_quantity / max(quantity, 1)), 4)
+            self._release_capital_slot_allocations(
+                cursor,
+                position_lot_db_id=int(consumed_lot["position_lot_db_id"]),
+                consumed_quantity=lot_quantity,
+                proceeds=lot_proceeds,
+            )
         self._set_available_cash(cursor, self._get_available_cash(cursor) + proceeds)
 
         if remaining_quantity > 0:
@@ -3080,9 +3517,15 @@ class QuantSimDB:
                     analysis_timeframe, strategy_mode, strategy_profile_id,
                     ai_dynamic_strategy, ai_dynamic_strength, ai_dynamic_lookback,
                     start_date, market,
-                    commission_rate, sell_tax_rate, last_run_at, updated_at
+                    commission_rate, sell_tax_rate,
+                    capital_slot_enabled, capital_pool_min_cash, capital_pool_max_cash,
+                    capital_slot_min_cash, capital_max_slots, capital_min_buy_slot_fraction,
+                    capital_full_buy_edge, capital_confidence_weight,
+                    capital_high_price_threshold, capital_high_price_max_slot_units,
+                    capital_sell_cash_reuse_policy,
+                    last_run_at, updated_at
                 )
-                VALUES (1, 0, 0, 15, 1, ?, ?, ?, ?, ?, ?, ?, 'CN', ?, ?, NULL, ?)
+                VALUES (1, 0, 0, 15, 1, ?, ?, ?, ?, ?, ?, ?, 'CN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     DEFAULT_ANALYSIS_TIMEFRAME,
@@ -3094,6 +3537,17 @@ class QuantSimDB:
                     date.today().isoformat(),
                     DEFAULT_COMMISSION_RATE,
                     DEFAULT_SELL_TAX_RATE,
+                    int(DEFAULT_CAPITAL_SLOT_ENABLED),
+                    DEFAULT_CAPITAL_POOL_MIN_CASH,
+                    DEFAULT_CAPITAL_POOL_MAX_CASH,
+                    DEFAULT_CAPITAL_SLOT_MIN_CASH,
+                    DEFAULT_CAPITAL_MAX_SLOTS,
+                    DEFAULT_CAPITAL_MIN_BUY_SLOT_FRACTION,
+                    DEFAULT_CAPITAL_FULL_BUY_EDGE,
+                    DEFAULT_CAPITAL_CONFIDENCE_WEIGHT,
+                    DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD,
+                    DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS,
+                    DEFAULT_CAPITAL_SELL_CASH_REUSE_POLICY,
                     self._now(),
                 ),
             )
@@ -3170,6 +3624,45 @@ class QuantSimDB:
                 """,
                 (DEFAULT_SELL_TAX_RATE,),
             )
+            for column, value in (
+                ("capital_slot_enabled", int(DEFAULT_CAPITAL_SLOT_ENABLED)),
+                ("capital_pool_min_cash", DEFAULT_CAPITAL_POOL_MIN_CASH),
+                ("capital_pool_max_cash", DEFAULT_CAPITAL_POOL_MAX_CASH),
+                ("capital_slot_min_cash", DEFAULT_CAPITAL_SLOT_MIN_CASH),
+                ("capital_max_slots", DEFAULT_CAPITAL_MAX_SLOTS),
+                ("capital_min_buy_slot_fraction", DEFAULT_CAPITAL_MIN_BUY_SLOT_FRACTION),
+                ("capital_full_buy_edge", DEFAULT_CAPITAL_FULL_BUY_EDGE),
+                ("capital_confidence_weight", DEFAULT_CAPITAL_CONFIDENCE_WEIGHT),
+                ("capital_high_price_threshold", DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD),
+                ("capital_high_price_max_slot_units", DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS),
+                ("capital_sell_cash_reuse_policy", DEFAULT_CAPITAL_SELL_CASH_REUSE_POLICY),
+            ):
+                cursor.execute(
+                    f"""
+                    UPDATE sim_scheduler_config
+                    SET {column} = COALESCE({column}, ?)
+                    WHERE id = 1
+                    """,
+                    (value,),
+                )
+
+    @staticmethod
+    def _normalize_capital_slot_config_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return normalize_capital_slot_config(
+            {
+                "capital_slot_enabled": bool(row["capital_slot_enabled"]),
+                "capital_pool_min_cash": row["capital_pool_min_cash"],
+                "capital_pool_max_cash": row["capital_pool_max_cash"],
+                "capital_slot_min_cash": row["capital_slot_min_cash"],
+                "capital_max_slots": row["capital_max_slots"],
+                "capital_min_buy_slot_fraction": row["capital_min_buy_slot_fraction"],
+                "capital_full_buy_edge": row["capital_full_buy_edge"],
+                "capital_confidence_weight": row["capital_confidence_weight"],
+                "capital_high_price_threshold": row["capital_high_price_threshold"],
+                "capital_high_price_max_slot_units": row["capital_high_price_max_slot_units"],
+                "capital_sell_cash_reuse_policy": row["capital_sell_cash_reuse_policy"],
+            }
+        )
 
     @staticmethod
     def _normalize_analysis_timeframe(value: str | None) -> str:

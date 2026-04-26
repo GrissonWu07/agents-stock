@@ -309,6 +309,17 @@ export type LiveSimSnapshot = {
     initialCapital: string;
     commissionRatePct?: string;
     sellTaxRatePct?: string;
+    capitalSlotEnabled?: boolean;
+    capitalPoolMinCash?: string;
+    capitalPoolMaxCash?: string;
+    capitalSlotMinCash?: string;
+    capitalMaxSlots?: string;
+    capitalMinBuySlotFraction?: string;
+    capitalFullBuyEdge?: string;
+    capitalConfidenceWeight?: string;
+    capitalHighPriceThreshold?: string;
+    capitalHighPriceMaxSlotUnits?: string;
+    capitalSellCashReusePolicy?: string;
   };
   status: {
     running: string;
@@ -326,6 +337,7 @@ export type LiveSimSnapshot = {
   };
   holdings: TableSection;
   trades: TableSection;
+  capitalSlots?: TableSection;
   curve: ChartPoint[];
 };
 
