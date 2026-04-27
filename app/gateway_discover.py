@@ -976,7 +976,6 @@ def _action_discover_run_strategy(context: Any, payload: Any) -> dict[str, Any]:
     snapshot["taskId"] = task_id
     return snapshot
 
-
 def _action_discover_reset(context: Any, payload: Any) -> dict[str, Any]:
     _ = payload
     base_dir = Path(context.selector_result_dir)
@@ -986,13 +985,11 @@ def _action_discover_reset(context: Any, payload: Any) -> dict[str, Any]:
             file_path.unlink()
     return _snapshot_discover(context)
 
-
 snapshot_discover = _snapshot_discover
 action_discover_item = _action_discover_item
 action_discover_batch = _action_discover_batch
 action_discover_run_strategy = _action_discover_run_strategy
 action_discover_reset = _action_discover_reset
-
 __all__ = [
     "action_discover_batch",
     "action_discover_item",
