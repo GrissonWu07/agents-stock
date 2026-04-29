@@ -3782,7 +3782,7 @@ a {
   padding: 12px 14px;
   text-align: left;
   cursor: pointer;
-  min-height: 66px;
+  min-height: 48px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -3804,14 +3804,6 @@ a {
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--text-strong);
-}
-
-.research-module-list__output {
-  color: var(--text-soft);
-  font-size: 0.82rem;
-  line-height: 1.45;
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 
 .research-module-detail {
@@ -3850,6 +3842,10 @@ a {
   height: 1px;
   background: var(--soft-line);
   margin: 12px 0;
+}
+
+.research-module-card__analysis-head {
+  margin-bottom: 12px;
 }
 
 .research-module-card__output {
@@ -3906,9 +3902,6 @@ a {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(540px, 68vh);
-  overflow: auto;
-  padding-right: 4px;
 }
 
 .research-module-card__insight-item {
@@ -3942,8 +3935,6 @@ a {
   border-radius: 14px;
   background: #f9fbff;
   padding: 14px 16px;
-  max-height: min(540px, 68vh);
-  overflow: auto;
 }
 
 .research-module-card__empty-note {

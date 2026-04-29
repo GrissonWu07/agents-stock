@@ -59,12 +59,6 @@ const getOutputScore = (output: string) => {
   return extractOutputCount(output);
 };
 
-const getOutputTone = (output: string) => {
-  if (output.includes("/")) return "warning";
-  if (extractOutputCount(output) > 0) return "accent";
-  return "neutral";
-};
-
 const normalizeText = (value: string) =>
   value
     .trim()
@@ -132,14 +126,13 @@ const extractStructuredSections = (note: string) => {
   }
 
   if (sections.length > 0) {
-    return sections.filter((section) => section.title && section.body).slice(0, 12);
+    return sections.filter((section) => section.title && section.body);
   }
 
   return note
     .split(/\n{2,}/)
     .map((segment) => segment.trim())
     .filter(Boolean)
-    .slice(0, 8)
     .map((segment, index) => ({
       title: t("{index}) Details", { index: index + 1 }),
       body: cleanStructuredText(segment),
@@ -237,12 +230,6 @@ export function ResearchPage({ client }: ResearchPageProps) {
   const outputTotalRows = Number(snapshot?.outputTable.pagination?.totalRows ?? sourceRows.length);
   const outputTotalPages = Math.max(1, Number(snapshot?.outputTable.pagination?.totalPages ?? 1));
   const outputCurrentPage = Math.max(1, Number(snapshot?.outputTable.pagination?.page ?? outputPage));
-  const maxOutputCount = useMemo(() => {
-    if (!snapshot) return 1;
-    const values = snapshot.modules.map((item) => getOutputScore(item.output));
-    const maxValue = Math.max(...values, 0);
-    return maxValue > 0 ? maxValue : 1;
-  }, [snapshot]);
   const modulesWithInsights = useMemo<ResearchModuleWithInsights[]>(() => {
     if (!snapshot) return [];
     const outputInsights: ResearchSnapshot["marketView"] = Array.isArray(snapshot.marketView) ? snapshot.marketView : [];
@@ -541,7 +528,6 @@ export function ResearchPage({ client }: ResearchPageProps) {
                     onClick={() => setSelectedModuleName(module.name)}
                   >
                     <div className="research-module-list__title">{localizeResearchText(module.name)}</div>
-                    <div className="research-module-list__output">{localizeResearchText(module.output)}</div>
                   </button>
                 );
               })}
@@ -549,59 +535,9 @@ export function ResearchPage({ client }: ResearchPageProps) {
             <section className="research-module-detail">
               {selectedModule ? (
                 <div className="research-module-card research-module-card--detail">
-                  <div className="research-module-card__output">
-                    <div className="research-module-card__output-meta">
-                      <span>{t("Output visualization")}</span>
-                      <span>{localizeResearchText(selectedModule.output)}</span>
-                    </div>
-                    <div className="research-module-card__meter-track">
-                      {(() => {
-                        const sentiment = extractOutputSentiment(selectedModule.output);
-                        if (sentiment) {
-                          const normalizer = Math.max(maxOutputCount, sentiment.total, 1);
-                          const bullishRate = Math.max(4, Math.round((sentiment.bullish / normalizer) * 100));
-                          const bearishRate = Math.max(4, Math.round((sentiment.bearish / normalizer) * 100));
-                          const neutralRate = Math.max(0, 100 - bullishRate - bearishRate);
-                          return (
-                            <>
-                              <div
-                                className="research-module-card__meter-fill research-module-card__meter-fill--accent"
-                                style={{ width: `${Math.min(100, bullishRate)}%` }}
-                                title={t("Bullish {count}", { count: sentiment.bullish })}
-                              />
-                              <div
-                                className="research-module-card__meter-track-separator"
-                                style={{ width: `${neutralRate}px` }}
-                              />
-                              <div
-                                className="research-module-card__meter-fill research-module-card__meter-fill--muted"
-                                style={{ width: `${Math.min(100, bearishRate)}%` }}
-                                title={t("Bearish {count}", { count: sentiment.bearish })}
-                              />
-                            </>
-                          );
-                        }
-
-                        const ratio = Math.max(
-                          6,
-                          Math.round((extractOutputCount(selectedModule.output) / maxOutputCount) * 100),
-                        );
-                        return <div className="research-module-card__meter-fill" style={{ width: `${ratio}%` }} />;
-                      })()}
-                    </div>
+                  <div className="research-module-card__analysis-head">
+                    <h3 className="research-module-card__name">{localizeResearchText(selectedModule.name)}</h3>
                   </div>
-                  <div className="research-module-card__divider" />
-                  <div className="research-module-card__header">
-                    <div>
-                      <h3 className="research-module-card__name">{localizeResearchText(selectedModule.name)}</h3>
-                      <div className="research-module-card__note">
-                        {selectedModule.sections.length > 0 ? t("Full analysis expanded. See thematic details below.") : localizeResearchText(selectedModule.note)}
-                      </div>
-                    </div>
-                    <span className={`badge badge--${getOutputTone(selectedModule.output)}`}>{localizeResearchText(selectedModule.output)}</span>
-                  </div>
-                  <div className="research-module-card__divider" />
-                  <div className="research-module-card__insight-title">{t("Top-level result")}</div>
                   {selectedModule.sections.length > 0 ? (
                     <div className="research-module-card__insight-list">
                       {selectedModule.sections.map((section, index) => (
