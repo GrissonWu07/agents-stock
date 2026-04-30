@@ -108,11 +108,11 @@ def _snapshot_live_sim(context: UIApiContext, table_query: dict[str, Any] | None
                         _num(item.get("settling_cash")),
                     ],
                 }
-                for item in db.get_capital_slots()
+                for item in db.get_capital_slots(sync=False)
             ],
             "暂无资金槽",
         ),
-        "capitalPool": build_live_sim_capital_pool(db),
+        "capitalPool": build_live_sim_capital_pool(db, sync_slots=False),
         "candidatePool": candidate_table,
         "pendingSignals": [
             _insight(

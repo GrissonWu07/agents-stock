@@ -743,53 +743,8 @@ def _action_his_replay_start(context: UIApiContext, payload: Any) -> dict[str, A
 
 
 def _action_his_replay_continue(context: UIApiContext, payload: Any) -> dict[str, Any]:
-    defaults = _latest_replay_defaults(context)
-    body = _payload_dict(payload)
-    _, commission_rate = _payload_fee_rate(
-        body,
-        pct_key="commissionRatePct",
-        camel_key="commissionRate",
-        snake_key="commission_rate",
-        default=float(defaults["commission_rate"]),
-    )
-    _, sell_tax_rate = _payload_fee_rate(
-        body,
-        pct_key="sellTaxRatePct",
-        camel_key="sellTaxRate",
-        snake_key="sell_tax_rate",
-        default=float(defaults["sell_tax_rate"]),
-    )
-    context.replay_service().enqueue_past_to_live(
-        start_datetime=body.get("startDateTime") or body.get("start_datetime") or defaults["start_datetime"],
-        end_datetime=body.get("endDateTime") or body.get("end_datetime") or defaults["end_datetime"],
-        timeframe=body.get("timeframe") or defaults["timeframe"],
-        market=body.get("market") or defaults["market"],
-        initial_cash=_float(
-            body.get("initialCash") if "initialCash" in body else body.get("initial_cash"),
-            float(defaults.get("initial_cash") or 100000),
-        ),
-        strategy_mode=body.get("strategyMode") or body.get("strategy_mode") or defaults["strategy_mode"],
-        strategy_profile_id=_enabled_strategy_profile_id(
-            context,
-            body.get("strategyProfileId") or body.get("strategy_profile_id") or defaults.get("strategy_profile_id"),
-        ),
-        ai_dynamic_strategy=body.get("aiDynamicStrategy") or body.get("ai_dynamic_strategy") or defaults.get("ai_dynamic_strategy"),
-        ai_dynamic_strength=_normalize_dynamic_strength(
-            body.get("aiDynamicStrength") if "aiDynamicStrength" in body else body.get("ai_dynamic_strength"),
-            _normalize_dynamic_strength(defaults.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH),
-        ),
-        ai_dynamic_lookback=_normalize_dynamic_lookback(
-            body.get("aiDynamicLookback") if "aiDynamicLookback" in body else body.get("ai_dynamic_lookback"),
-            _normalize_dynamic_lookback(defaults.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK),
-        )
-        or DEFAULT_AI_DYNAMIC_LOOKBACK,
-        commission_rate=commission_rate,
-        sell_tax_rate=sell_tax_rate,
-        overwrite_live=bool(body.get("overwriteLive", False) or body.get("overwrite_live", False)),
-        auto_start_scheduler=body.get("autoStartScheduler", True) if "autoStartScheduler" in body else body.get("auto_start_scheduler", True),
-    )
-    return _snapshot_his_replay(context)
-
+    del context, payload
+    raise ValueError("接续到实时模拟账户已停用，请使用历史回放查看独立回放结果。")
 
 def _action_his_replay_cancel(context: UIApiContext, payload: Any) -> dict[str, Any]:
     body = _payload_dict(payload)

@@ -11,7 +11,6 @@ import { ReplayCapitalPoolPanel } from "./replay-capital-pool-panel";
 
 const REPLAY_MODE_OPTIONS = [
   { value: "historical_range", label: "历史区间回放" },
-  { value: "continuous_to_live", label: "从过去接续到实时自动模拟" },
 ];
 
 const TIMEFRAME_OPTIONS = [
@@ -77,8 +76,8 @@ function parseDateRange(range: string) {
 }
 
 function parseReplayMode(value: string) {
-  const normalized = String(value).trim().toLowerCase();
-  return normalized === "continuous_to_live" || normalized.includes("接续") ? "continuous_to_live" : "historical_range";
+  void value;
+  return "historical_range";
 }
 
 function localizeReplayMode(value: string) {
@@ -294,8 +293,6 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
   const [commissionRatePct, setCommissionRatePct] = useState(0.03);
   const [sellTaxRatePct, setSellTaxRatePct] = useState(0.1);
   const [replayUntilNow, setReplayUntilNow] = useState(false);
-  const [overwriteLive, setOverwriteLive] = useState(false);
-  const [autoStartScheduler, setAutoStartScheduler] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [tradeStockFilter, setTradeStockFilter] = useState("");
   const [tradeActionFilter, setTradeActionFilter] = useState("ALL");
@@ -360,8 +357,6 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     setCommissionRatePct(parseRatePercent(snapshot.config.commissionRatePct, 0.03));
     setSellTaxRatePct(parseRatePercent(snapshot.config.sellTaxRatePct, 0.1));
     setReplayUntilNow(false);
-    setOverwriteLive(false);
-    setAutoStartScheduler(true);
     setSelectedTaskId((prev) => pickPreferredReplayTaskId(snapshot.tasks, prev));
   }, [snapshotVersion]);
 
@@ -678,7 +673,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
     setIsReplayStarting(true);
     setReplayStartStatus("submitting");
     try {
-      const nextSnapshot = await resource.runAction(replayMode === "continuous_to_live" ? "continue" : "start", {
+      const nextSnapshot = await resource.runAction("start", {
         startDateTime: `${startDate} ${startTime}:00`,
         endDateTime: replayUntilNow ? null : `${endDate} ${endTime}:00`,
         timeframe,
@@ -691,8 +686,6 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
         aiDynamicLookback,
         commissionRatePct,
         sellTaxRatePct,
-        overwriteLive,
-        autoStartScheduler,
       });
       if (!nextSnapshot) {
         setReplayStartStatus("idle");
@@ -854,22 +847,6 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                   结束时间留空则回放到当前时刻
                 </span>
               </label>
-              {replayMode === "continuous_to_live" ? (
-                <>
-                  <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
-                    <input type="checkbox" checked={overwriteLive} onChange={(event) => setOverwriteLive(event.target.checked)} />
-                    <span className="field__label" style={{ marginBottom: 0 }}>
-                      覆盖当前实时模拟账户
-                    </span>
-                  </label>
-                  <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}>
-                    <input type="checkbox" checked={autoStartScheduler} onChange={(event) => setAutoStartScheduler(event.target.checked)} />
-                    <span className="field__label" style={{ marginBottom: 0 }}>
-                      回放完成后自动启动定时分析
-                    </span>
-                  </label>
-                </>
-              ) : null}
             </div>
             <div className="card-divider" />
             <div className="toolbar toolbar--compact">
@@ -879,7 +856,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
                 disabled={isReplayStarting || resource.status === "loading" || hasActiveReplayTask}
                 onClick={() => void handleReplayStart()}
               >
-                {isReplayStarting ? "提交中..." : replayMode === "continuous_to_live" ? "接续" : "开始回溯"}
+                {isReplayStarting ? "提交中..." : "开始回溯"}
               </button>
               <button
                 className="button button--secondary"

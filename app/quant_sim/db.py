@@ -3342,10 +3342,11 @@ class QuantSimDB:
         conn.commit()
         conn.close()
 
-    def get_capital_slots(self) -> list[dict[str, Any]]:
+    def get_capital_slots(self, *, sync: bool = True) -> list[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
-        self._sync_capital_slots(cursor)
+        if sync:
+            self._sync_capital_slots(cursor)
         cursor.execute(
             """
             SELECT * FROM sim_capital_slots
@@ -3353,7 +3354,8 @@ class QuantSimDB:
             """
         )
         rows = [self._row_to_dict(row) for row in cursor.fetchall()]
-        conn.commit()
+        if sync:
+            conn.commit()
         conn.close()
         return rows
 

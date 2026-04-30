@@ -325,12 +325,12 @@ def _capital_lot_card(group: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_live_sim_capital_pool(db: QuantSimDB) -> dict[str, Any]:
+def build_live_sim_capital_pool(db: QuantSimDB, *, sync_slots: bool = True) -> dict[str, Any]:
     account = db.get_account_summary()
     scheduler_config = db.get_scheduler_config()
     positions = db.get_positions()
     positions_by_code = {_txt(position.get("stock_code")): position for position in positions if _txt(position.get("stock_code"))}
-    slot_rows = db.get_capital_slots()
+    slot_rows = db.get_capital_slots(sync=sync_slots)
     slot_by_index = {_safe_int(slot.get("slot_index")): slot for slot in slot_rows}
     plan = calculate_slot_plan(float(account.get("total_equity") or 0.0), normalize_capital_slot_config(scheduler_config))
     open_lots = _open_lots_from_live_positions(db, positions)

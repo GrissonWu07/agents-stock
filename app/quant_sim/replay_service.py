@@ -230,39 +230,23 @@ class QuantSimReplayService:
         overwrite_live: bool = False,
         auto_start_scheduler: bool = True,
     ) -> dict:
-        self._validate_live_handoff(overwrite_live=overwrite_live)
-        context = self._prepare_replay_context(
-            start_datetime=start_datetime,
-            end_datetime=end_datetime,
-            timeframe=timeframe,
-            market=market,
-            strategy_mode=strategy_mode,
-            strategy_profile_id=strategy_profile_id,
-            initial_cash=initial_cash,
-            ai_dynamic_strategy=ai_dynamic_strategy,
-            ai_dynamic_strength=ai_dynamic_strength,
-            ai_dynamic_lookback=ai_dynamic_lookback,
-            commission_rate=commission_rate,
-            sell_tax_rate=sell_tax_rate,
+        del (
+            start_datetime,
+            end_datetime,
+            timeframe,
+            market,
+            strategy_mode,
+            strategy_profile_id,
+            initial_cash,
+            ai_dynamic_strategy,
+            ai_dynamic_strength,
+            ai_dynamic_lookback,
+            commission_rate,
+            sell_tax_rate,
+            overwrite_live,
+            auto_start_scheduler,
         )
-        run_id = self._create_replay_run(
-            mode="continuous_to_live",
-            handoff_to_live=True,
-            timeframe=timeframe,
-            market=market,
-            context=context,
-            status="running",
-            status_message="正在同步执行接续回放",
-        )
-        summary = self._execute_prepared_replay(
-            run_id=run_id,
-            mode="continuous_to_live",
-            handoff_to_live=True,
-            context=context,
-            auto_start_scheduler=auto_start_scheduler,
-        )
-        summary["handoff_to_live"] = True
-        return summary
+        raise ValueError("接续到实时模拟账户已停用，请使用历史回放查看独立回放结果。")
 
     def enqueue_historical_range(
         self,
@@ -348,56 +332,23 @@ class QuantSimReplayService:
         overwrite_live: bool = False,
         auto_start_scheduler: bool = True,
     ) -> int:
-        self._ensure_no_active_replay()
-        self._validate_live_handoff(overwrite_live=overwrite_live)
-        context = self._prepare_replay_context(
-            start_datetime=start_datetime,
-            end_datetime=end_datetime,
-            timeframe=timeframe,
-            market=market,
-            strategy_mode=strategy_mode,
-            strategy_profile_id=strategy_profile_id,
-            initial_cash=initial_cash,
-            ai_dynamic_strategy=ai_dynamic_strategy,
-            ai_dynamic_strength=ai_dynamic_strength,
-            ai_dynamic_lookback=ai_dynamic_lookback,
-            commission_rate=commission_rate,
-            sell_tax_rate=sell_tax_rate,
-        )
-        run_id = self._create_replay_run(
-            mode="continuous_to_live",
-            handoff_to_live=True,
-            timeframe=timeframe,
-            market=market,
-            context=context,
-            status="queued",
-            status_message="等待后台任务启动",
-        )
-        runner = get_quant_sim_replay_runner(db_file=self.db_file)
-        started = runner.start_run(
-            run_id,
-            execute_prepared_replay_worker,
-            self.db_file,
-            run_id,
-            "continuous_to_live",
-            True,
-            context,
+        del (
+            start_datetime,
+            end_datetime,
+            timeframe,
+            market,
+            strategy_mode,
+            strategy_profile_id,
+            initial_cash,
+            ai_dynamic_strategy,
+            ai_dynamic_strength,
+            ai_dynamic_lookback,
+            commission_rate,
+            sell_tax_rate,
+            overwrite_live,
             auto_start_scheduler,
         )
-        if not started:
-            self.db.finalize_sim_run(
-                run_id,
-                status="failed",
-                final_equity=float(context["account_summary"]["initial_cash"]),
-                total_return_pct=0.0,
-                max_drawdown_pct=0.0,
-                win_rate=0.0,
-                trade_count=0,
-                status_message="后台回放任务启动失败",
-                metadata={"error": "background replay start failed"},
-            )
-            raise RuntimeError("后台回放任务启动失败")
-        return run_id
+        raise ValueError("接续到实时模拟账户已停用，请使用历史回放查看独立回放结果。")
 
     def _prepare_replay_context(
         self,
@@ -559,11 +510,6 @@ class QuantSimReplayService:
         if active_run is not None:
             raise ValueError(f"已有回放任务运行中（#{active_run['id']}），请先等待完成或取消")
 
-    def _validate_live_handoff(self, *, overwrite_live: bool) -> None:
-        live_account = self.db.get_account_summary()
-        if not overwrite_live and (live_account["trade_count"] > 0 or live_account["position_count"] > 0):
-            raise ValueError("当前实时模拟账户已有交易或持仓，请勾选覆盖后再执行接续模拟")
-
     def _execute_prepared_replay(
         self,
         *,
@@ -573,6 +519,10 @@ class QuantSimReplayService:
         context: dict,
         auto_start_scheduler: bool,
     ) -> dict:
+        if handoff_to_live:
+            raise ValueError("接续到实时模拟账户已停用，请使用历史回放查看独立回放结果。")
+        del auto_start_scheduler
+
         start_dt = context["start_dt"]
         end_dt = context["end_dt"]
         timeframe = context["timeframe"]
@@ -748,7 +698,6 @@ class QuantSimReplayService:
                 ]
             )
             positions = temp_portfolio.list_positions()
-            lots = self._collect_open_lots(temp_db, positions, as_of=end_dt)
             self.db.replace_sim_run_results(run_id, trades=trades, snapshots=snapshots, positions=positions, signals=replay_signals)
 
             metrics = self._calculate_run_metrics(account_summary["initial_cash"], trades, snapshots)
@@ -793,35 +742,6 @@ class QuantSimReplayService:
             )
             self.db.append_sim_run_event(run_id, f"回放任务已完成，共生成 {len(trades)} 笔交易。", level="success")
 
-            if handoff_to_live:
-                self.db.replace_runtime_state(
-                    initial_cash=float(account_summary["initial_cash"]),
-                    available_cash=float(temp_portfolio.get_account_summary()["available_cash"]),
-                    positions=positions,
-                    lots=lots,
-                    trades=trades,
-                    snapshots=snapshots,
-                )
-                scheduler = get_quant_sim_scheduler(db_file=self.db_file)
-                status = scheduler.get_status()
-                scheduler.update_config(
-                    enabled=bool(auto_start_scheduler),
-                    auto_execute=True,
-                    interval_minutes=int(status["interval_minutes"]),
-                    trading_hours_only=bool(status["trading_hours_only"]),
-                    analysis_timeframe=timeframe,
-                    market=market,
-                    strategy_profile_id=str(strategy_profile_binding.get("profile_id") or "") or None,
-                    ai_dynamic_strategy=ai_dynamic_strategy,
-                    ai_dynamic_strength=ai_dynamic_strength,
-                    ai_dynamic_lookback=ai_dynamic_lookback,
-                    commission_rate=commission_rate,
-                    sell_tax_rate=sell_tax_rate,
-                )
-                if auto_start_scheduler:
-                    scheduler.start()
-                self.db.append_sim_run_event(run_id, "回放结果已接续到实时模拟账户。", level="success")
-
             return {
                 "run_id": run_id,
                 "status": "completed",
@@ -831,7 +751,7 @@ class QuantSimReplayService:
                 "total_return_pct": metrics["total_return_pct"],
                 "max_drawdown_pct": metrics["max_drawdown_pct"],
                 "win_rate": metrics["win_rate"],
-                "handoff_to_live": handoff_to_live,
+                "handoff_to_live": False,
             }
         except Exception as exc:
             partial_trades: list[dict] = []

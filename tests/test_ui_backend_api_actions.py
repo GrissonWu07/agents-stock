@@ -1495,6 +1495,20 @@ def test_live_sim_actions_use_scheduler_and_candidate_pool(tmp_path, monkeypatch
     assert stop_resp.json()["status"]["running"] == "已停止"
 
 
+def test_live_sim_snapshot_does_not_sync_capital_slots_on_get(tmp_path, monkeypatch):
+    context = _make_context(tmp_path)
+
+    def fail_if_syncing_slots(self, cursor):
+        raise AssertionError("live-sim GET must not write/sync capital slots")
+
+    monkeypatch.setattr("app.quant_sim.db.QuantSimDB._sync_capital_slots", fail_if_syncing_slots)
+
+    response = TestClient(create_app(context=context)).get("/api/v1/quant/live-sim")
+
+    assert response.status_code == 200
+    assert "capitalSlots" in response.json()
+
+
 def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatch):
     context = _make_context(tmp_path)
     fake_replay = FakeReplayService()
@@ -1544,8 +1558,9 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
     assert fake_replay.calls[0][1]["strategy_profile_id"] == "aggressive"
 
     continue_resp = client.post("/api/v1/quant/his-replay/actions/continue", json={})
-    assert continue_resp.status_code == 200
-    assert fake_replay.calls[-1][0] == "past_to_live"
+    assert continue_resp.status_code == 400
+    assert "接续到实时模拟账户已停用" in continue_resp.json()["detail"]
+    assert all(call[0] != "past_to_live" for call in fake_replay.calls)
 
     cancel_resp = client.post("/api/v1/quant/his-replay/actions/cancel", json={"id": run_id})
     assert cancel_resp.status_code == 200
