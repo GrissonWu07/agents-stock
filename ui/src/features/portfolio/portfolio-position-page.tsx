@@ -61,6 +61,21 @@ const isMeaningfulPositionValue = (value?: string) => {
   return Number.isFinite(parsed) && parsed > 0;
 };
 
+const singleStockActionLabel = (signal?: string, rating?: string, hasPosition = false) => {
+  const normalizedSignal = (signal ?? "").trim().toUpperCase();
+  if (normalizedSignal.includes("BUY") || normalizedSignal.includes("买")) {
+    return hasPosition ? "加仓" : "建仓";
+  }
+  if (normalizedSignal.includes("SELL") || normalizedSignal.includes("卖")) {
+    return hasPosition ? "卖出/减仓" : "回避";
+  }
+  if (normalizedSignal.includes("HOLD") || normalizedSignal.includes("持")) {
+    return hasPosition ? "持有" : "观望";
+  }
+  const normalizedRating = (rating ?? "").trim();
+  return normalizedRating && normalizedRating !== "--" ? normalizedRating : "--";
+};
+
 const normalizeSymbolForCompare = (value?: string) => (value ?? "").trim().toUpperCase();
 
 const portfolioPositionCacheKey = (symbol: string) => `${PORTFOLIO_POSITION_CACHE_PREFIX}${normalizeSymbolForCompare(symbol)}`;
@@ -144,6 +159,121 @@ const pickTopIndicators = (indicators: SummaryMetric[] | undefined, count = 8): 
   return selected.slice(0, count);
 };
 
+const parseIndicatorNumber = (value?: string) => {
+  const normalized = (value ?? "").replace(/,/g, "").replace(/%/g, "").trim();
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const findIndicator = (indicators: SummaryMetric[] | undefined, keywords: string[]) => {
+  const source = indicators ?? [];
+  return (
+    source.find((indicator) => {
+      const label = normalizeIndicatorKey(indicator.label);
+      const fullText = normalizeIndicatorKey(`${indicator.label} ${indicator.hint ?? ""}`);
+      return keywords.some((keyword) => {
+        const normalized = normalizeIndicatorKey(keyword);
+        return label.includes(normalized) || fullText.includes(normalized);
+      });
+    }) ?? null
+  );
+};
+
+const metricValue = (metric: SummaryMetric | null | undefined) => metric?.value ?? "--";
+const metricNumber = (metric: SummaryMetric | null | undefined) => parseIndicatorNumber(metric?.value);
+
+type TechnicalTone = "positive" | "warning" | "danger" | "neutral";
+
+const statusToneClass = (tone: TechnicalTone) => `portfolio-technical-status-pill portfolio-technical-status-pill--${tone}`;
+
+const buildTechnicalView = (indicators: SummaryMetric[] | undefined, latestPrice: string) => {
+  const price = findIndicator(indicators, ["现价", "当前价", "最新价", "price"]) ?? { label: "现价", value: latestPrice };
+  const volume = findIndicator(indicators, ["成交量", "volume"]);
+  const volumeMa5 = findIndicator(indicators, ["5日均量", "volume_ma5", "Volume MA5"]);
+  const ma5 = findIndicator(indicators, ["MA5", "5日均线", "5-day"]);
+  const ma10 = findIndicator(indicators, ["MA10", "10日均线", "10-day"]);
+  const ma20 = findIndicator(indicators, ["MA20", "20日均线", "20-day"]);
+  const ma60 = findIndicator(indicators, ["MA60", "60日均线", "60-day"]);
+  const rsi = findIndicator(indicators, ["RSI", "rsi14"]);
+  const macd = findIndicator(indicators, ["MACD"]);
+  const macdBar = findIndicator(indicators, ["MACD柱", "hist"]);
+  const signalLine = findIndicator(indicators, ["信号线", "DEA", "macd_signal"]);
+  const bollUpper = findIndicator(indicators, ["布林上轨", "boll_upper", "upper volatility"]);
+  const bollMid = findIndicator(indicators, ["布林中轨", "boll_mid", "middle volatility"]);
+  const bollLower = findIndicator(indicators, ["布林下轨", "boll_lower", "lower volatility"]);
+  const kValue = findIndicator(indicators, ["K值", "kdj_k"]);
+  const dValue = findIndicator(indicators, ["D值", "kdj_d"]);
+  const volumeRatio = findIndicator(indicators, ["量比", "volume_ratio"]);
+
+  const priceNum = metricNumber(price);
+  const ma5Num = metricNumber(ma5);
+  const ma20Num = metricNumber(ma20);
+  const ma60Num = metricNumber(ma60);
+  const rsiNum = metricNumber(rsi);
+  const macdNum = metricNumber(macd);
+  const signalNum = metricNumber(signalLine);
+  const macdBarNum = metricNumber(macdBar);
+  const upperNum = metricNumber(bollUpper);
+  const midNum = metricNumber(bollMid);
+  const lowerNum = metricNumber(bollLower);
+  const volumeNum = metricNumber(volume);
+  const volumeMa5Num = metricNumber(volumeMa5);
+  const volumeRatioNum = metricNumber(volumeRatio);
+
+  const trendTone: TechnicalTone = priceNum !== null && ma5Num !== null && ma20Num !== null && ma60Num !== null && priceNum > ma5Num && ma5Num > ma20Num && ma20Num > ma60Num
+    ? "positive"
+    : priceNum !== null && ma5Num !== null && ma20Num !== null && ma60Num !== null && priceNum < ma5Num && ma5Num < ma20Num && ma20Num < ma60Num
+      ? "danger"
+      : "warning";
+  const trendLabel = trendTone === "positive" ? "趋势偏强" : trendTone === "danger" ? "趋势偏弱" : "趋势中性";
+  const momentumTone: TechnicalTone = macdBarNum !== null ? (macdBarNum > 0 ? "positive" : macdBarNum < 0 ? "danger" : "neutral") : "neutral";
+  const momentumLabel = momentumTone === "positive" ? "动量转强" : momentumTone === "danger" ? "动量转弱" : "动量中性";
+  const rsiLabel = rsiNum === null ? "RSI --" : rsiNum >= 70 ? "RSI 偏热" : rsiNum <= 30 ? "RSI 偏冷" : "RSI 中性";
+  const volatilityTone: TechnicalTone = priceNum !== null && upperNum !== null && priceNum >= upperNum
+    ? "warning"
+    : priceNum !== null && lowerNum !== null && priceNum <= lowerNum
+      ? "danger"
+      : "neutral";
+  const volatilityLabel = priceNum !== null && midNum !== null && priceNum >= midNum ? "中轨上方" : "中轨下方";
+  const volumeTone: TechnicalTone = volumeRatioNum !== null ? (volumeRatioNum >= 1.2 ? "positive" : volumeRatioNum <= 0.8 ? "warning" : "neutral") : "neutral";
+  const volumeLabel = volumeRatioNum === null ? "量能 --" : volumeRatioNum >= 1.2 ? "量能放大" : volumeRatioNum <= 0.8 ? "量能偏弱" : "量能平稳";
+
+  const axisMetrics = [
+    { key: "bollLower", label: "布林下轨", metric: bollLower, value: lowerNum },
+    { key: "ma20", label: "MA20", metric: ma20, value: ma20Num },
+    { key: "price", label: "现价", metric: price, value: priceNum },
+    { key: "ma5", label: "MA5", metric: ma5, value: ma5Num },
+    { key: "ma60", label: "MA60", metric: ma60, value: ma60Num },
+    { key: "bollUpper", label: "布林上轨", metric: bollUpper, value: upperNum },
+  ].filter((item) => item.value !== null) as Array<{ key: string; label: string; metric: SummaryMetric | null; value: number }>;
+  const axisMin = axisMetrics.length ? Math.min(...axisMetrics.map((item) => item.value)) : 0;
+  const axisMax = axisMetrics.length ? Math.max(...axisMetrics.map((item) => item.value)) : 0;
+  const axisRange = axisMax - axisMin || 1;
+
+  return {
+    status: [
+      { label: "趋势", value: trendLabel, tone: trendTone },
+      { label: "动量", value: momentumLabel, tone: momentumTone },
+      { label: "波动", value: volatilityLabel, tone: volatilityTone },
+      { label: "量能", value: volumeLabel, tone: volumeTone },
+    ],
+    metrics: { price, ma5, ma10, ma20, ma60, rsi, macd, macdBar, signalLine, bollUpper, bollMid, bollLower, kValue, dValue, volume, volumeMa5, volumeRatio },
+    axis: axisMetrics.map((item) => ({
+      ...item,
+      pct: Math.max(0, Math.min(100, ((item.value - axisMin) / axisRange) * 100)),
+    })).sort((a, b) => a.value - b.value),
+    comments: {
+      trend: priceNum !== null && ma5Num !== null && ma20Num !== null
+        ? `现价 ${metricValue(price)}，相对 MA5 ${metricValue(ma5)}、MA20 ${metricValue(ma20)}；${trendLabel}。`
+        : "均线数据不足，暂不判断趋势结构。",
+      momentum: `MACD ${metricValue(macd)}，信号线 ${metricValue(signalLine)}，柱体 ${metricValue(macdBar)}；${rsiLabel}。`,
+      volume: volumeNum !== null && volumeMa5Num !== null
+        ? `成交量 ${metricValue(volume)}，5日均量 ${metricValue(volumeMa5)}，量比 ${metricValue(volumeRatio)}。`
+        : `量比 ${metricValue(volumeRatio)}，等待成交量基准确认。`,
+    },
+  };
+};
+
 const stockAnalysisTextLength = (analysis?: StockAnalysisPayload | null) => {
   if (!analysis) {
     return 0;
@@ -188,6 +318,21 @@ const pickStockAnalysis = (
     return incoming;
   }
   return current;
+};
+
+const isMergedStockInsight = (title?: string) => {
+  const normalized = title?.trim() ?? "";
+  return normalized.includes("操作建议") || normalized.includes("风险提示");
+};
+
+const buildFinalDecisionContent = (analysis: StockAnalysisPayload) => {
+  const parts = [analysis.finalDecisionText || analysis.decision || "暂无最终建议"];
+  (analysis.insights ?? [])
+    .filter((insight) => isMergedStockInsight(insight.title))
+    .forEach((insight) => {
+      parts.push(`\n\n**${insight.title}**\n\n${insight.body}`);
+    });
+  return parts.join("");
 };
 
 const mergePortfolioSnapshot = (current: PortfolioSnapshot | null, incoming: PortfolioSnapshot | null | undefined): PortfolioSnapshot | null => {
@@ -523,22 +668,18 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
   const klinePoints = detail.kline ?? [];
   const analystViews = detail.stockAnalysis?.analystViews ?? [];
   const activeAnalystView = analystViews.find((item) => item.title === activeAnalystTitle) ?? analystViews[0] ?? null;
+  const stockAnalysisInsights = (detail.stockAnalysis?.insights ?? []).filter((insight) => !isMergedStockInsight(insight.title));
   const i18nIndicatorText = (value?: string) => {
     if (!value || value === "--") return "--";
     return t(value);
   };
-  const topIndicators = pickTopIndicators(detail.indicators, 8);
-  const topIndicatorKeys = new Set(topIndicators.map((indicator) => normalizeIndicatorKey(indicator.label)));
-  const remainingIndicators = (detail.indicators ?? []).filter((indicator) => !topIndicatorKeys.has(normalizeIndicatorKey(indicator.label)));
-  const indicatorPairs: Array<[typeof detail.indicators[number] | null, typeof detail.indicators[number] | null]> = [];
-  for (let index = 0; index < remainingIndicators.length; index += 2) {
-    indicatorPairs.push([remainingIndicators[index] ?? null, remainingIndicators[index + 1] ?? null]);
-  }
+  const technicalView = buildTechnicalView(detail.indicators, latestPrice);
   const portfolioDecision = snapshot.portfolioDecision;
-  const decisionAction = portfolioDecision?.action || detail.decision.rating || latestSignal || "--";
-  const shouldShowSignalPill = latestSignal !== "--";
   const positionForm = detail.positionForm;
   const hasRegisteredPosition = isMeaningfulPositionValue(positionForm?.quantity);
+  const decisionAction = singleStockActionLabel(latestSignal, detail.decision.rating, hasRegisteredPosition);
+  const portfolioAdvice = portfolioDecision?.action ? `${portfolioDecision.action} · ${portfolioDecision.targetExposurePct ?? "--"}` : "--";
+  const shouldShowSignalPill = latestSignal !== "--";
   const tradingRiskLine = `止盈 ${positionForm?.takeProfit || "--"} · 止损 ${positionForm?.stopLoss || "--"}`;
 
   return (
@@ -586,8 +727,8 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                 <div className="mini-metric__value">{marketUpdatedAt}</div>
               </div>
               <div className="mini-metric">
-                <div className="mini-metric__label">目标仓位</div>
-                <div className="mini-metric__value">{portfolioDecision?.targetExposurePct ?? "--"}</div>
+                <div className="mini-metric__label">组合建议</div>
+                <div className="mini-metric__value">{portfolioAdvice}</div>
               </div>
               <div className="mini-metric">
                 <div className="mini-metric__label">当前仓位</div>
@@ -602,11 +743,6 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                 <div className="mini-metric__value">{tradingRiskLine}</div>
               </div>
             </div>
-            {(portfolioDecision?.reasons ?? []).length > 0 ? (
-              <ul className="insight-list portfolio-decision-reasons">
-                {portfolioDecision?.reasons?.map((reason) => <li key={reason}>{reason}</li>)}
-              </ul>
-            ) : null}
             <h3 className="portfolio-subsection-title">持仓信息</h3>
             <div className="portfolio-position-form portfolio-position-form--compact">
               <label className="field">
@@ -635,52 +771,102 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                 <h2 className="section-card__title">关键技术指标</h2>
               </div>
             </div>
-            {topIndicators.length > 0 ? (
-              <div className="portfolio-indicator-chip-grid portfolio-indicator-chip-grid--summary">
-                {topIndicators.map((indicator) => (
-                  <div className="portfolio-indicator-chip" key={`top-${indicator.label}-${indicator.value}`}>
-                    <span>{i18nIndicatorText(indicator.label)}</span>
-                    <strong>{indicator.value}</strong>
-                    <small>{i18nIndicatorText(indicator.hint)}</small>
+            {(detail.indicators ?? []).length > 0 ? (
+              <div className="portfolio-technical-panel">
+                <div className="portfolio-technical-status-row" aria-label="技术状态摘要">
+                  {technicalView.status.map((item) => (
+                    <div className={statusToneClass(item.tone)} key={item.label}>
+                      <span>{item.label}</span>
+                      <strong>{item.value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <section className="portfolio-technical-section portfolio-technical-section--price">
+                  <div className="portfolio-technical-section__head">
+                    <strong>价格位置</strong>
+                    <span>{technicalView.comments.trend}</span>
                   </div>
-                ))}
+                  {technicalView.axis.length > 0 ? (
+                    <>
+                      <div className="portfolio-price-axis" aria-label="价格位置轴">
+                        <div className="portfolio-price-axis__track" />
+                        {technicalView.axis.map((item) => (
+                          <span
+                            className={`portfolio-price-axis__marker portfolio-price-axis__marker--${item.key}`}
+                            key={item.key}
+                            style={{ left: `${item.pct}%` }}
+                            title={`${item.label} ${metricValue(item.metric)}`}
+                          />
+                        ))}
+                      </div>
+                      <div className="portfolio-price-axis__legend">
+                        {technicalView.axis.map((item) => (
+                          <div className={item.key === "price" ? "is-current" : ""} key={`${item.key}-legend`}>
+                            <span>{item.label}</span>
+                            <strong>{metricValue(item.metric)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="empty-note">价格位置数据不足。</div>
+                  )}
+                </section>
+
+                <div className="portfolio-technical-section-grid">
+                  <section className="portfolio-technical-section">
+                    <div className="portfolio-technical-section__head">
+                      <strong>趋势结构</strong>
+                      <span>均线排列与压力支撑</span>
+                    </div>
+                    <div className="portfolio-technical-metric-row">
+                      {[technicalView.metrics.ma5, technicalView.metrics.ma10, technicalView.metrics.ma20, technicalView.metrics.ma60].map((metric, metricIndex) => (
+                        <div className="portfolio-technical-metric" key={`trend-${metricIndex}-${metric?.label ?? "empty"}`}>
+                          <span>{i18nIndicatorText(metric?.label)}</span>
+                          <strong>{metricValue(metric)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <p>{technicalView.comments.trend}</p>
+                  </section>
+
+                  <section className="portfolio-technical-section">
+                    <div className="portfolio-technical-section__head">
+                      <strong>动量指标</strong>
+                      <span>MACD / RSI / KDJ</span>
+                    </div>
+                    <div className="portfolio-technical-metric-row">
+                      {[technicalView.metrics.macd, technicalView.metrics.signalLine, technicalView.metrics.macdBar, technicalView.metrics.rsi, technicalView.metrics.kValue, technicalView.metrics.dValue].map((metric, metricIndex) => (
+                        <div className="portfolio-technical-metric" key={`momentum-${metricIndex}-${metric?.label ?? "empty"}`}>
+                          <span>{i18nIndicatorText(metric?.label)}</span>
+                          <strong>{metricValue(metric)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <p>{technicalView.comments.momentum}</p>
+                  </section>
+
+                  <section className="portfolio-technical-section">
+                    <div className="portfolio-technical-section__head">
+                      <strong>量能与波动</strong>
+                      <span>成交参与度和布林带</span>
+                    </div>
+                    <div className="portfolio-technical-metric-row">
+                      {[technicalView.metrics.volume, technicalView.metrics.volumeMa5, technicalView.metrics.volumeRatio, technicalView.metrics.bollLower, technicalView.metrics.bollMid, technicalView.metrics.bollUpper].map((metric, metricIndex) => (
+                        <div className="portfolio-technical-metric" key={`volume-${metricIndex}-${metric?.label ?? "empty"}`}>
+                          <span>{i18nIndicatorText(metric?.label)}</span>
+                          <strong>{metricValue(metric)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <p>{technicalView.comments.volume}</p>
+                  </section>
+                </div>
               </div>
             ) : (
               <div className="empty-note">暂无关键技术指标。</div>
             )}
-            <details className="portfolio-disclosure">
-              <summary>更多指标明细</summary>
-              {indicatorPairs.length === 0 ? (
-                <div className="summary-item__body">暂无更多技术指标</div>
-              ) : (
-                <div className="table-shell">
-                  <table className="table table--auto portfolio-indicator-table">
-                    <thead>
-                      <tr>
-                        <th>指标</th>
-                        <th>数值</th>
-                        <th>说明</th>
-                        <th>指标</th>
-                        <th>数值</th>
-                        <th>说明</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {indicatorPairs.map(([left, right], pairIndex) => (
-                        <tr key={`indicator-pair-${pairIndex}`}>
-                          <td className="table__cell-strong">{i18nIndicatorText(left?.label)}</td>
-                          <td>{left?.value ?? "--"}</td>
-                          <td>{i18nIndicatorText(left?.hint)}</td>
-                          <td className="table__cell-strong">{i18nIndicatorText(right?.label)}</td>
-                          <td>{right?.value ?? "--"}</td>
-                          <td>{i18nIndicatorText(right?.hint)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </details>
             <div className="summary-item__meta">行情更新时间：{marketUpdatedAt} · 信号：{latestSignal}</div>
           </WorkbenchCard>
         </div>
@@ -713,8 +899,30 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
             {detail.stockAnalysis?.generatedAt ? <span className="badge badge--neutral">分析日期：{detail.stockAnalysis.generatedAt}</span> : null}
           </div>
           <div className="summary-item portfolio-stock-analysis-settings">
-            <div className="summary-item__title">分析设置</div>
-            <div className="summary-item__body">选择本次详情页更新分析使用的分析师和数据周期。</div>
+            <div className="portfolio-stock-analysis-settings__head">
+              <div>
+                <div className="summary-item__title">分析设置</div>
+                <div className="summary-item__body">选择本次详情页更新分析使用的分析师。</div>
+              </div>
+              <label className="field portfolio-stock-analysis-cycle">
+                <span className="field__label">分析周期</span>
+                <select
+                  className="input"
+                  aria-label="分析周期"
+                  value={stockAnalysisCycle}
+                  onChange={(event) => {
+                    analysisControlsDirtyRef.current = true;
+                    setStockAnalysisCycle(event.target.value);
+                  }}
+                >
+                  {STOCK_ANALYSIS_CYCLES.map((cycle) => (
+                    <option value={cycle} key={cycle}>
+                      {cycle}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <div className="chip-row" style={{ marginTop: 10 }}>
               {STOCK_ANALYSIS_OPTIONS.map((option) => (
                 <button
@@ -729,40 +937,22 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                 </button>
               ))}
             </div>
-            <label className="field portfolio-stock-analysis-cycle">
-              <span className="field__label">分析周期</span>
-              <select
-                className="input"
-                aria-label="分析周期"
-                value={stockAnalysisCycle}
-                onChange={(event) => {
-                  analysisControlsDirtyRef.current = true;
-                  setStockAnalysisCycle(event.target.value);
-                }}
-              >
-                {STOCK_ANALYSIS_CYCLES.map((cycle) => (
-                  <option value={cycle} key={cycle}>
-                    {cycle}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
           {detail.stockAnalysis ? (
             <>
               <div className="portfolio-stock-analysis-grid">
-                <div className="summary-item summary-item--accent">
+                <div className="summary-item summary-item--accent portfolio-final-decision">
                   <div className="summary-item__title">最终建议</div>
-                  <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={detail.stockAnalysis.finalDecisionText || detail.stockAnalysis.decision || "暂无最终建议"} />
+                  <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={buildFinalDecisionContent(detail.stockAnalysis)} />
                 </div>
-                {(detail.stockAnalysis.insights ?? []).map((insight) => (
+                {stockAnalysisInsights.map((insight) => (
                   <div className="summary-item" key={`${insight.title}-${insight.body}`}>
                     <div className="summary-item__title">{insight.title}</div>
                     <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={insight.body} />
                   </div>
                 ))}
               </div>
-              <details className="portfolio-disclosure portfolio-analysis-raw">
+              <details className="portfolio-disclosure portfolio-analysis-raw" open>
                 <summary>完整分析原文</summary>
                 <div className="summary-item__body">
                   <strong>{detail.stockAnalysis.summaryTitle}</strong>
@@ -770,13 +960,16 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                 <MarkdownBlock className="summary-item__body markdown-body content-scroll" content={detail.stockAnalysis.summaryBody} />
               </details>
               {(detail.stockAnalysis.analystViews ?? []).length > 0 ? (
-                <>
-                  <div className="summary-item portfolio-analyst-views">
-                    <div className="summary-item__title">分析师观点</div>
-                    <div className="summary-item__body">按工作台同款视图切换不同分析师结论。</div>
+                <div className="portfolio-analyst-views">
+                  <div className="portfolio-analyst-views__head">
+                    <div>
+                      <div className="summary-item__title">分析师观点</div>
+                      <div className="summary-item__body">切换查看各分析师的独立结论。</div>
+                    </div>
+                    <span>{analystViews.length} 个观点</span>
                   </div>
                   {activeAnalystView ? (
-                    <div className="analyst-layout portfolio-analyst-layout" style={{ marginTop: "12px" }}>
+                    <div className="analyst-layout portfolio-analyst-layout">
                       <div className="analyst-layout__nav">
                         {analystViews.map((view, index) => (
                           <button
@@ -795,16 +988,6 @@ export function PortfolioPositionPage({ client = apiClient }: PortfolioPositionP
                       </div>
                     </div>
                   ) : null}
-                </>
-              ) : null}
-              {(detail.stockAnalysis.indicators ?? []).length > 0 ? (
-                <div className="mini-metric-grid portfolio-stock-analysis-metrics">
-                  {detail.stockAnalysis.indicators.map((indicator) => (
-                    <div className="mini-metric" key={`${indicator.label}-${indicator.value}`}>
-                      <div className="mini-metric__label">{indicator.label}</div>
-                      <div className="mini-metric__value">{indicator.value}</div>
-                    </div>
-                  ))}
                 </div>
               ) : null}
             </>

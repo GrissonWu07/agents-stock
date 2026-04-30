@@ -15,6 +15,7 @@ from app.quant_sim.capital_slots import (
     normalize_capital_slot_config,
 )
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
+from app.quant_sim.execution_constraints import trade_block_reason
 
 
 class PortfolioService:
@@ -103,6 +104,16 @@ class PortfolioService:
             if price <= 0:
                 self._record_auto_execute_skip(signal, "自动执行跳过：缺少有效最新价")
                 return False
+            block_reason = trade_block_reason(
+                action=action,
+                stock_code=stock_code,
+                stock_name=signal.get("stock_name"),
+                price=price,
+                signal=signal,
+            )
+            if block_reason:
+                self._record_auto_execute_skip(signal, f"自动执行跳过：{block_reason}")
+                return False
             quantity, sizing_evidence = self._estimate_buy_quantity(signal, price, settle_slots=settle_slots)
             self._attach_sizing_evidence(signal, sizing_evidence)
             if quantity <= 0:
@@ -130,6 +141,16 @@ class PortfolioService:
             price = self._resolve_signal_price(signal, fallback=position)
             if price <= 0:
                 self._record_auto_execute_skip(signal, "自动执行跳过：缺少有效最新价")
+                return False
+            block_reason = trade_block_reason(
+                action=action,
+                stock_code=stock_code,
+                stock_name=signal.get("stock_name") or position.get("stock_name"),
+                price=price,
+                signal=signal,
+            )
+            if block_reason:
+                self._record_auto_execute_skip(signal, f"自动执行跳过：{block_reason}")
                 return False
             if quantity <= 0:
                 self._record_auto_execute_skip(signal, "自动执行跳过：当前无可卖数量")
@@ -205,6 +226,12 @@ class PortfolioService:
             slot_budget=float(slot_plan["slot_budget"] or 0),
             commission_rate=commission_rate,
             config=capital_config,
+            strategy_profile_id=str(scheduler_config.get("strategy_profile_id") or ""),
+            cash_ratio=(
+                float(summary["available_cash"] or 0) / float(summary["total_equity"] or 0)
+                if float(summary["total_equity"] or 0) > 0
+                else 0.0
+            ),
         )
         slot_available_cash = sum(float(slot.get("available_cash") or 0) for slot in slots)
         slot_unit_budget = float(slot_plan["slot_budget"] or 0) * float(sizing["slot_units"] or 0)

@@ -1,11 +1,14 @@
 import os
+from types import SimpleNamespace
 
 import pandas as pd
 
 from app.data_source_manager import DataSourceManager
+from app.local_market_data_clients import AkshareLocalClient
+from app.local_market_data_store import LocalMarketDataStore
 
 
-def test_get_stock_hist_data_temporarily_disables_proxy_env(monkeypatch):
+def test_get_stock_hist_data_temporarily_disables_proxy_env(monkeypatch, tmp_path):
     manager = DataSourceManager()
     manager.tushare_available = False
 
@@ -34,7 +37,10 @@ def test_get_stock_hist_data_temporarily_disables_proxy_env(monkeypatch):
 
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9999")
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9999")
-    monkeypatch.setattr("akshare.stock_zh_a_hist", fake_hist)
+    manager.akshare_client = AkshareLocalClient(
+        store=LocalMarketDataStore(root_dir=tmp_path / "market-cache"),
+        ak_api=SimpleNamespace(stock_zh_a_hist=fake_hist),
+    )
 
     df = manager.get_stock_hist_data("301511", start_date="20260101", end_date="20260410")
 

@@ -1,6 +1,7 @@
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.signal_center_service import SignalCenterService
+import pytest
 
 
 def test_confirm_sell_closes_simulated_position(tmp_path):
@@ -55,6 +56,42 @@ def test_confirm_sell_closes_simulated_position(tmp_path):
     assert positions == []
     assert history[0]["action"] == "SELL"
     assert history[0]["status"] == "executed"
+
+
+def test_confirm_buy_rejects_limit_up_stock(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
+
+    candidate_service.add_manual_candidate("600000", "浦发银行", "manual", latest_price=11.0)
+    candidate = candidate_service.list_candidates()[0]
+    buy_signal = signal_service.create_signal(
+        candidate,
+        {
+            "action": "BUY",
+            "confidence": 83,
+            "reasoning": "涨停不可买",
+            "position_size_pct": 20,
+            "strategy_profile": {
+                "market_snapshot": {
+                    "current_price": 11.0,
+                    "prev_close": 10.0,
+                    "volume": 100000,
+                }
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="涨停不可买入"):
+        portfolio_service.confirm_buy(
+            buy_signal["id"],
+            price=11.0,
+            quantity=100,
+            note="手工买入",
+            executed_at="2026-04-08 10:00:00",
+        )
+
+    assert portfolio_service.list_positions() == []
 
 
 def test_ignore_signal_removes_it_from_pending_queue(tmp_path):

@@ -91,7 +91,7 @@ def _css_block(css: str, selector: str) -> str:
 def test_research_intelligence_text_is_not_line_clamped():
     css = (PROJECT_ROOT / "ui" / "src" / "styles" / "globals.css").read_text(encoding="utf-8")
 
-    output_block = _css_block(css, ".research-module-list__output")
+    output_block = _css_block(css, ".research-module-card__output")
     assert "-webkit-line-clamp" not in output_block
     assert "overflow: hidden" not in output_block
 

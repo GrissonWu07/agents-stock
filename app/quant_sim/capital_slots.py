@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from math import floor
+from math import ceil
 from typing import Any
 
 
 DEFAULT_CAPITAL_SLOT_CONFIG: dict[str, Any] = {
     "capital_slot_enabled": True,
     "capital_pool_min_cash": 20000.0,
-    "capital_pool_max_cash": 1000000.0,
+    "capital_pool_max_cash": 1000000000000.0,
     "capital_slot_min_cash": 20000.0,
     "capital_max_slots": 25,
     "capital_min_buy_slot_fraction": 0.25,
@@ -71,7 +71,11 @@ def calculate_slot_plan(total_equity: float, config: dict[str, Any] | None = Non
             "required_pool_cash": round(required_pool_cash, 4),
         }
 
-    raw_slot_count = floor(effective_pool_cash / cfg["capital_slot_min_cash"])
+    if effective_pool_cash <= 100000:
+        raw_slot_count = 2
+    else:
+        tier_slot_cash = 200000.0 if effective_pool_cash > 1000000 else 100000.0
+        raw_slot_count = ceil(effective_pool_cash / tier_slot_cash)
     slot_count = min(max(raw_slot_count, 1), cfg["capital_max_slots"])
     slot_budget = effective_pool_cash / slot_count if slot_count > 0 else 0.0
     return {
@@ -202,6 +206,8 @@ def calculate_slot_units(
     slot_budget: float,
     commission_rate: float = 0.0,
     config: dict[str, Any] | None = None,
+    strategy_profile_id: str | None = None,
+    cash_ratio: float | None = None,
 ) -> dict[str, Any]:
     cfg = normalize_capital_slot_config(config)
     strength = calculate_buy_strength(signal, cfg)
@@ -216,14 +222,38 @@ def calculate_slot_units(
         slot_units = min(cfg["capital_high_price_max_slot_units"], max(base_units, one_lot_cost / slot_budget))
     else:
         slot_units = min(base_units, 1.0)
+    one_lot_floor_units = 0.0
+    if slot_budget > 0 and one_lot_cost > 0 and one_lot_cost <= slot_budget:
+        one_lot_floor_units = one_lot_cost / slot_budget
+        slot_units = max(slot_units, one_lot_floor_units)
+    cash_pressure_units = _cash_pressure_slot_units(strategy_profile_id=strategy_profile_id, cash_ratio=cash_ratio)
+    if cash_pressure_units > 0:
+        slot_units = min(slot_units + cash_pressure_units, cfg["capital_high_price_max_slot_units"])
     return {
         **strength,
         "base_slot_units": round(base_units, 6),
         "slot_units": round(slot_units, 6),
         "one_lot_cost": round(one_lot_cost, 4),
+        "one_lot_floor_units": round(one_lot_floor_units, 6),
+        "cash_pressure_units": round(cash_pressure_units, 6),
         "high_price": high_price,
         "requires_extra_slot": requires_extra_slot,
     }
+
+
+def _cash_pressure_slot_units(*, strategy_profile_id: str | None, cash_ratio: float | None) -> float:
+    profile_key = str(strategy_profile_id or "").strip().lower()
+    if "aggressive" not in profile_key:
+        return 0.0
+    try:
+        ratio = float(cash_ratio if cash_ratio is not None else 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if ratio >= 0.75:
+        return 0.50
+    if ratio >= 0.60:
+        return 0.25
+    return 0.0
 
 
 def build_sizing_explainability(

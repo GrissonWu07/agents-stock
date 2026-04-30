@@ -42,6 +42,83 @@ def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
     assert trades[0]["action"] == "buy"
 
 
+def test_auto_execute_skips_buy_when_stock_is_limit_up(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "manual", latest_price=11.0)
+    candidate = candidate_service.list_candidates()[0]
+
+    signal = signal_service.create_signal(
+        candidate,
+        {
+            "action": "BUY",
+            "confidence": 84,
+            "reasoning": "涨停测试",
+            "position_size_pct": 20,
+            "strategy_profile": {
+                "market_snapshot": {
+                    "current_price": 11.0,
+                    "prev_close": 10.0,
+                    "volume": 100000,
+                }
+            },
+        },
+    )
+
+    executed = portfolio_service.auto_execute_signal(signal, note="自动买入")
+    history = signal_service.list_signals(stock_code="600000")
+
+    assert executed is False
+    assert portfolio_service.list_positions() == []
+    assert history[0]["status"] == "pending"
+    assert "涨停不可买入" in history[0]["execution_note"]
+
+
+def test_auto_execute_skips_sell_when_stock_is_limit_down(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+    portfolio_service = PortfolioService(db_file=tmp_path / "app.quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "manual", latest_price=10.0)
+    candidate = candidate_service.list_candidates()[0]
+    buy_signal = signal_service.create_signal(
+        candidate,
+        {"action": "BUY", "confidence": 84, "reasoning": "建仓", "position_size_pct": 20},
+    )
+    portfolio_service.confirm_buy(
+        buy_signal["id"],
+        price=10.0,
+        quantity=100,
+        note="预先持仓",
+        executed_at="2026-04-08 10:00:00",
+    )
+    candidate_service.add_manual_candidate("600000", "浦发银行", "manual", latest_price=9.0)
+    sell_signal = signal_service.create_signal(
+        candidate,
+        {
+            "action": "SELL",
+            "confidence": 84,
+            "reasoning": "跌停测试",
+            "position_size_pct": 0,
+            "strategy_profile": {
+                "market_snapshot": {
+                    "current_price": 9.0,
+                    "prev_close": 10.0,
+                    "volume": 100000,
+                }
+            },
+        },
+    )
+
+    executed = portfolio_service.auto_execute_signal(sell_signal, note="自动卖出", executed_at="2026-04-09 10:00:00")
+    history = signal_service.list_signals(stock_code="600000")
+
+    assert executed is False
+    assert len(portfolio_service.db.get_positions(as_of="2026-04-09 10:00:00")) == 1
+    assert history[0]["status"] == "pending"
+    assert "跌停不可卖出" in history[0]["execution_note"]
+
+
 def test_scheduler_auto_executes_buy_signal_from_watchlist_candidate_and_syncs_watchlist(tmp_path, monkeypatch):
     watch_db = tmp_path / "watchlist.db"
     quant_db = tmp_path / "app.quant_sim.db"

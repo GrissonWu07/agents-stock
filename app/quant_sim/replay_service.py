@@ -42,6 +42,7 @@ class MainProjectHistoricalSnapshotProvider:
     ):
         self.tdx_fetcher = tdx_fetcher or SmartMonitorTDXDataFetcher()
         self.cache: dict[tuple[str, str], pd.DataFrame] = {}
+        self.indicator_cache: dict[tuple[str, str], pd.DataFrame] = {}
 
     def prepare(
         self,
@@ -52,12 +53,16 @@ class MainProjectHistoricalSnapshotProvider:
     ) -> None:
         data_timeframe = self._normalize_data_timeframe(timeframe)
         for stock_code in stock_codes:
-            self.cache[(stock_code, timeframe)] = self._load_history(
+            history = self._load_history(
                 stock_code,
                 start_datetime=start_datetime,
                 end_datetime=end_datetime,
                 timeframe=data_timeframe,
             )
+            self.cache[(stock_code, timeframe)] = history
+            indicators = self.tdx_fetcher.build_indicator_history(stock_code, history, timeframe=data_timeframe)
+            if indicators is not None and not indicators.empty:
+                self.indicator_cache[(stock_code, timeframe)] = indicators
 
     def get_snapshot(
         self,
@@ -76,12 +81,23 @@ class MainProjectHistoricalSnapshotProvider:
             return None
 
         snapshot_window = window.tail(240).reset_index(drop=True)
+        indicator_frame = self.indicator_cache.get((stock_code, timeframe))
         resolved_name = stock_name if stock_name not in (None, "") else stock_code
-        return self.tdx_fetcher.build_snapshot_from_history(
-            stock_code,
-            snapshot_window,
-            stock_name=resolved_name,
-        )
+        try:
+            return self.tdx_fetcher.build_snapshot_from_history(
+                stock_code,
+                snapshot_window,
+                stock_name=resolved_name,
+                indicator_frame=indicator_frame,
+            )
+        except TypeError as exc:
+            if "indicator_frame" not in str(exc):
+                raise
+            return self.tdx_fetcher.build_snapshot_from_history(
+                stock_code,
+                snapshot_window,
+                stock_name=resolved_name,
+            )
 
     def _load_history(
         self,

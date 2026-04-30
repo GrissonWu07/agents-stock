@@ -165,6 +165,61 @@ def test_build_snapshot_from_history_computes_historical_replay_snapshot(monkeyp
     assert "macd" in snapshot
 
 
+def test_build_snapshot_from_history_reuses_precomputed_indicator_frame(monkeypatch):
+    fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
+    monkeypatch.setattr(fetcher, "_get_stock_name", lambda stock_code: "平安银行")
+
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    history_df = pd.DataFrame(
+        {
+            "日期": dates,
+            "开盘": [10 + index * 0.1 for index in range(80)],
+            "收盘": [10.1 + index * 0.1 for index in range(80)],
+            "最高": [10.2 + index * 0.1 for index in range(80)],
+            "最低": [9.9 + index * 0.1 for index in range(80)],
+            "成交量": [1000 + index * 10 for index in range(80)],
+            "成交额": [10000 + index * 100 for index in range(80)],
+        }
+    )
+    indicator_frame = fetcher.build_indicator_history("000001", history_df, timeframe="day")
+
+    def fail_recalculate(*args, **kwargs):
+        raise AssertionError("should reuse indicator frame")
+
+    monkeypatch.setattr(fetcher, "_calculate_all_indicators", fail_recalculate)
+
+    snapshot = fetcher.build_snapshot_from_history("000001", history_df.tail(40), indicator_frame=indicator_frame)
+
+    assert snapshot["current_price"] == history_df.iloc[-1]["收盘"]
+    assert "ma5" in snapshot
+    assert "macd" in snapshot
+
+
+def test_build_snapshot_from_intraday_history_uses_previous_trading_day_close_for_limit_base(monkeypatch):
+    fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
+    monkeypatch.setattr(fetcher, "_get_stock_name", lambda stock_code: "测试股票")
+
+    dates = list(pd.date_range("2024-01-02 09:30:00", periods=8, freq="30min"))
+    dates.extend(pd.date_range("2024-01-03 09:30:00", periods=8, freq="30min"))
+    closes = [10.0, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 11.0, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7]
+    history_df = pd.DataFrame(
+        {
+            "日期": dates,
+            "开盘": closes,
+            "收盘": closes,
+            "最高": [value + 0.1 for value in closes],
+            "最低": [value - 0.1 for value in closes],
+            "成交量": [1000 + index * 10 for index in range(len(closes))],
+            "成交额": [10000 + index * 100 for index in range(len(closes))],
+        }
+    )
+
+    snapshot = fetcher.build_snapshot_from_history("600000", history_df)
+
+    assert snapshot["pre_close"] == 11.6
+    assert snapshot["prev_close"] == 10.7
+
+
 def test_build_snapshot_from_history_uses_supplied_stock_name_without_lookup(monkeypatch):
     fetcher = SmartMonitorTDXDataFetcher(host="127.0.0.1", port=7709, fallback_hosts=[])
     monkeypatch.setattr(fetcher, "_get_stock_name", lambda stock_code: (_ for _ in ()).throw(AssertionError("should not lookup stock name")))

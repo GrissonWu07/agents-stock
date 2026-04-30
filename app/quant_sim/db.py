@@ -18,6 +18,7 @@ from app.quant_sim.capital_slots import (
     calculate_slot_plan,
     normalize_capital_slot_config,
 )
+from app.quant_sim.execution_constraints import trade_block_reason
 from app.runtime_paths import default_db_path
 
 
@@ -303,7 +304,7 @@ class QuantSimDB:
                 sell_tax_rate REAL DEFAULT 0.001,
                 capital_slot_enabled INTEGER DEFAULT 1,
                 capital_pool_min_cash REAL DEFAULT 20000,
-                capital_pool_max_cash REAL DEFAULT 1000000,
+                capital_pool_max_cash REAL DEFAULT 1000000000000,
                 capital_slot_min_cash REAL DEFAULT 20000,
                 capital_max_slots INTEGER DEFAULT 25,
                 capital_min_buy_slot_fraction REAL DEFAULT 0.25,
@@ -2937,6 +2938,16 @@ class QuantSimDB:
             executed_dt = self._ensure_datetime(executed_at)
             executed_at_text = self._format_datetime(executed_dt)
             action = executed_action.lower()
+            signal_profile = self._loads_metadata(signal["strategy_profile_json"] if "strategy_profile_json" in signal.keys() else None)
+            block_reason = trade_block_reason(
+                action=action,
+                stock_code=signal["stock_code"],
+                stock_name=signal["stock_name"],
+                price=price,
+                signal={**self._row_to_dict(signal), "strategy_profile": signal_profile},
+            )
+            if block_reason:
+                raise ValueError(block_reason)
 
             if action == "buy":
                 trade_result = self._apply_buy(
@@ -2960,7 +2971,6 @@ class QuantSimDB:
             else:
                 raise ValueError(f"Unsupported executed_action: {executed_action}")
 
-            signal_profile = self._loads_metadata(signal["strategy_profile_json"] if "strategy_profile_json" in signal.keys() else None)
             position_sizing = signal_profile.get("position_sizing") if isinstance(signal_profile.get("position_sizing"), dict) else None
             if position_sizing:
                 trade_metadata = trade_result.get("trade_metadata") if isinstance(trade_result.get("trade_metadata"), dict) else {}
@@ -4315,6 +4325,14 @@ class QuantSimDB:
                     """,
                     (value,),
                 )
+            cursor.execute(
+                """
+                UPDATE sim_scheduler_config
+                SET capital_pool_max_cash = ?
+                WHERE capital_pool_max_cash = 1000000
+                """,
+                (DEFAULT_CAPITAL_POOL_MAX_CASH,),
+            )
 
     @staticmethod
     def _normalize_capital_slot_config_from_row(row: sqlite3.Row) -> dict[str, Any]:

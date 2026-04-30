@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.runtime_paths import DATA_DIR
 LOGGER = logging.getLogger(__name__)
 PARQUET_ENGINE = os.getenv("MARKET_DATA_PARQUET_ENGINE", "pyarrow")
 SUPPORTED_PROVIDERS = {"akshare", "tdx", "tushare"}
+RANGE_MISS_TTL_SECONDS = int(os.getenv("MARKET_DATA_RANGE_MISS_TTL_HOURS", "168")) * 3600
 
 
 @dataclass(frozen=True)
@@ -181,15 +183,32 @@ class LocalMarketDataStore:
         local_slice = self._filter_range(local, start, end, datetime_col=datetime_col)
         if self._range_covers(local, start, end, datetime_col=datetime_col) and local_slice is not None and not local_slice.empty:
             return self._result(local_slice, "hit", f"local_{provider_name}", path)
+        meta = self._read_range_meta(path)
+        if self._range_boundary_accepts(meta, local, start, end, datetime_col=datetime_col):
+            boundary_slice = self._filter_range(local, None, end, datetime_col=datetime_col)
+            if boundary_slice is not None and not boundary_slice.empty:
+                return self._result(boundary_slice, "boundary_hit", f"local_{provider_name}", path)
+        if (local is None or local.empty) and self._recent_remote_empty(meta, start, end):
+            return self._result(pd.DataFrame(), "negative_hit", f"local_{provider_name}", path)
 
         status = "miss" if local is None or local.empty else "partial"
         remote = remote_fetcher(start, end)
         if remote is None or remote.empty:
+            self._write_range_meta(
+                path,
+                {
+                    **meta,
+                    "remote_empty_at": pd.Timestamp(datetime.now()).isoformat(),
+                    "remote_empty_start": _coerce_datetime(start).isoformat() if _coerce_datetime(start) is not None else None,
+                    "remote_empty_end": _coerce_datetime(end).isoformat() if _coerce_datetime(end) is not None else None,
+                },
+            )
             if local_slice is not None and not local_slice.empty:
                 return self._result(local_slice, "stale", f"local_{provider_name}", path)
             return self._result(pd.DataFrame(), "remote_failed", f"remote_{provider_name}", path)
 
         merged = self.merge_frame(provider_name, dataset, symbol, remote, params=params, key_columns=key_columns)
+        self._record_unfilled_boundaries(path, meta, merged, start, end, datetime_col=datetime_col)
         merged_slice = self._filter_range(merged, start, end, datetime_col=datetime_col)
         return self._result(merged_slice if merged_slice is not None else merged, status, f"remote_{provider_name}", path)
 
@@ -317,3 +336,94 @@ class LocalMarketDataStore:
         data["cache_source"] = cache_source
         data["cache_status"] = status
         return LocalMarketDataResult(data=data, cache_status=status, cache_source=cache_source, path=path)
+
+    def _metadata_path(self, path: Path) -> Path:
+        return path.with_suffix(".meta.json")
+
+    def _read_range_meta(self, path: Path) -> dict[str, Any]:
+        meta_path = self._metadata_path(path)
+        if not self.enabled or not meta_path.exists():
+            return {}
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except Exception as exc:
+            LOGGER.warning("local market data metadata read failed path=%s error=%s", meta_path, exc)
+            return {}
+
+    def _write_range_meta(self, path: Path, payload: dict[str, Any]) -> None:
+        if not self.enabled:
+            return
+        meta_path = self._metadata_path(path)
+        with self._lock_for(path):
+            meta_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = meta_path.with_suffix(f".tmp-{threading.get_ident()}.json")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+            tmp_path.replace(meta_path)
+
+    def _range_boundary_accepts(
+        self,
+        meta: dict[str, Any],
+        local: pd.DataFrame | None,
+        start: Any,
+        end: Any,
+        *,
+        datetime_col: str,
+    ) -> bool:
+        if local is None or local.empty or datetime_col not in local.columns:
+            return False
+        start_dt = _coerce_datetime(start)
+        end_dt = _coerce_datetime(end)
+        values = pd.to_datetime(local[datetime_col])
+        if end_dt is not None and values.max() < end_dt:
+            return False
+        exhausted_start = _coerce_datetime(meta.get("left_exhausted_start"))
+        available_start = _coerce_datetime(meta.get("left_available_start"))
+        if start_dt is None or exhausted_start is None or available_start is None:
+            return False
+        return exhausted_start <= start_dt < available_start and values.min() <= available_start
+
+    def _recent_remote_empty(self, meta: dict[str, Any], start: Any, end: Any) -> bool:
+        empty_at = _coerce_datetime(meta.get("remote_empty_at"))
+        if empty_at is None:
+            return False
+        if (pd.Timestamp(datetime.now()) - empty_at).total_seconds() > RANGE_MISS_TTL_SECONDS:
+            return False
+        requested_start = _coerce_datetime(start)
+        requested_end = _coerce_datetime(end)
+        empty_start = _coerce_datetime(meta.get("remote_empty_start"))
+        empty_end = _coerce_datetime(meta.get("remote_empty_end"))
+        if requested_start is not None and empty_start is not None and requested_start < empty_start:
+            return False
+        if requested_end is not None and empty_end is not None and requested_end > empty_end:
+            return False
+        return True
+
+    def _record_unfilled_boundaries(
+        self,
+        path: Path,
+        meta: dict[str, Any],
+        merged: pd.DataFrame,
+        start: Any,
+        end: Any,
+        *,
+        datetime_col: str,
+    ) -> None:
+        if merged is None or merged.empty or datetime_col not in merged.columns:
+            return
+        values = pd.to_datetime(merged[datetime_col])
+        start_dt = _coerce_datetime(start)
+        end_dt = _coerce_datetime(end)
+        next_meta = dict(meta)
+        changed = False
+        if start_dt is not None and values.min() > start_dt:
+            next_meta["left_exhausted_start"] = start_dt.isoformat()
+            next_meta["left_available_start"] = values.min().isoformat()
+            changed = True
+        if end_dt is not None and values.max() < end_dt:
+            next_meta["right_exhausted_end"] = end_dt.isoformat()
+            next_meta["right_available_end"] = values.max().isoformat()
+            changed = True
+        if changed:
+            next_meta["boundary_checked_at"] = pd.Timestamp(datetime.now()).isoformat()
+            self._write_range_meta(path, next_meta)

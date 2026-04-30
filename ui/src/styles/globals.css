@@ -1221,50 +1221,175 @@ a {
   grid-template-columns: repeat(4, minmax(120px, 1fr));
 }
 
-.portfolio-indicator-groups {
+.portfolio-technical-panel {
   display: grid;
-  gap: 8px;
+  gap: 14px;
 }
 
-.portfolio-indicator-group {
-  padding: 10px 12px;
-}
-
-.portfolio-indicator-chip-grid {
+.portfolio-technical-status-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 220px));
-  gap: 8px;
-  justify-content: start;
-}
-
-.portfolio-indicator-chip-grid--summary {
   grid-template-columns: repeat(4, minmax(120px, 1fr));
-  align-items: stretch;
   gap: 10px;
 }
 
-.portfolio-indicator-chip {
+.portfolio-technical-status-pill {
   display: grid;
   gap: 3px;
   min-width: 0;
-  min-height: 72px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  border: 1px solid rgba(217, 226, 244, 0.92);
+  border-radius: 10px;
   background: #ffffff;
-  border: 1px solid rgba(217, 226, 244, 0.84);
-  align-content: start;
+  padding: 10px 12px;
 }
 
-.portfolio-indicator-chip span,
-.portfolio-indicator-chip small {
+.portfolio-technical-status-pill span {
   color: var(--text-soft);
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
-.portfolio-indicator-chip strong {
+.portfolio-technical-status-pill strong {
+  color: var(--text-strong);
   font-size: 0.96rem;
   line-height: 1.2;
+}
+
+.portfolio-technical-status-pill--positive {
+  border-color: rgba(229, 75, 75, 0.25);
+  background: rgba(229, 75, 75, 0.06);
+}
+
+.portfolio-technical-status-pill--positive strong {
+  color: #c43636;
+}
+
+.portfolio-technical-status-pill--danger {
+  border-color: rgba(21, 153, 104, 0.22);
+  background: rgba(21, 153, 104, 0.07);
+}
+
+.portfolio-technical-status-pill--danger strong {
+  color: var(--success);
+}
+
+.portfolio-technical-status-pill--warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.portfolio-technical-status-pill--warning strong {
+  color: #b45309;
+}
+
+.portfolio-technical-section {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(217, 226, 244, 0.84);
+  padding-top: 14px;
+}
+
+.portfolio-technical-section--price {
+  padding-bottom: 2px;
+}
+
+.portfolio-technical-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.portfolio-technical-section__head strong {
+  color: var(--text-strong);
+  font-size: 0.95rem;
+}
+
+.portfolio-technical-section__head span,
+.portfolio-technical-section p {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.portfolio-technical-section p {
+  margin: 0;
+}
+
+.portfolio-price-axis {
+  position: relative;
+  height: 28px;
+  margin: 2px 8px 0;
+}
+
+.portfolio-price-axis__track {
+  position: absolute;
+  top: 13px;
+  right: 0;
+  left: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(21, 153, 104, 0.25), rgba(77, 134, 247, 0.24), rgba(229, 75, 75, 0.28));
+}
+
+.portfolio-price-axis__marker {
+  position: absolute;
+  top: 8px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #7c8aa5;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+}
+
+.portfolio-price-axis__marker--price {
+  width: 18px;
+  height: 18px;
+  top: 6px;
+  background: #2f5cff;
+}
+
+.portfolio-price-axis__legend {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.portfolio-price-axis__legend div,
+.portfolio-technical-metric {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.portfolio-price-axis__legend span,
+.portfolio-technical-metric span {
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.portfolio-price-axis__legend strong,
+.portfolio-technical-metric strong {
+  color: var(--text-strong);
+  font-size: 0.92rem;
+}
+
+.portfolio-price-axis__legend .is-current strong,
+.portfolio-price-axis__legend .is-current span {
+  color: #2f5cff;
+}
+
+.portfolio-technical-section-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.portfolio-technical-metric-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px 12px;
 }
 
 .portfolio-disclosure {
@@ -1315,8 +1440,8 @@ a {
   margin-top: 10px;
 }
 
-.portfolio-stock-analysis-metrics {
-  margin-top: 10px;
+.portfolio-final-decision {
+  grid-column: 1 / -1;
 }
 
 .portfolio-stock-analysis-card .content-scroll {
@@ -1328,13 +1453,43 @@ a {
   margin-bottom: 10px;
 }
 
+.portfolio-stock-analysis-settings__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .portfolio-stock-analysis-cycle {
+  flex: 0 0 180px;
   max-width: 180px;
-  margin-top: 10px;
 }
 
 .portfolio-analyst-views {
+  border: 1px solid var(--soft-line);
+  border-radius: 14px;
+  background: #fbfdff;
+  padding: 14px;
   margin-top: 10px;
+}
+
+.portfolio-analyst-views__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.portfolio-analyst-views__head > span {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.portfolio-analyst-layout {
+  margin-top: 0;
 }
 
 .portfolio-analyst-list {
@@ -3249,14 +3404,6 @@ a {
   min-height: 0;
 }
 
-.portfolio-indicator-table th,
-.portfolio-indicator-table td {
-  padding: 10px 12px;
-  font-size: 0.86rem;
-  vertical-align: top;
-  line-height: 1.45;
-}
-
 .summary-item__meta {
   margin-top: 8px;
   color: var(--text-muted);
@@ -4533,9 +4680,26 @@ a {
   .portfolio-position-form--compact,
   .portfolio-decision-metrics,
   .portfolio-trade-plan-metrics,
-  .portfolio-indicator-chip-grid,
-  .portfolio-indicator-chip-grid--summary {
+  .portfolio-technical-status-row,
+  .portfolio-price-axis__legend,
+  .portfolio-technical-metric-row {
     grid-template-columns: 1fr;
+  }
+
+  .portfolio-technical-section__head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .portfolio-stock-analysis-settings__head,
+  .portfolio-analyst-views__head {
+    flex-direction: column;
+  }
+
+  .portfolio-stock-analysis-cycle {
+    flex-basis: auto;
+    max-width: none;
+    width: 100%;
   }
 
   .portfolio-kline-card .portfolio-kline-panel {

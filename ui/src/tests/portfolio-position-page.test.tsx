@@ -14,6 +14,16 @@ const stockAnalysisSnapshot = (summaryBody: string): PortfolioSnapshot => ({
   curve: [],
   actions: [],
   selectedSymbol: "600519",
+  portfolioDecision: {
+    action: "加仓",
+    targetExposurePct: "70%",
+    summary: "组合仓位建议：加仓，建议目标仓位约 70%。",
+    bullishCount: 3,
+    neutralCount: 1,
+    bearishCount: 0,
+    score: 0.42,
+    reasons: ["看多 3 / 中性 1 / 看空 0"],
+  },
   detail: {
     symbol: "600519",
     stockName: "贵州茅台",
@@ -228,9 +238,15 @@ describe("PortfolioPositionPage", () => {
     expect(screen.getByRole("heading", { name: "决策计划" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "决策概览" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "交易计划" })).toBeNull();
+    expect(document.querySelector(".portfolio-decision-action")).toHaveTextContent("观望");
+    expect(screen.getByText("组合建议")).toBeInTheDocument();
+    expect(screen.getByText("加仓 · 70%")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "关键技术指标" })).toBeInTheDocument();
-    expect(screen.getByText("更多指标明细")).toBeInTheDocument();
+    expect(screen.queryByText("更多指标明细")).toBeNull();
     expect(screen.getByText("完整分析原文")).toBeInTheDocument();
+    expect(document.querySelector(".portfolio-analysis-raw")).toHaveAttribute("open");
+    expect(document.querySelector(".portfolio-analyst-views .analyst-layout")).not.toBeNull();
+    expect(document.querySelector(".portfolio-stock-analysis-settings__head .portfolio-stock-analysis-cycle")).not.toBeNull();
     expect(document.querySelector(".portfolio-kline-card--full")).not.toBeNull();
     expect(screen.queryByText("持仓分析结论")).toBeNull();
     expect(screen.queryByText("当前未登记持仓，先以观察和建仓条件确认作为主线。")).toBeNull();
@@ -245,10 +261,14 @@ describe("PortfolioPositionPage", () => {
     });
     expect((await screen.findAllByText("MA20")).length).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(document.querySelectorAll(".portfolio-indicator-chip-grid--summary .portfolio-indicator-chip")).toHaveLength(8);
+      expect(document.querySelectorAll(".portfolio-technical-status-pill")).toHaveLength(4);
     });
-    expect(screen.getAllByText("MA5")).toHaveLength(1);
-    expect(screen.getAllByText("K值")).toHaveLength(1);
+    expect(screen.getByText("价格位置")).toBeInTheDocument();
+    expect(screen.getByText("趋势结构")).toBeInTheDocument();
+    expect(screen.getByText("动量指标")).toBeInTheDocument();
+    expect(screen.getByText("量能与波动")).toBeInTheDocument();
+    expect(screen.getAllByText("MA5").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("K值").length).toBeGreaterThan(0);
     expect(await screen.findByText(/开 1450\.0/)).toBeInTheDocument();
     expect(document.querySelector(".analyst-layout")).not.toBeNull();
     expect(document.querySelectorAll(".analyst-tab")).toHaveLength(2);

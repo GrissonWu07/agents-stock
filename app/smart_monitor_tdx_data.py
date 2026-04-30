@@ -330,6 +330,55 @@ class SmartMonitorTDXDataFetcher:
             self.logger.error(f"TDX计算技术指标失败 {stock_code}: {exc}")
             return None
 
+    def _calculate_indicator_frame(self, df: pd.DataFrame, stock_code: str, *, timeframe: str = "1d") -> Optional[pd.DataFrame]:
+        if df.empty or len(df) < 60:
+            self.logger.warning(f"股票 {stock_code} 历史数据不足")
+            return None
+        indicators = TechnicalIndicatorEngine().calculate(
+            df,
+            symbol=stock_code,
+            source="tdx",
+            dataset="kline",
+            timeframe=timeframe,
+            provider="tdx",
+            strict=False,
+        )
+        if indicators.empty:
+            self.logger.warning(f"股票 {stock_code} 无法标准化为OHLCV")
+            return None
+        return indicators
+
+    def build_indicator_history(self, stock_code: str, history_df: pd.DataFrame, *, timeframe: str = "1d") -> Optional[pd.DataFrame]:
+        try:
+            if history_df is None or history_df.empty or "日期" not in history_df.columns:
+                return None
+            history = history_df.copy()
+            history["日期"] = pd.to_datetime(history["日期"])
+            start = history["日期"].min()
+            end = history["日期"].max()
+            engine = TechnicalIndicatorEngine()
+            params = {"kline_type": timeframe, "indicator_version": engine.indicator_version}
+
+            def calculate_remote(_start, _end):
+                frame = self._calculate_indicator_frame(history, stock_code, timeframe=timeframe)
+                return frame if frame is not None else pd.DataFrame()
+
+            result = self.local_client.store.fetch_range(
+                "tdx",
+                "indicators",
+                stock_code,
+                start=start,
+                end=end,
+                params=params,
+                remote_fetcher=calculate_remote,
+                key_columns=["symbol", "datetime"],
+            )
+            return result.data if not result.data.empty else None
+        except Exception as exc:
+            self.logger.error(f"计算指标序列失败 {stock_code}: {exc}")
+            self.logger.debug("指标序列计算异常详情", exc_info=True)
+            return None
+
     def _calculate_all_indicators(self, df: pd.DataFrame, stock_code: str) -> Optional[Dict]:
         """
         根据历史数据计算所有技术指标
@@ -342,92 +391,81 @@ class SmartMonitorTDXDataFetcher:
             技术指标数据
         """
         try:
-            if df.empty or len(df) < 60:
-                self.logger.warning(f"股票 {stock_code} 历史数据不足")
+            indicators = self._calculate_indicator_frame(df, stock_code)
+            if indicators is None or indicators.empty:
                 return None
-
-            indicators = TechnicalIndicatorEngine().calculate(
-                df,
-                symbol=stock_code,
-                source="tdx",
-                dataset="kline",
-                timeframe="1d",
-                provider="tdx",
-                strict=False,
-            )
-            if indicators.empty:
-                self.logger.warning(f"股票 {stock_code} 无法标准化为OHLCV")
-                return None
-
-            latest = indicators.iloc[-1]
-
-            current_price = float(latest["close"])
-            ma5 = float(latest["ma5"])
-            ma20 = float(latest["ma20"])
-            ma60 = float(latest["ma60"])
-
-            if current_price > ma5 > ma20 > ma60:
-                trend = "up"
-            elif current_price < ma5 < ma20 < ma60:
-                trend = "down"
-            else:
-                trend = "sideways"
-
-            boll_upper = float(latest["boll_upper"])
-            boll_mid = float(latest["boll_mid"])
-            boll_lower = float(latest["boll_lower"])
-
-            if current_price >= boll_upper:
-                boll_position = "上轨附近（超买）"
-            elif current_price <= boll_lower:
-                boll_position = "下轨附近（超卖）"
-            elif current_price > boll_mid:
-                boll_position = "中轨上方"
-            else:
-                boll_position = "中轨下方"
-
-            return {
-                "ma5": ma5,
-                "ma20": ma20,
-                "ma10": float(latest["ma10"]) if pd.notna(latest["ma10"]) else 0.0,
-                "ma60": ma60,
-                "trend": trend,
-                "ma20_slope": float(latest["ma20_slope"]),
-                "macd_dif": float(latest["dif"]),
-                "macd_dea": float(latest["dea"]),
-                "macd": float(latest["macd"]),
-                "dif": float(latest["dif"]),
-                "dea": float(latest["dea"]),
-                "hist": float(latest["hist"]),
-                "hist_prev": float(indicators.iloc[-2]["hist"]) if len(indicators) >= 2 and pd.notna(indicators.iloc[-2]["hist"]) else 0.0,
-                "rsi6": float(latest["rsi6"]),
-                "rsi12": float(latest["rsi12"]),
-                "rsi14": float(latest["rsi14"]),
-                "rsi24": float(latest["rsi24"]),
-                "kdj_k": float(latest["kdj_k"]),
-                "kdj_d": float(latest["kdj_d"]),
-                "kdj_j": float(latest["kdj_j"]),
-                "k": float(latest["kdj_k"]),
-                "d": float(latest["kdj_d"]),
-                "j": float(latest["kdj_j"]),
-                "obv": float(latest["obv"]),
-                "obv_prev": float(latest["obv_prev"]) if pd.notna(latest["obv_prev"]) else float(latest["obv"]),
-                "atr": float(latest["atr"]) if pd.notna(latest["atr"]) else 0.0,
-                "boll_upper": boll_upper,
-                "boll_mid": boll_mid,
-                "boll_lower": boll_lower,
-                "boll_position_value": float(latest["boll_position_value"]),
-                "boll_position": boll_position,
-                "vol_ma5": float(latest["volume_ma5"]),
-                "vol_ma10": float(latest["volume_ma10"]),
-                "volume_ratio": float(latest["volume_ratio"]) if pd.notna(latest["volume_ratio"]) else 1.0,
-                "formula_profile": str(latest["formula_profile"]),
-                "indicator_version": str(latest["indicator_version"]),
-            }
+            return self._indicator_snapshot_from_frame(indicators)
         except Exception as exc:
             self.logger.error(f"计算技术指标失败 {stock_code}: {exc}")
             self.logger.debug("技术指标计算异常详情", exc_info=True)
             return None
+
+    def _indicator_snapshot_from_frame(self, indicators: pd.DataFrame) -> Dict:
+        latest = indicators.iloc[-1]
+
+        current_price = float(latest["close"])
+        ma5 = float(latest["ma5"])
+        ma20 = float(latest["ma20"])
+        ma60 = float(latest["ma60"])
+
+        if current_price > ma5 > ma20 > ma60:
+            trend = "up"
+        elif current_price < ma5 < ma20 < ma60:
+            trend = "down"
+        else:
+            trend = "sideways"
+
+        boll_upper = float(latest["boll_upper"])
+        boll_mid = float(latest["boll_mid"])
+        boll_lower = float(latest["boll_lower"])
+
+        if current_price >= boll_upper:
+            boll_position = "上轨附近（超买）"
+        elif current_price <= boll_lower:
+            boll_position = "下轨附近（超卖）"
+        elif current_price > boll_mid:
+            boll_position = "中轨上方"
+        else:
+            boll_position = "中轨下方"
+
+        return {
+            "ma5": ma5,
+            "ma20": ma20,
+            "ma10": float(latest["ma10"]) if pd.notna(latest["ma10"]) else 0.0,
+            "ma60": ma60,
+            "trend": trend,
+            "ma20_slope": float(latest["ma20_slope"]),
+            "macd_dif": float(latest["dif"]),
+            "macd_dea": float(latest["dea"]),
+            "macd": float(latest["macd"]),
+            "dif": float(latest["dif"]),
+            "dea": float(latest["dea"]),
+            "hist": float(latest["hist"]),
+            "hist_prev": float(indicators.iloc[-2]["hist"]) if len(indicators) >= 2 and pd.notna(indicators.iloc[-2]["hist"]) else 0.0,
+            "rsi6": float(latest["rsi6"]),
+            "rsi12": float(latest["rsi12"]),
+            "rsi14": float(latest["rsi14"]),
+            "rsi24": float(latest["rsi24"]),
+            "kdj_k": float(latest["kdj_k"]),
+            "kdj_d": float(latest["kdj_d"]),
+            "kdj_j": float(latest["kdj_j"]),
+            "k": float(latest["kdj_k"]),
+            "d": float(latest["kdj_d"]),
+            "j": float(latest["kdj_j"]),
+            "obv": float(latest["obv"]),
+            "obv_prev": float(latest["obv_prev"]) if pd.notna(latest["obv_prev"]) else float(latest["obv"]),
+            "atr": float(latest["atr"]) if pd.notna(latest["atr"]) else 0.0,
+            "boll_upper": boll_upper,
+            "boll_mid": boll_mid,
+            "boll_lower": boll_lower,
+            "boll_position_value": float(latest["boll_position_value"]),
+            "boll_position": boll_position,
+            "vol_ma5": float(latest["volume_ma5"]),
+            "vol_ma10": float(latest["volume_ma10"]),
+            "volume_ratio": float(latest["volume_ratio"]) if pd.notna(latest["volume_ratio"]) else 1.0,
+            "formula_profile": str(latest["formula_profile"]),
+            "indicator_version": str(latest["indicator_version"]),
+        }
 
     def get_comprehensive_data(self, stock_code: str, preferred_name: Optional[str] = None) -> Dict:
         """获取综合数据（实时行情 + 技术指标）"""
@@ -449,6 +487,7 @@ class SmartMonitorTDXDataFetcher:
         history_df: Optional[pd.DataFrame],
         *,
         stock_name: Optional[str] = None,
+        indicator_frame: Optional[pd.DataFrame] = None,
     ) -> Dict:
         """Build a comprehensive snapshot from historical bars only."""
 
@@ -463,6 +502,9 @@ class SmartMonitorTDXDataFetcher:
         df = df.sort_values("日期").reset_index(drop=True)
 
         latest = df.iloc[-1]
+        latest_date = latest["日期"].date()
+        previous_day_rows = df[df["日期"].dt.date < latest_date]
+        prev_close = float(previous_day_rows.iloc[-1]["收盘"]) if not previous_day_rows.empty else float(df.iloc[-2]["收盘"]) if len(df) >= 2 else 0.0
         snapshot = {
             "code": self._normalize_stock_code(stock_code),
             "name": stock_name or self._get_stock_name(stock_code),
@@ -475,6 +517,7 @@ class SmartMonitorTDXDataFetcher:
             "low": float(latest.get("最低", 0) or 0),
             "open": float(latest.get("开盘", 0) or 0),
             "pre_close": float(df.iloc[-2]["收盘"]) if len(df) >= 2 else 0.0,
+            "prev_close": prev_close,
             "turnover_rate": 0.0,
             "volume_ratio": 1.0,
             "update_time": latest["日期"].strftime("%Y-%m-%d %H:%M:%S"),
@@ -484,7 +527,13 @@ class SmartMonitorTDXDataFetcher:
             snapshot["change_amount"] = round(snapshot["current_price"] - snapshot["pre_close"], 4)
             snapshot["change_pct"] = round(snapshot["change_amount"] / snapshot["pre_close"] * 100, 4)
 
-        indicators = self._calculate_all_indicators(df, stock_code)
+        indicators = None
+        if indicator_frame is not None and not indicator_frame.empty and "datetime" in indicator_frame.columns:
+            available_indicators = indicator_frame[pd.to_datetime(indicator_frame["datetime"]) <= latest["日期"]]
+            if not available_indicators.empty:
+                indicators = self._indicator_snapshot_from_frame(available_indicators.reset_index(drop=True))
+        if indicators is None:
+            indicators = self._calculate_all_indicators(df, stock_code)
         if indicators:
             snapshot.update(indicators)
 

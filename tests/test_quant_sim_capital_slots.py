@@ -5,6 +5,7 @@ from app.quant_sim.capital_slots import (
     DEFAULT_CAPITAL_SLOT_CONFIG,
     normalize_capital_slot_config,
     calculate_slot_plan,
+    calculate_slot_units,
     calculate_buy_priority,
 )
 from app.quant_sim.portfolio_service import PortfolioService
@@ -44,15 +45,29 @@ def _fusion_signal(
     }
 
 
-def test_slot_plan_uses_floor_count_and_minimum_20000_slot_budget():
+def test_slot_plan_uses_dynamic_equity_tiers():
     plan = calculate_slot_plan(
-        total_equity=50000,
+        total_equity=80000,
         config={**DEFAULT_CAPITAL_SLOT_CONFIG, "capital_max_slots": 25},
     )
 
     assert plan["enabled"] is True
     assert plan["slot_count"] == 2
-    assert plan["slot_budget"] == 25000
+    assert plan["slot_budget"] == 40000
+
+    mid_plan = calculate_slot_plan(
+        total_equity=452000,
+        config={**DEFAULT_CAPITAL_SLOT_CONFIG, "capital_max_slots": 25},
+    )
+    assert mid_plan["slot_count"] == 5
+    assert mid_plan["slot_budget"] == 90400
+
+    large_plan = calculate_slot_plan(
+        total_equity=1200000,
+        config={**DEFAULT_CAPITAL_SLOT_CONFIG, "capital_max_slots": 25},
+    )
+    assert large_plan["slot_count"] == 6
+    assert large_plan["slot_budget"] == 200000
 
 
 def test_slot_config_enforces_minimum_slot_cash_and_known_sell_reuse_policy():
@@ -86,6 +101,47 @@ def test_high_price_strong_buy_can_use_two_slots_to_buy_one_lot():
 
     assert plan["slot_count"] == 2
     assert priority > 0.5
+
+
+def test_buy_slot_units_floor_to_one_lot_when_full_slot_can_afford_it():
+    signal = _fusion_signal("301662", fusion_score=0.351, buy_threshold=0.35, fusion_confidence=0.45, price=800.0)
+
+    sizing = calculate_slot_units(
+        signal,
+        price=800.0,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+    )
+
+    assert sizing["slot_units"] >= sizing["one_lot_cost"] / 100000
+    assert sizing["slot_units"] > sizing["base_slot_units"]
+
+
+def test_aggressive_cash_pressure_increases_slot_units_when_cash_ratio_is_high():
+    signal = _fusion_signal("301662", fusion_score=0.385865, buy_threshold=0.35, fusion_confidence=0.890861, price=182.07)
+
+    base = calculate_slot_units(
+        signal,
+        price=182.07,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+        strategy_profile_id="stable",
+        cash_ratio=0.82,
+    )
+    pressured = calculate_slot_units(
+        signal,
+        price=182.07,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+        strategy_profile_id="aggressive",
+        cash_ratio=0.82,
+    )
+
+    assert pressured["cash_pressure_units"] > 0
+    assert pressured["slot_units"] > base["slot_units"]
 
 
 def test_auto_execute_high_price_strong_buy_uses_two_slots_and_records_slot_lot_allocation(tmp_path):
