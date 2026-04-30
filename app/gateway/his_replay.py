@@ -742,10 +742,6 @@ def _action_his_replay_start(context: UIApiContext, payload: Any) -> dict[str, A
     return _snapshot_his_replay(context)
 
 
-def _action_his_replay_continue(context: UIApiContext, payload: Any) -> dict[str, Any]:
-    del context, payload
-    raise ValueError("接续到实时模拟账户已停用，请使用历史回放查看独立回放结果。")
-
 def _action_his_replay_cancel(context: UIApiContext, payload: Any) -> dict[str, Any]:
     body = _payload_dict(payload)
     run_id = _int(body.get("id"))

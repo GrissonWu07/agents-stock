@@ -66,7 +66,6 @@ export const PAGE_ACTION_ENDPOINTS: Record<PageKey, Record<string, string>> = {
   },
   "his-replay": {
     start: "/api/v1/quant/his-replay/actions/start",
-    continue: "/api/v1/quant/his-replay/actions/continue",
     cancel: "/api/v1/quant/his-replay/actions/cancel",
     delete: "/api/v1/quant/his-replay/actions/delete",
   },

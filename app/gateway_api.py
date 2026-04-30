@@ -11,7 +11,7 @@ from app import akshare_client, smart_monitor_tdx_data
 from app.gateway.constants import REPLAY_TABLE_PAGE_SIZE, SERVICE_NAME, UI_DIST_DIR
 from app.gateway.context import UIApiContext
 from app.gateway.deps import _int, _now, _payload_dict, _txt, normalize_stock_code
-from app.gateway.his_replay import _action_his_replay_cancel, _action_his_replay_continue, _action_his_replay_delete, _action_his_replay_start, _his_replay_database_busy, _snapshot_his_replay, _snapshot_his_replay_capital_pool, _snapshot_his_replay_progress
+from app.gateway.his_replay import _action_his_replay_cancel, _action_his_replay_delete, _action_his_replay_start, _his_replay_database_busy, _snapshot_his_replay, _snapshot_his_replay_capital_pool, _snapshot_his_replay_progress
 from app.gateway.history import _action_history_rerun, _snapshot_history
 from app.gateway.live_sim import _action_live_sim_analyze_candidate, _action_live_sim_bulk_quant, _action_live_sim_delete_candidate, _action_live_sim_delete_position, _action_live_sim_reset, _action_live_sim_save, _action_live_sim_start, _action_live_sim_stop, _live_signal_table, _live_trade_table, _snapshot_live_sim
 from app.gateway.monitor import _action_ai_monitor_analyze, _action_ai_monitor_delete, _action_ai_monitor_start, _action_ai_monitor_stop, _action_real_monitor_delete_rule, _action_real_monitor_refresh, _action_real_monitor_start, _action_real_monitor_stop, _action_real_monitor_update_rule, _snapshot_ai_monitor, _snapshot_real_monitor
@@ -175,7 +175,6 @@ ACTION_BUILDERS = {
     ("live-sim", "delete-position"): _action_live_sim_delete_position,
     ("live-sim", "bulk-quant"): _action_live_sim_bulk_quant,
     ("his-replay", "start"): _action_his_replay_start,
-    ("his-replay", "continue"): _action_his_replay_continue,
     ("his-replay", "cancel"): _action_his_replay_cancel,
     ("his-replay", "delete"): _action_his_replay_delete,
     ("ai-monitor", "start"): _action_ai_monitor_start,
@@ -467,7 +466,6 @@ ACTION_ROUTES = [
     ("/api/v1/quant/live-sim/actions/delete-position", "live-sim", "delete-position"),
     ("/api/v1/quant/live-sim/actions/bulk-quant", "live-sim", "bulk-quant"),
     ("/api/v1/quant/his-replay/actions/start", "his-replay", "start"),
-    ("/api/v1/quant/his-replay/actions/continue", "his-replay", "continue"),
     ("/api/v1/quant/his-replay/actions/cancel", "his-replay", "cancel"),
     ("/api/v1/quant/his-replay/actions/delete", "his-replay", "delete"),
     ("/api/v1/monitor/ai/actions/start", "ai-monitor", "start"),

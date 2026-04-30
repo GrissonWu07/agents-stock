@@ -1558,8 +1558,7 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
     assert fake_replay.calls[0][1]["strategy_profile_id"] == "aggressive"
 
     continue_resp = client.post("/api/v1/quant/his-replay/actions/continue", json={})
-    assert continue_resp.status_code == 400
-    assert "接续到实时模拟账户已停用" in continue_resp.json()["detail"]
+    assert continue_resp.status_code in {404, 405}
     assert all(call[0] != "past_to_live" for call in fake_replay.calls)
 
     cancel_resp = client.post("/api/v1/quant/his-replay/actions/cancel", json={"id": run_id})
