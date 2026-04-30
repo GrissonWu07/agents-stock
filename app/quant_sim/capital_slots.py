@@ -229,6 +229,11 @@ def calculate_slot_units(
     cash_pressure_units = _cash_pressure_slot_units(strategy_profile_id=strategy_profile_id, cash_ratio=cash_ratio)
     if cash_pressure_units > 0:
         slot_units = min(slot_units + cash_pressure_units, cfg["capital_high_price_max_slot_units"])
+    reentry_size_multiplier = _reentry_size_multiplier(signal)
+    if reentry_size_multiplier < 1.0:
+        slot_units = slot_units * reentry_size_multiplier
+        if one_lot_floor_units > 0:
+            slot_units = max(slot_units, one_lot_floor_units)
     return {
         **strength,
         "base_slot_units": round(base_units, 6),
@@ -236,9 +241,21 @@ def calculate_slot_units(
         "one_lot_cost": round(one_lot_cost, 4),
         "one_lot_floor_units": round(one_lot_floor_units, 6),
         "cash_pressure_units": round(cash_pressure_units, 6),
+        "reentry_size_multiplier": round(reentry_size_multiplier, 6),
         "high_price": high_price,
         "requires_extra_slot": requires_extra_slot,
     }
+
+
+def _reentry_size_multiplier(signal: dict[str, Any]) -> float:
+    profile = _nested_dict(signal.get("strategy_profile"))
+    gate = _nested_dict(profile.get("reentry_gate"))
+    if str(gate.get("status") or "").strip().lower() != "downgraded":
+        return 1.0
+    try:
+        return clamp(float(gate.get("size_multiplier") or 1.0), 0.0, 1.0)
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _cash_pressure_slot_units(*, strategy_profile_id: str | None, cash_ratio: float | None) -> float:

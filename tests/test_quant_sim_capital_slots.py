@@ -144,6 +144,38 @@ def test_aggressive_cash_pressure_increases_slot_units_when_cash_ratio_is_high()
     assert pressured["slot_units"] > base["slot_units"]
 
 
+def test_reentry_gate_size_multiplier_reduces_slot_units():
+    signal = _fusion_signal("300857", fusion_score=0.60, buy_threshold=0.35, fusion_confidence=0.90, price=180.59)
+    downgraded = {
+        **signal,
+        "strategy_profile": {
+            **signal["strategy_profile"],
+            "reentry_gate": {
+                "status": "downgraded",
+                "size_multiplier": 0.5,
+            },
+        },
+    }
+
+    base = calculate_slot_units(
+        signal,
+        price=180.59,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+    )
+    reduced = calculate_slot_units(
+        downgraded,
+        price=180.59,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+    )
+
+    assert reduced["reentry_size_multiplier"] == 0.5
+    assert reduced["slot_units"] < base["slot_units"]
+
+
 def test_auto_execute_high_price_strong_buy_uses_two_slots_and_records_slot_lot_allocation(tmp_path):
     db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)

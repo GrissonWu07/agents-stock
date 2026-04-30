@@ -119,6 +119,78 @@ class FakeAdapter:
         )
 
 
+class SplitSnapshotProvider:
+    def prepare(self, stock_codes, start_datetime, end_datetime, timeframe):
+        del stock_codes, start_datetime, end_datetime, timeframe
+
+    def get_snapshot(self, stock_code, checkpoint, timeframe, stock_name=None):
+        del stock_code, timeframe, stock_name
+        price = 99.12 if checkpoint.date() == datetime(2025, 5, 9).date() else 80.60
+        return {
+            "current_price": price,
+            "latest_price": price,
+            "ma5": price,
+            "ma20": price,
+            "ma60": price,
+            "macd": 0.5,
+            "rsi12": 55.0,
+            "volume_ratio": 1.0,
+            "trend": "up",
+        }
+
+
+class SplitThenSellAdapter:
+    def analyze_candidate(self, candidate, market_snapshot=None, analysis_timeframe="1d", strategy_mode="auto"):
+        price = float((market_snapshot or {}).get("current_price") or 0)
+        return Decision(
+            code=candidate["stock_code"],
+            action="BUY" if price >= 90 else "HOLD",
+            confidence=0.90,
+            price=price,
+            timestamp=datetime(2025, 5, 9, 15, 0),
+            reason="买入登记日前持仓",
+            tech_score=0.8,
+            context_score=0.2,
+            position_ratio=0.6,
+            decision_type="test",
+        )
+
+    def analyze_position(self, candidate, position, market_snapshot=None, analysis_timeframe="1d", strategy_mode="auto"):
+        price = float((market_snapshot or {}).get("current_price") or 0)
+        return Decision(
+            code=position["stock_code"],
+            action="SELL" if price < 90 else "HOLD",
+            confidence=0.90,
+            price=price,
+            timestamp=datetime(2025, 5, 13, 10, 0),
+            reason="除权后卖出",
+            tech_score=-0.8,
+            context_score=-0.2,
+            position_ratio=0.0,
+            decision_type="test",
+        )
+
+
+class SplitCorporateActionProvider:
+    def prepare(self, stock_codes, start_datetime, end_datetime):
+        del stock_codes, start_datetime, end_datetime
+
+    def get_actions(self, stock_code, start_datetime, end_datetime):
+        del start_datetime, end_datetime
+        if stock_code != "300857":
+            return []
+        return [
+            {
+                "stock_code": "300857",
+                "ex_date": "2025-05-12",
+                "record_date": "2025-05-09",
+                "bonus_share_ratio": 0.4,
+                "cash_dividend_per_share": 0.293,
+                "description": "10转4股派2.93元",
+            }
+        ]
+
+
 class FakeTdxFetcher:
     def get_kline_data_range(self, stock_code, *, kline_type, start_datetime, end_datetime, max_bars):
         del stock_code, kline_type, start_datetime, end_datetime, max_bars
@@ -271,6 +343,42 @@ def test_historical_replay_persists_run_artifacts_without_touching_live_account(
     assert live_account["trade_count"] == 0
     assert live_account["position_count"] == 0
     assert live_account["available_cash"] == 100000.0
+
+
+def test_historical_replay_applies_a_share_corporate_actions_before_position_decision(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_candidate(
+        stock_code="300857",
+        stock_name="协创数据",
+        source="main_force",
+        latest_price=99.12,
+    )
+
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=SplitSnapshotProvider(),
+        adapter=SplitThenSellAdapter(),
+        corporate_action_provider=SplitCorporateActionProvider(),
+    )
+
+    summary = replay_service.run_historical_range(
+        start_datetime=datetime(2025, 5, 9, 0, 0),
+        end_datetime=datetime(2025, 5, 13, 10, 0),
+        timeframe="1d",
+        market="CN",
+        initial_cash=100000,
+    )
+
+    db = QuantSimDB(db_file)
+    run = db.get_sim_runs(limit=1)[0]
+    trades = db.get_sim_run_trades(run["id"])
+
+    assert summary["trade_count"] == 2
+    assert [trade["action"] for trade in trades] == ["SELL", "BUY"]
+    assert trades[0]["quantity"] == 560
+    assert trades[0]["realized_pnl"] > 5000
+    assert summary["final_equity"] > 105000
 
 
 def test_historical_replay_does_not_send_live_signal_notifications(tmp_path, monkeypatch):

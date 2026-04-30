@@ -478,3 +478,182 @@ def test_signal_center_blocks_position_add_when_gate_fails(tmp_path):
     assert blocked["decision_type"] == "position_add_blocked"
     assert gate["status"] == "blocked"
     assert "不允许加仓" in "；".join(gate["reasons"])
+
+
+def _reentry_profile(
+    *,
+    price: float,
+    ma5: float,
+    ma10: float,
+    ma20: float,
+    ma60: float,
+    rsi12: float,
+    macd: float = 1.0,
+    update_time: str = "2025-09-29 13:30:00",
+    tech_signal: str = "HOLD",
+    context_signal: str = "BUY",
+) -> dict:
+    return {
+        "market_snapshot": {
+            "current_price": price,
+            "ma5": ma5,
+            "ma10": ma10,
+            "ma20": ma20,
+            "ma60": ma60,
+            "ma20_slope": 0.01,
+            "rsi12": rsi12,
+            "macd": macd,
+            "update_time": update_time,
+        },
+        "effective_thresholds": {
+            "profit_reentry_cooldown_days": 5,
+            "profit_reentry_size_multiplier": 0.5,
+            "profit_reentry_hot_rsi_size_multiplier": 0.5,
+            "profit_reentry_very_hot_rsi_size_multiplier": 0.25,
+            "profit_reentry_extreme_rsi": 88,
+            "profit_reentry_extreme_ma20_distance_pct": 5.0,
+        },
+        "explainability": {
+            "dual_track": {
+                "tech_signal": tech_signal,
+                "context_signal": context_signal,
+                "final_action": "BUY",
+            },
+            "fusion_breakdown": {
+                "fusion_score": 0.39,
+                "buy_threshold_eff": 0.35,
+                "fusion_confidence": 0.9,
+            },
+        },
+    }
+
+
+def test_signal_center_downgrades_short_profit_sell_reentry_size(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+    portfolio_service = PortfolioService(db_file=db_file)
+
+    candidate_service.add_manual_candidate("300857", "协创数据", "main_force", latest_price=180.59)
+    candidate = candidate_service.list_candidates()[0]
+    buy = signal_service.create_signal(candidate, {"action": "BUY", "confidence": 90, "reasoning": "seed", "position_size_pct": 50}, notify=False)
+    portfolio_service.confirm_buy(buy["id"], price=104.59, quantity=500, note="seed", executed_at="2025-09-05 14:00:00")
+    sell = signal_service.create_signal(
+        candidate,
+        {
+            "action": "SELL",
+            "confidence": 92,
+            "reasoning": "profit",
+            "position_size_pct": 0,
+            "strategy_profile": {
+                "explainability": {
+                    "fusion_breakdown": {
+                        "veto_id": "profit_tech_sell",
+                        "veto_trigger_type": "profit_tech_sell",
+                    }
+                }
+            },
+        },
+        notify=False,
+    )
+    portfolio_service.confirm_sell(sell["id"], price=160.4, quantity=500, note="profit", executed_at="2025-09-26 10:30:00")
+
+    reentry = signal_service.create_signal(
+        {**candidate, "latest_price": 180.59},
+        {
+            "action": "BUY",
+            "confidence": 88,
+            "reasoning": "short reentry",
+            "position_size_pct": 50,
+            "strategy_profile": _reentry_profile(
+                price=180.59,
+                ma5=172.0,
+                ma10=170.0,
+                ma20=167.09,
+                ma60=168.07,
+                rsi12=78.64,
+            ),
+        },
+        notify=False,
+    )
+
+    gate = reentry["strategy_profile"]["reentry_gate"]
+    assert reentry["action"] == "BUY"
+    assert reentry["position_size_pct"] == 25.0
+    assert gate["status"] == "downgraded"
+    assert gate["last_sell_trigger"] == "profit_tech_sell"
+    assert gate["size_multiplier"] == 0.5
+
+
+def test_signal_center_blocks_extreme_overheat_buy_even_without_profit_reentry(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+
+    candidate_service.add_manual_candidate("300857", "协创数据", "main_force", latest_price=147.35)
+    candidate = candidate_service.list_candidates()[0]
+
+    blocked = signal_service.create_signal(
+        candidate,
+        {
+            "action": "BUY",
+            "confidence": 86,
+            "reasoning": "overheat resonance",
+            "position_size_pct": 50,
+            "strategy_profile": _reentry_profile(
+                price=147.35,
+                ma5=142.69,
+                ma10=141.0,
+                ma20=139.23,
+                ma60=138.52,
+                rsi12=89.47,
+                tech_signal="BUY",
+                context_signal="BUY",
+                update_time="2025-12-09 10:00:00",
+            ),
+        },
+        notify=False,
+    )
+
+    gate = blocked["strategy_profile"]["reentry_gate"]
+    assert blocked["action"] == "HOLD"
+    assert blocked["status"] == "observed"
+    assert blocked["position_size_pct"] == 0
+    assert blocked["decision_type"] == "reentry_overheat_blocked"
+    assert gate["status"] == "blocked"
+    assert gate["rsi12"] == 89.47
+
+
+def test_signal_center_allows_hot_buy_with_reduced_size_when_trend_confirmed(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+
+    candidate_service.add_manual_candidate("300857", "协创数据", "main_force", latest_price=140.61)
+    candidate = candidate_service.list_candidates()[0]
+
+    hot = signal_service.create_signal(
+        candidate,
+        {
+            "action": "BUY",
+            "confidence": 89,
+            "reasoning": "hot trend",
+            "position_size_pct": 50,
+            "strategy_profile": _reentry_profile(
+                price=140.61,
+                ma5=138.75,
+                ma10=138.0,
+                ma20=137.11,
+                ma60=137.90,
+                rsi12=80.15,
+                update_time="2025-12-24 14:00:00",
+            ),
+        },
+        notify=False,
+    )
+
+    gate = hot["strategy_profile"]["reentry_gate"]
+    assert hot["action"] == "BUY"
+    assert hot["position_size_pct"] == 25.0
+    assert gate["status"] == "downgraded"
+    assert gate["size_multiplier"] == 0.5

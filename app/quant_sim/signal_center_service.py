@@ -39,6 +39,7 @@ class SignalCenterService:
         payload = self._normalize_decision_payload(decision)
         payload = self._apply_position_constraints(candidate, payload)
         payload = self._apply_position_add_gate(candidate, payload)
+        payload = self._apply_reentry_constraints(candidate, payload)
         payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
         status = "pending" if action in {"BUY", "SELL"} else "observed"
@@ -108,6 +109,7 @@ class SignalCenterService:
                 "tech_score": decision.tech_score,
                 "context_score": decision.context_score,
                 "strategy_profile": decision.strategy_profile,
+                "decision_time": decision.timestamp,
             }
             return SignalCenterService._apply_canonical_scores(payload)
 
@@ -125,6 +127,7 @@ class SignalCenterService:
             "tech_score": decision.get("tech_score", 0),
             "context_score": decision.get("context_score", 0),
             "strategy_profile": decision.get("strategy_profile"),
+            "decision_time": decision.get("timestamp") or decision.get("decision_time") or decision.get("checkpoint_at"),
         }
         return SignalCenterService._apply_canonical_scores(payload)
 
@@ -376,6 +379,220 @@ class SignalCenterService:
         normalized["confidence"] = round(self._clamp(confidence - min(6.0, sell_side_cost_pct * 8.0), 0.0, 100.0))
         normalized["reasoning"] = f"{reasoning} 已计入卖出成本：预计单次退出成本约 {sell_side_cost_pct:.3f}% 。".strip()
         return normalized
+
+    def _apply_reentry_constraints(self, candidate: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        action = str(normalized.get("action") or "HOLD").upper()
+        stock_code = str(candidate.get("stock_code") or "").strip()
+        if action != "BUY" or not stock_code:
+            return normalized
+        if self._current_position(stock_code):
+            return normalized
+
+        strategy_profile = normalized.get("strategy_profile")
+        if not isinstance(strategy_profile, dict):
+            strategy_profile = {}
+        thresholds = strategy_profile.get("effective_thresholds")
+        if not isinstance(thresholds, dict):
+            thresholds = {}
+
+        metrics = self._extract_reentry_market_metrics(candidate, normalized)
+        current_time = self._resolve_reentry_time(normalized, metrics)
+        last_profit_sell = self._last_profit_sell(stock_code)
+        days_since_profit_sell = None
+        if last_profit_sell and current_time is not None:
+            last_sell_time = self._parse_datetime(last_profit_sell.get("executed_at") or last_profit_sell.get("updated_at"))
+            if last_sell_time is not None:
+                days_since_profit_sell = max((current_time.date() - last_sell_time.date()).days, 0)
+
+        cooldown_days = int(self._safe_float(thresholds.get("profit_reentry_cooldown_days"), 5) or 5)
+        hot_rsi = self._safe_float(thresholds.get("profit_reentry_hot_rsi"), 75.0) or 75.0
+        very_hot_rsi = self._safe_float(thresholds.get("profit_reentry_very_hot_rsi"), 85.0) or 85.0
+        extreme_rsi = self._safe_float(thresholds.get("profit_reentry_extreme_rsi"), 88.0) or 88.0
+        extreme_ma20_distance_pct = self._safe_float(thresholds.get("profit_reentry_extreme_ma20_distance_pct"), 5.0) or 5.0
+        base_reentry_multiplier = self._safe_float(thresholds.get("profit_reentry_size_multiplier"), 0.5) or 0.5
+        hot_multiplier = self._safe_float(thresholds.get("profit_reentry_hot_rsi_size_multiplier"), 0.5) or 0.5
+        very_hot_multiplier = self._safe_float(thresholds.get("profit_reentry_very_hot_rsi_size_multiplier"), 0.25) or 0.25
+
+        trend_confirmed = self._is_reentry_trend_confirmed(metrics)
+        strong_resonance = self._is_strong_reentry_resonance(strategy_profile)
+        rsi12 = metrics.get("rsi12")
+        ma20_distance_pct = metrics.get("ma20_distance_pct")
+        within_profit_reentry = bool(
+            last_profit_sell
+            and days_since_profit_sell is not None
+            and days_since_profit_sell <= cooldown_days
+        )
+
+        reasons: list[str] = []
+        multiplier = 1.0
+        status = "passed"
+        decision_type = None
+
+        if rsi12 is not None and ma20_distance_pct is not None and rsi12 >= extreme_rsi and ma20_distance_pct >= extreme_ma20_distance_pct:
+            status = "blocked"
+            decision_type = "reentry_overheat_blocked"
+            reasons.append(
+                f"RSI12 {rsi12:.2f} >= {extreme_rsi:.2f} 且高于MA20 {ma20_distance_pct:.2f}% >= {extreme_ma20_distance_pct:.2f}%"
+            )
+        elif rsi12 is not None and rsi12 > very_hot_rsi:
+            if not strong_resonance:
+                status = "blocked"
+                decision_type = "reentry_overheat_blocked"
+                reasons.append(f"RSI12 {rsi12:.2f} > {very_hot_rsi:.2f}，但未达到强共振")
+            else:
+                status = "downgraded"
+                multiplier = min(multiplier, very_hot_multiplier)
+                reasons.append(f"RSI12 {rsi12:.2f} > {very_hot_rsi:.2f}，强共振仅允许轻仓再入场")
+        elif rsi12 is not None and rsi12 >= hot_rsi:
+            status = "downgraded"
+            multiplier = min(multiplier, hot_multiplier)
+            reasons.append(f"RSI12 {rsi12:.2f} >= {hot_rsi:.2f}，热区买入降仓")
+
+        if within_profit_reentry:
+            if not trend_confirmed:
+                status = "blocked"
+                decision_type = "profit_reentry_confirmation_blocked"
+                reasons.append("止盈后短期再入场缺少趋势结构确认")
+            else:
+                if status != "blocked":
+                    status = "downgraded"
+                    multiplier = min(multiplier, base_reentry_multiplier)
+                reasons.append(f"距上次止盈卖出 {days_since_profit_sell} 天，再入场降仓")
+
+        if status == "passed":
+            return normalized
+
+        strategy_profile = dict(strategy_profile)
+        thresholds = dict(thresholds)
+        strategy_profile["effective_thresholds"] = thresholds
+        normalized["strategy_profile"] = strategy_profile
+        gate = {
+            "intent": "profit_reentry" if within_profit_reentry else "hot_buy_control",
+            "status": status,
+            "last_sell_trigger": "profit_tech_sell" if within_profit_reentry else None,
+            "days_since_profit_sell": days_since_profit_sell,
+            "cooldown_days": cooldown_days,
+            "trend_confirmed": trend_confirmed,
+            "strong_resonance": strong_resonance,
+            "rsi12": round(rsi12, 4) if rsi12 is not None else None,
+            "ma20_distance_pct": round(ma20_distance_pct, 4) if ma20_distance_pct is not None else None,
+            "size_multiplier": round(multiplier, 6) if status == "downgraded" else 0.0,
+            "reasons": reasons,
+        }
+        strategy_profile["reentry_gate"] = gate
+        thresholds.setdefault("profit_reentry_cooldown_days", cooldown_days)
+        thresholds.setdefault("profit_reentry_size_multiplier", base_reentry_multiplier)
+        thresholds.setdefault("profit_reentry_hot_rsi", hot_rsi)
+        thresholds.setdefault("profit_reentry_very_hot_rsi", very_hot_rsi)
+        thresholds.setdefault("profit_reentry_extreme_rsi", extreme_rsi)
+        thresholds.setdefault("profit_reentry_extreme_ma20_distance_pct", extreme_ma20_distance_pct)
+
+        base_reasoning = str(normalized.get("reasoning") or "").strip()
+        if status == "blocked":
+            normalized["action"] = "HOLD"
+            normalized["position_size_pct"] = 0.0
+            normalized["decision_type"] = decision_type or "reentry_blocked"
+            normalized["confidence"] = round(self._clamp((self._safe_float(normalized.get("confidence"), 0.0) or 0.0) * 0.65, 0.0, 100.0))
+            normalized["reasoning"] = f"{base_reasoning} 再入场门控阻断：{'；'.join(reasons)}，转为HOLD。".strip()
+            return normalized
+
+        original_size = self._safe_float(normalized.get("position_size_pct"), 0.0) or 0.0
+        adjusted_size = round(max(0.0, original_size * multiplier), 2)
+        normalized["position_size_pct"] = adjusted_size
+        normalized["decision_type"] = normalized.get("decision_type") or "reentry_downgraded_buy"
+        normalized["reasoning"] = (
+            f"{base_reasoning} 再入场门控降仓：{'；'.join(reasons)}，"
+            f"仓位 {original_size:.2f}% -> {adjusted_size:.2f}% 。"
+        ).strip()
+        return normalized
+
+    def _last_profit_sell(self, stock_code: str) -> dict[str, Any] | None:
+        for signal in self.db.get_signals(stock_code=stock_code, limit=20):
+            if str(signal.get("status") or "").lower() != "executed":
+                continue
+            if str(signal.get("executed_action") or signal.get("action") or "").upper() != "SELL":
+                continue
+            profile = signal.get("strategy_profile") if isinstance(signal.get("strategy_profile"), dict) else {}
+            explainability = profile.get("explainability") if isinstance(profile.get("explainability"), dict) else {}
+            fusion = explainability.get("fusion_breakdown") if isinstance(explainability.get("fusion_breakdown"), dict) else {}
+            veto_id = str(fusion.get("veto_id") or fusion.get("veto_trigger_type") or "").strip()
+            if veto_id == "profit_tech_sell":
+                return signal
+            return None
+        return None
+
+    def _extract_reentry_market_metrics(self, candidate: dict[str, Any], payload: dict[str, Any]) -> dict[str, float | str | None]:
+        profile = payload.get("strategy_profile") if isinstance(payload.get("strategy_profile"), dict) else {}
+        snapshot = profile.get("market_snapshot") if isinstance(profile.get("market_snapshot"), dict) else {}
+        price = (
+            self._safe_float(snapshot.get("current_price"), None)
+            or self._safe_float(snapshot.get("latest_price"), None)
+            or self._safe_float(candidate.get("latest_price"), None)
+        )
+        ma20 = self._safe_float(snapshot.get("ma20"), None)
+        distance = None
+        if price is not None and ma20 is not None and ma20 > 0:
+            distance = (price - ma20) / ma20 * 100.0
+        return {
+            "price": price,
+            "ma5": self._safe_float(snapshot.get("ma5"), None),
+            "ma10": self._safe_float(snapshot.get("ma10"), None),
+            "ma20": ma20,
+            "ma60": self._safe_float(snapshot.get("ma60"), None),
+            "ma20_slope": self._safe_float(snapshot.get("ma20_slope"), None),
+            "rsi12": self._safe_float(snapshot.get("rsi12") if snapshot.get("rsi12") is not None else snapshot.get("rsi"), None),
+            "macd": self._safe_float(snapshot.get("macd"), None),
+            "ma20_distance_pct": distance,
+            "update_time": snapshot.get("update_time"),
+        }
+
+    def _is_reentry_trend_confirmed(self, metrics: dict[str, Any]) -> bool:
+        price = self._safe_float(metrics.get("price"), None)
+        ma5 = self._safe_float(metrics.get("ma5"), None)
+        ma10 = self._safe_float(metrics.get("ma10"), None)
+        ma20 = self._safe_float(metrics.get("ma20"), None)
+        ma60 = self._safe_float(metrics.get("ma60"), None)
+        ma20_slope = self._safe_float(metrics.get("ma20_slope"), None)
+        macd = self._safe_float(metrics.get("macd"), None)
+        if price is None or ma20 is None:
+            return False
+        ma_stack = ma5 is not None and ma10 is not None and ma5 > ma10 > ma20 and price > ma20
+        above_major_ma = ma60 is not None and price > ma20 and price > ma60 and (ma20_slope is None or ma20_slope >= 0)
+        macd_ok = macd is None or macd >= 0
+        return bool((ma_stack or above_major_ma) and macd_ok)
+
+    @staticmethod
+    def _is_strong_reentry_resonance(strategy_profile: dict[str, Any]) -> bool:
+        explainability = strategy_profile.get("explainability") if isinstance(strategy_profile.get("explainability"), dict) else {}
+        dual = explainability.get("dual_track") if isinstance(explainability.get("dual_track"), dict) else {}
+        if not dual:
+            dual = explainability.get("final") if isinstance(explainability.get("final"), dict) else {}
+        tech_signal = str(dual.get("tech_signal") or "").upper()
+        context_signal = str(dual.get("context_signal") or "").upper()
+        resonance_type = str(dual.get("resonance_type") or "").lower()
+        return (tech_signal == "BUY" and context_signal == "BUY") or resonance_type in {"strong_buy", "bullish_resonance", "heavy_resonance"}
+
+    def _resolve_reentry_time(self, payload: dict[str, Any], metrics: dict[str, Any]) -> datetime | None:
+        for value in (payload.get("decision_time"), metrics.get("update_time")):
+            parsed = self._parse_datetime(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+        if value in (None, ""):
+            return None
+        try:
+            return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            try:
+                return datetime.strptime(str(value).strip()[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return None
 
     def _current_position(self, stock_code: str) -> dict[str, Any] | None:
         code = str(stock_code or "").strip()

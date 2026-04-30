@@ -313,6 +313,130 @@ def test_confirm_buy_creates_simulated_position(tmp_path):
     assert signals[0]["execution_note"] == "手工买入"
 
 
+def test_apply_stock_dividend_adjusts_open_lots_cost_and_cash(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db.configure_account(100000)
+    signal_id = db.add_signal(
+        {
+            "stock_code": "300857",
+            "stock_name": "协创数据",
+            "action": "BUY",
+            "confidence": 90,
+            "reasoning": "seed",
+            "status": "pending",
+        }
+    )
+    db.confirm_signal(signal_id, executed_action="buy", price=99.12, quantity=600, note="seed", executed_at="2025-04-11 13:30:00")
+
+    applied = db.apply_corporate_action(
+        stock_code="300857",
+        ex_date="2025-05-12",
+        record_date="2025-05-09",
+        bonus_share_ratio=0.4,
+        cash_dividend_per_share=0.293,
+        description="10转4股派2.93元",
+        applied_at="2025-05-12 10:00:00",
+    )
+
+    assert applied is True
+    position = next(item for item in db.get_positions() if item["stock_code"] == "300857")
+    lots = db.get_position_lots("300857", as_of="2025-05-12 10:00:00")
+    summary = db.get_account_summary()
+
+    assert position["quantity"] == 840
+    assert lots[0]["remaining_quantity"] == 840
+    assert lots[0]["entry_price"] == 70.5907
+    assert summary["available_cash"] == 40703.8
+
+    assert db.apply_corporate_action(
+        stock_code="300857",
+        ex_date="2025-05-12",
+        record_date="2025-05-09",
+        bonus_share_ratio=0.4,
+        cash_dividend_per_share=0.293,
+        description="duplicate",
+        applied_at="2025-05-12 10:30:00",
+    ) is False
+    assert next(item for item in db.get_positions() if item["stock_code"] == "300857")["quantity"] == 840
+
+
+def test_stock_dividend_only_applies_to_lots_held_on_record_date(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db.configure_account(100000)
+    first_signal = db.add_signal({"stock_code": "300857", "stock_name": "协创数据", "action": "BUY", "status": "pending"})
+    second_signal = db.add_signal({"stock_code": "300857", "stock_name": "协创数据", "action": "BUY", "status": "pending"})
+    db.confirm_signal(first_signal, executed_action="buy", price=99.12, quantity=600, note="eligible", executed_at="2025-05-09 14:30:00")
+    db.confirm_signal(second_signal, executed_action="buy", price=80.60, quantity=100, note="ineligible", executed_at="2025-05-12 10:30:00")
+
+    db.apply_corporate_action(
+        stock_code="300857",
+        ex_date="2025-05-12",
+        record_date="2025-05-09",
+        bonus_share_ratio=0.4,
+        cash_dividend_per_share=0.293,
+        description="10转4股派2.93元",
+        applied_at="2025-05-12 11:00:00",
+    )
+
+    lots = db.get_position_lots("300857", as_of="2025-05-12 11:00:00")
+    position = next(item for item in db.get_positions() if item["stock_code"] == "300857")
+
+    assert [lot["remaining_quantity"] for lot in lots] == [840, 100]
+    assert position["quantity"] == 940
+
+
+def test_stock_dividend_does_not_adjust_position_when_no_lot_is_eligible(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db.configure_account(100000)
+    signal_id = db.add_signal({"stock_code": "300857", "stock_name": "协创数据", "action": "BUY", "status": "pending"})
+    db.confirm_signal(signal_id, executed_action="buy", price=80.60, quantity=100, note="after record", executed_at="2025-05-12 10:30:00")
+    before = next(item for item in db.get_positions() if item["stock_code"] == "300857")
+
+    db.apply_corporate_action(
+        stock_code="300857",
+        ex_date="2025-05-12",
+        record_date="2025-05-09",
+        bonus_share_ratio=0.4,
+        cash_dividend_per_share=0.293,
+        description="10转4股派2.93元",
+        applied_at="2025-05-12 11:00:00",
+    )
+
+    after = next(item for item in db.get_positions() if item["stock_code"] == "300857")
+    lots = db.get_position_lots("300857", as_of="2025-05-12 11:00:00")
+
+    assert lots[0]["remaining_quantity"] == 100
+    assert after["quantity"] == before["quantity"]
+    assert after["latest_price"] == before["latest_price"]
+    assert after["avg_price"] == before["avg_price"]
+
+
+def test_stock_dividend_adjusts_slot_allocation_from_unreleased_quantity(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db.configure_account(100000)
+    buy_signal = db.add_signal({"stock_code": "300857", "stock_name": "协创数据", "action": "BUY", "status": "pending"})
+    sell_signal = db.add_signal({"stock_code": "300857", "stock_name": "协创数据", "action": "SELL", "status": "pending"})
+    db.confirm_signal(buy_signal, executed_action="buy", price=99.12, quantity=600, note="seed", executed_at="2025-05-09 14:30:00")
+    db.confirm_signal(sell_signal, executed_action="sell", price=100.0, quantity=300, note="partial", executed_at="2025-05-12 10:00:00")
+
+    db.apply_corporate_action(
+        stock_code="300857",
+        ex_date="2025-05-12",
+        record_date="2025-05-09",
+        bonus_share_ratio=0.4,
+        cash_dividend_per_share=0.293,
+        description="10转4股派2.93元",
+        applied_at="2025-05-12 10:00:00",
+    )
+
+    lots = db.get_position_lots("300857", as_of="2025-05-12 10:00:00")
+    allocations = db.get_lot_slot_allocations("300857")
+
+    assert lots[0]["remaining_quantity"] == 420
+    assert sum(int(item["allocated_quantity"] or 0) for item in allocations) == 720
+    assert sum(int(item["released_quantity"] or 0) for item in allocations) == 300
+
+
 def test_position_market_price_tracks_unrealized_peak_without_lowering_it(tmp_path):
     db = QuantSimDB(tmp_path / "app.quant_sim.db")
 

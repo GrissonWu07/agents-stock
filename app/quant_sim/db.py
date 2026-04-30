@@ -352,6 +352,22 @@ class QuantSimDB:
         )
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS sim_corporate_action_applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL,
+                ex_date TEXT NOT NULL,
+                record_date TEXT,
+                bonus_share_ratio REAL DEFAULT 0,
+                cash_dividend_per_share REAL DEFAULT 0,
+                description TEXT,
+                applied_at TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(stock_code, ex_date)
+            )
+            """
+        )
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS sim_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mode TEXT NOT NULL,
@@ -3060,6 +3076,211 @@ class QuantSimDB:
         conn.close()
         return exists
 
+    def apply_corporate_action(
+        self,
+        *,
+        stock_code: str,
+        ex_date: str,
+        record_date: str | None = None,
+        bonus_share_ratio: float = 0.0,
+        cash_dividend_per_share: float = 0.0,
+        description: str | None = None,
+        applied_at: str | datetime | None = None,
+    ) -> bool:
+        code = str(stock_code or "").strip()
+        ex_date_text = str(ex_date or "").strip()
+        if not code or not ex_date_text:
+            return False
+        share_ratio = max(float(bonus_share_ratio or 0.0), 0.0)
+        cash_per_share = max(float(cash_dividend_per_share or 0.0), 0.0)
+        if share_ratio <= 0 and cash_per_share <= 0:
+            return False
+        applied_at_text = self._format_datetime(self._ensure_datetime(applied_at))
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO sim_corporate_action_applications
+                (
+                    stock_code, ex_date, record_date, bonus_share_ratio,
+                    cash_dividend_per_share, description, applied_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (code, ex_date_text, record_date, share_ratio, cash_per_share, description, applied_at_text),
+            )
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            conn.close()
+            return False
+
+        cursor.execute(
+            """
+            SELECT * FROM sim_positions
+            WHERE stock_code = ? AND status = 'holding' AND quantity > 0
+            """,
+            (code,),
+        )
+        position = cursor.fetchone()
+        if position is None:
+            conn.commit()
+            conn.close()
+            return True
+
+        cursor.execute(
+            """
+            SELECT * FROM sim_position_lots
+            WHERE stock_code = ? AND remaining_quantity > 0
+            ORDER BY entry_time ASC, id ASC
+            """,
+            (code,),
+        )
+        lot_rows = cursor.fetchall()
+        if not lot_rows:
+            conn.commit()
+            conn.close()
+            return True
+
+        record_date_text = str(record_date or "").strip()
+        total_cash_dividend = 0.0
+        eligible_quantity = 0
+        for row in lot_rows:
+            lot_id = int(row["id"])
+            old_remaining = int(row["remaining_quantity"] or 0)
+            old_quantity = int(row["quantity"] or 0)
+            old_entry_price = float(row["entry_price"] or 0.0)
+            if old_remaining <= 0:
+                continue
+            lot_entry_date = str(row["entry_date"] or str(row["entry_time"] or "")[:10]).strip()
+            if record_date_text and lot_entry_date and lot_entry_date > record_date_text:
+                continue
+            eligible_quantity += old_remaining
+            bonus_quantity = int(round(old_remaining * share_ratio))
+            new_remaining = old_remaining + bonus_quantity
+            new_quantity = old_quantity + bonus_quantity
+            lot_cash_dividend = round(old_remaining * cash_per_share, 4)
+            old_remaining_cost = round(old_remaining * old_entry_price, 4)
+            new_remaining_cost = max(0.0, round(old_remaining_cost - lot_cash_dividend, 4))
+            new_entry_price = round(new_remaining_cost / new_remaining, 4) if new_remaining > 0 else old_entry_price
+            total_cash_dividend += lot_cash_dividend
+
+            cursor.execute(
+                """
+                UPDATE sim_position_lots
+                SET quantity = ?, remaining_quantity = ?, entry_price = ?
+                WHERE id = ?
+                """,
+                (new_quantity, new_remaining, new_entry_price, lot_id),
+            )
+            cursor.execute(
+                """
+                SELECT * FROM sim_lot_slot_allocations
+                WHERE position_lot_db_id = ? AND status = 'open'
+                """,
+                (lot_id,),
+            )
+            allocations = cursor.fetchall()
+            for allocation in allocations:
+                allocated_cash = float(allocation["allocated_cash"] or 0.0)
+                allocated_quantity = int(allocation["allocated_quantity"] or 0)
+                released_quantity = int(allocation["released_quantity"] or 0)
+                unreleased_quantity = max(0, allocated_quantity - released_quantity)
+                if unreleased_quantity <= 0:
+                    continue
+                allocation_ratio = unreleased_quantity / max(old_remaining, 1)
+                cash_release = round(lot_cash_dividend * allocation_ratio, 4)
+                new_allocated_cash = max(0.0, round(allocated_cash - cash_release, 4))
+                new_allocated_quantity = allocated_quantity + int(round(unreleased_quantity * share_ratio))
+                cursor.execute(
+                    """
+                    UPDATE sim_lot_slot_allocations
+                    SET allocated_cash = ?, allocated_quantity = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (new_allocated_cash, new_allocated_quantity, applied_at_text, int(allocation["id"])),
+                )
+                if cash_release > 0:
+                    cursor.execute(
+                        """
+                        UPDATE sim_capital_slots
+                        SET occupied_cash = MAX(0, occupied_cash - ?),
+                            available_cash = available_cash + ?,
+                            updated_at = ?
+                        WHERE slot_index = ?
+                        """,
+                        (cash_release, cash_release, applied_at_text, int(allocation["slot_index"])),
+                    )
+
+        if eligible_quantity <= 0:
+            conn.commit()
+            conn.close()
+            return True
+
+        cursor.execute(
+            """
+            SELECT
+                COALESCE(SUM(remaining_quantity), 0) AS total_quantity,
+                COALESCE(SUM(remaining_quantity * entry_price), 0) AS total_cost
+            FROM sim_position_lots
+            WHERE stock_code = ? AND remaining_quantity > 0
+            """,
+            (code,),
+        )
+        totals = cursor.fetchone()
+        total_new_quantity = int(totals["total_quantity"] or 0)
+        total_new_cost = float(totals["total_cost"] or 0.0)
+        if total_new_quantity <= 0:
+            conn.commit()
+            conn.close()
+            return True
+
+        factor = 1.0 + share_ratio
+        latest_price = float(position["latest_price"] or 0.0)
+        adjusted_latest_price = round(max((latest_price - cash_per_share) / factor, 0.0), 4) if latest_price > 0 else 0.0
+        avg_price = round(total_new_cost / total_new_quantity, 4)
+        market_value = round(total_new_quantity * adjusted_latest_price, 4)
+        unrealized_pnl = round((adjusted_latest_price - avg_price) * total_new_quantity, 4)
+        unrealized_pnl_pct = round(((adjusted_latest_price - avg_price) / avg_price * 100.0) if avg_price > 0 else 0.0, 4)
+        peak_price = float(position["peak_price"] or latest_price or 0.0)
+        adjusted_peak_price = round(max((peak_price - cash_per_share) / factor, 0.0), 4) if peak_price > 0 else adjusted_latest_price
+        peak_unrealized_pnl = round((adjusted_peak_price - avg_price) * total_new_quantity, 4)
+        peak_unrealized_pnl_pct = round(((adjusted_peak_price - avg_price) / avg_price * 100.0) if avg_price > 0 else 0.0, 4)
+        if unrealized_pnl_pct > peak_unrealized_pnl_pct:
+            adjusted_peak_price = adjusted_latest_price
+            peak_unrealized_pnl = unrealized_pnl
+            peak_unrealized_pnl_pct = unrealized_pnl_pct
+
+        cursor.execute(
+            """
+            UPDATE sim_positions
+            SET quantity = ?, avg_price = ?, latest_price = ?, market_value = ?,
+                unrealized_pnl = ?, unrealized_pnl_pct = ?,
+                peak_price = ?, peak_unrealized_pnl = ?, peak_unrealized_pnl_pct = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                total_new_quantity,
+                avg_price,
+                adjusted_latest_price,
+                market_value,
+                unrealized_pnl,
+                unrealized_pnl_pct,
+                adjusted_peak_price,
+                peak_unrealized_pnl,
+                peak_unrealized_pnl_pct,
+                applied_at_text,
+                int(position["id"]),
+            ),
+        )
+        if total_cash_dividend > 0:
+            self._set_available_cash(cursor, self._get_available_cash(cursor) + round(total_cash_dividend, 4))
+        conn.commit()
+        conn.close()
+        return True
+
     def get_position_lots(
         self,
         stock_code: str,
@@ -3091,6 +3312,7 @@ class QuantSimDB:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM strategy_signals")
         cursor.execute("DELETE FROM sim_lot_slot_allocations")
+        cursor.execute("DELETE FROM sim_corporate_action_applications")
         cursor.execute("DELETE FROM sim_capital_slots")
         cursor.execute("DELETE FROM sim_position_lots")
         cursor.execute("DELETE FROM sim_positions")

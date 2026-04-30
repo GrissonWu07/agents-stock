@@ -14,6 +14,7 @@ from app.data_source_manager import data_source_manager
 from app.quant_kernel import ReplayTimepointGenerator
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.capital_slots import DEFAULT_CAPITAL_SLOT_CONFIG
+from app.quant_sim.corporate_actions import AkshareCorporateActionProvider
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.quant_sim.dynamic_strategy import (
     DEFAULT_AI_DYNAMIC_LOOKBACK,
@@ -174,12 +175,14 @@ class QuantSimReplayService:
         snapshot_provider: Optional[MainProjectHistoricalSnapshotProvider] = None,
         adapter: Optional[StockPolicyAdapter] = None,
         timepoint_generator: Optional[ReplayTimepointGenerator] = None,
+        corporate_action_provider: Optional[AkshareCorporateActionProvider] = None,
     ):
         self.db_file = str(db_file)
         self.db = QuantSimDB(db_file)
         self.snapshot_provider = snapshot_provider or MainProjectHistoricalSnapshotProvider()
         self.adapter = adapter or StockPolicyAdapter()
         self.timepoint_generator = timepoint_generator or ReplayTimepointGenerator()
+        self.corporate_action_provider = corporate_action_provider or AkshareCorporateActionProvider()
 
     def run_historical_range(
         self,
@@ -636,6 +639,12 @@ class QuantSimReplayService:
                     latest_checkpoint_at=checkpoint_text,
                     status_message=f"正在执行第 {checkpoint_index}/{len(checkpoints)} 个检查点：{checkpoint_text}",
                 )
+                self._apply_due_corporate_actions(
+                    temp_db=temp_db,
+                    checkpoint=checkpoint,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 checkpoint_summary = self._run_checkpoint(
                     run_id=run_id,
                     checkpoint=checkpoint,
@@ -1058,6 +1067,44 @@ class QuantSimReplayService:
             latest_checkpoint_at=checkpoint_text,
             status_message=message,
         )
+
+    def _apply_due_corporate_actions(
+        self,
+        *,
+        temp_db: QuantSimDB,
+        checkpoint: datetime,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> None:
+        positions = temp_db.get_positions(as_of=checkpoint)
+        if not positions:
+            return
+        checkpoint_text = self._format_datetime(checkpoint)
+        ex_date = checkpoint.date().isoformat()
+        actions: list[dict] = []
+        for position in positions:
+            stock_code = str(position.get("stock_code") or "").strip()
+            if not stock_code:
+                continue
+            try:
+                stock_actions = self.corporate_action_provider.get_actions(stock_code, start_dt, end_dt)
+            except Exception:
+                stock_actions = []
+            actions.extend(
+                {**action, "stock_code": stock_code}
+                for action in stock_actions
+                if str(action.get("ex_date") or "").strip() == ex_date
+            )
+        for action in actions:
+            temp_db.apply_corporate_action(
+                stock_code=str(action.get("stock_code") or ""),
+                ex_date=str(action.get("ex_date") or checkpoint.date().isoformat()),
+                record_date=str(action.get("record_date") or "") or None,
+                bonus_share_ratio=float(action.get("bonus_share_ratio") or 0.0),
+                cash_dividend_per_share=float(action.get("cash_dividend_per_share") or 0.0),
+                description=str(action.get("description") or ""),
+                applied_at=checkpoint_text,
+            )
 
     @staticmethod
     def _collect_open_lots(temp_db: QuantSimDB, positions: list[dict], *, as_of: datetime) -> list[dict]:
