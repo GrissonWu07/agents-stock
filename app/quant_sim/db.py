@@ -205,6 +205,10 @@ class QuantSimDB:
                 market_value REAL DEFAULT 0,
                 unrealized_pnl REAL DEFAULT 0,
                 unrealized_pnl_pct REAL DEFAULT 0,
+                peak_price REAL DEFAULT 0,
+                peak_unrealized_pnl REAL DEFAULT 0,
+                peak_unrealized_pnl_pct REAL DEFAULT 0,
+                peak_at TEXT,
                 status TEXT DEFAULT 'holding',
                 opened_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -558,6 +562,10 @@ class QuantSimDB:
         self._ensure_column(cursor, "strategy_signals", "tech_score", "REAL DEFAULT 0")
         self._ensure_column(cursor, "strategy_signals", "context_score", "REAL DEFAULT 0")
         self._ensure_column(cursor, "strategy_signals", "strategy_profile_json", "TEXT")
+        self._ensure_column(cursor, "sim_positions", "peak_price", "REAL DEFAULT 0")
+        self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl", "REAL DEFAULT 0")
+        self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl_pct", "REAL DEFAULT 0")
+        self._ensure_column(cursor, "sim_positions", "peak_at", "TEXT")
         self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
         self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
@@ -3137,9 +3145,11 @@ class QuantSimDB:
                 INSERT INTO sim_positions
                 (
                     stock_code, stock_name, quantity, avg_price, latest_price,
-                    market_value, unrealized_pnl, unrealized_pnl_pct, status, opened_at, updated_at
+                    market_value, unrealized_pnl, unrealized_pnl_pct,
+                    peak_price, peak_unrealized_pnl, peak_unrealized_pnl_pct, peak_at,
+                    status, opened_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     position.get("stock_code"),
@@ -3150,6 +3160,10 @@ class QuantSimDB:
                     float(position.get("market_value") or 0),
                     float(position.get("unrealized_pnl") or 0),
                     float(position.get("unrealized_pnl_pct") or 0),
+                    float(position.get("peak_price") or position.get("latest_price") or 0),
+                    float(position.get("peak_unrealized_pnl") or position.get("unrealized_pnl") or 0),
+                    float(position.get("peak_unrealized_pnl_pct") or position.get("unrealized_pnl_pct") or 0),
+                    position.get("peak_at") or position.get("updated_at") or position.get("opened_at") or self._now(),
                     position.get("status") or "holding",
                     position.get("opened_at") or self._now(),
                     position.get("updated_at") or self._now(),
@@ -3259,14 +3273,37 @@ class QuantSimDB:
         market_value = round(quantity * latest_price, 4)
         unrealized_pnl = round((latest_price - avg_price) * quantity, 4)
         unrealized_pnl_pct = round(((latest_price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4)
+        peak_pnl_pct = float(position["peak_unrealized_pnl_pct"] or 0)
+        if unrealized_pnl_pct > peak_pnl_pct:
+            peak_price = latest_price
+            peak_unrealized_pnl = unrealized_pnl
+            peak_unrealized_pnl_pct = unrealized_pnl_pct
+            peak_at = self._now()
+        else:
+            peak_price = float(position["peak_price"] or 0)
+            peak_unrealized_pnl = float(position["peak_unrealized_pnl"] or 0)
+            peak_unrealized_pnl_pct = peak_pnl_pct
+            peak_at = position["peak_at"]
         cursor.execute(
             """
             UPDATE sim_positions
             SET latest_price = ?, market_value = ?, unrealized_pnl = ?,
-                unrealized_pnl_pct = ?, updated_at = ?
+                unrealized_pnl_pct = ?, peak_price = ?, peak_unrealized_pnl = ?,
+                peak_unrealized_pnl_pct = ?, peak_at = ?, updated_at = ?
             WHERE stock_code = ?
             """,
-            (latest_price, market_value, unrealized_pnl, unrealized_pnl_pct, self._now(), stock_code),
+            (
+                latest_price,
+                market_value,
+                unrealized_pnl,
+                unrealized_pnl_pct,
+                peak_price,
+                peak_unrealized_pnl,
+                peak_unrealized_pnl_pct,
+                peak_at,
+                self._now(),
+                stock_code,
+            ),
         )
         conn.commit()
         conn.close()
@@ -3675,11 +3712,27 @@ class QuantSimDB:
             total_cost = float(position["avg_price"]) * current_quantity + amount
             avg_price = round(total_cost / new_quantity, 4)
             market_value = round(new_quantity * price, 4)
+            unrealized_pnl = round((price - avg_price) * new_quantity, 4)
+            unrealized_pnl_pct = round(((price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4)
+            previous_peak_price = float(position["peak_price"] or price)
+            historical_peak_pnl = round((previous_peak_price - avg_price) * new_quantity, 4)
+            historical_peak_pnl_pct = round(((previous_peak_price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4)
+            if historical_peak_pnl_pct >= unrealized_pnl_pct:
+                peak_price = previous_peak_price
+                peak_unrealized_pnl = historical_peak_pnl
+                peak_unrealized_pnl_pct = historical_peak_pnl_pct
+                peak_at = position["peak_at"] or executed_at_text
+            else:
+                peak_price = price
+                peak_unrealized_pnl = unrealized_pnl
+                peak_unrealized_pnl_pct = unrealized_pnl_pct
+                peak_at = executed_at_text
             cursor.execute(
                 """
                 UPDATE sim_positions
                 SET stock_name = ?, quantity = ?, avg_price = ?, latest_price = ?,
                     market_value = ?, unrealized_pnl = ?, unrealized_pnl_pct = ?,
+                    peak_price = ?, peak_unrealized_pnl = ?, peak_unrealized_pnl_pct = ?, peak_at = ?,
                     status = 'holding', updated_at = ?
                 WHERE stock_code = ?
                 """,
@@ -3689,8 +3742,12 @@ class QuantSimDB:
                     avg_price,
                     price,
                     market_value,
-                    round((price - avg_price) * new_quantity, 4),
-                    round(((price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4),
+                    unrealized_pnl,
+                    unrealized_pnl_pct,
+                    peak_price,
+                    peak_unrealized_pnl,
+                    peak_unrealized_pnl_pct,
+                    peak_at,
                     executed_at_text,
                     stock_code,
                 ),
@@ -3704,11 +3761,24 @@ class QuantSimDB:
                 INSERT INTO sim_positions
                 (
                     stock_code, stock_name, quantity, avg_price, latest_price,
-                    market_value, unrealized_pnl, unrealized_pnl_pct, status, opened_at, updated_at
+                    market_value, unrealized_pnl, unrealized_pnl_pct,
+                    peak_price, peak_unrealized_pnl, peak_unrealized_pnl_pct, peak_at,
+                    status, opened_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'holding', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, ?, 'holding', ?, ?)
                 """,
-                (stock_code, stock_name, quantity, avg_price, price, market_value, executed_at_text, executed_at_text),
+                (
+                    stock_code,
+                    stock_name,
+                    quantity,
+                    avg_price,
+                    price,
+                    market_value,
+                    price,
+                    executed_at_text,
+                    executed_at_text,
+                    executed_at_text,
+                ),
             )
             position_id = int(cursor.lastrowid)
 
@@ -3905,11 +3975,22 @@ class QuantSimDB:
         if remaining_quantity > 0:
             avg_price = round(remaining_cost / remaining_quantity, 4)
             market_value = round(remaining_quantity * price, 4)
+            unrealized_pnl = round((price - avg_price) * remaining_quantity, 4)
+            unrealized_pnl_pct = round(((price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4)
+            peak_price = float(position["peak_price"] or price)
+            peak_unrealized_pnl = round((peak_price - avg_price) * remaining_quantity, 4)
+            peak_unrealized_pnl_pct = round(((peak_price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4)
+            if unrealized_pnl_pct > peak_unrealized_pnl_pct:
+                peak_price = price
+                peak_unrealized_pnl = unrealized_pnl
+                peak_unrealized_pnl_pct = unrealized_pnl_pct
             cursor.execute(
                 """
                 UPDATE sim_positions
                 SET quantity = ?, avg_price = ?, latest_price = ?, market_value = ?,
-                    unrealized_pnl = ?, unrealized_pnl_pct = ?, status = 'holding', updated_at = ?
+                    unrealized_pnl = ?, unrealized_pnl_pct = ?,
+                    peak_price = ?, peak_unrealized_pnl = ?, peak_unrealized_pnl_pct = ?,
+                    status = 'holding', updated_at = ?
                 WHERE stock_code = ?
                 """,
                 (
@@ -3917,8 +3998,11 @@ class QuantSimDB:
                     avg_price,
                     price,
                     market_value,
-                    round((price - avg_price) * remaining_quantity, 4),
-                    round(((price - avg_price) / avg_price * 100) if avg_price > 0 else 0, 4),
+                    unrealized_pnl,
+                    unrealized_pnl_pct,
+                    peak_price,
+                    peak_unrealized_pnl,
+                    peak_unrealized_pnl_pct,
                     executed_at_text,
                     stock_code,
                 ),
@@ -3933,10 +4017,11 @@ class QuantSimDB:
             UPDATE sim_positions
             SET quantity = 0, latest_price = ?, market_value = 0,
                 unrealized_pnl = 0, unrealized_pnl_pct = 0,
+                peak_price = ?, peak_unrealized_pnl = 0, peak_unrealized_pnl_pct = 0, peak_at = ?,
                 status = 'closed', updated_at = ?
             WHERE stock_code = ?
             """,
-            (price, executed_at_text, stock_code),
+            (price, price, executed_at_text, executed_at_text, stock_code),
         )
         return {
             "candidate_status": "active",
@@ -4372,6 +4457,54 @@ class QuantSimDB:
         }
 
         aggressive_config = self._deep_copy_json(base_config)
+        aggressive_profit_protection = {
+            "tech_sell_enabled": True,
+            "tech_sell_peak_pct": 50.0,
+            "tech_sell_drawdown_pct": 15.0,
+            "tech_sell_min_price_gain": 2.5,
+            "tech_sell_min_price_gain_pct": 12.0,
+            "tech_sell_min_profit_amount": 1500.0,
+            "tech_sell_min_profit_amount_pct": 12.0,
+            "hard_trailing_enabled": True,
+            "hard_trailing_peak_pct": 80.0,
+            "hard_trailing_drawdown_pct": 25.0,
+            "hard_trailing_min_price_gain": 4.0,
+            "hard_trailing_min_price_gain_pct": 18.0,
+            "hard_trailing_min_profit_amount": 2500.0,
+            "hard_trailing_min_profit_amount_pct": 18.0,
+        }
+        stable_profit_protection = {
+            "tech_sell_enabled": True,
+            "tech_sell_peak_pct": 30.0,
+            "tech_sell_drawdown_pct": 10.0,
+            "tech_sell_min_price_gain": 1.5,
+            "tech_sell_min_price_gain_pct": 8.0,
+            "tech_sell_min_profit_amount": 800.0,
+            "tech_sell_min_profit_amount_pct": 8.0,
+            "hard_trailing_enabled": True,
+            "hard_trailing_peak_pct": 50.0,
+            "hard_trailing_drawdown_pct": 18.0,
+            "hard_trailing_min_price_gain": 2.0,
+            "hard_trailing_min_price_gain_pct": 12.0,
+            "hard_trailing_min_profit_amount": 1200.0,
+            "hard_trailing_min_profit_amount_pct": 12.0,
+        }
+        conservative_profit_protection = {
+            "tech_sell_enabled": True,
+            "tech_sell_peak_pct": 20.0,
+            "tech_sell_drawdown_pct": 6.0,
+            "tech_sell_min_price_gain": 1.0,
+            "tech_sell_min_price_gain_pct": 6.0,
+            "tech_sell_min_profit_amount": 500.0,
+            "tech_sell_min_profit_amount_pct": 6.0,
+            "hard_trailing_enabled": True,
+            "hard_trailing_peak_pct": 35.0,
+            "hard_trailing_drawdown_pct": 12.0,
+            "hard_trailing_min_price_gain": 1.5,
+            "hard_trailing_min_price_gain_pct": 9.0,
+            "hard_trailing_min_profit_amount": 800.0,
+            "hard_trailing_min_profit_amount_pct": 9.0,
+        }
         aggressive_boll_position_scorer = {
             "algorithm": "piecewise",
             "params": {
@@ -4393,6 +4526,7 @@ class QuantSimDB:
         aggressive_config["base"]["dual_track"]["lambda_divergence"] = 0.45
         aggressive_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.25
         aggressive_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.12
+        aggressive_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(aggressive_profit_protection)
         aggressive_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.60,
             "momentum": 1.35,
@@ -4501,6 +4635,7 @@ class QuantSimDB:
         stable_config["base"]["dual_track"]["min_context_confidence_for_buy"] = 0.48
         stable_config["base"]["dual_track"]["lambda_divergence"] = 0.60
         stable_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.35
+        stable_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(stable_profit_protection)
         stable_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.30,
             "momentum": 1.15,
@@ -4606,6 +4741,7 @@ class QuantSimDB:
         conservative_config["base"]["dual_track"]["lambda_divergence"] = 0.75
         conservative_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.50
         conservative_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.15
+        conservative_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(conservative_profit_protection)
         conservative_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.05,
             "momentum": 0.80,

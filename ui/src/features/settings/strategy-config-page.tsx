@@ -39,6 +39,14 @@ type DualTrackField = {
   path: string[];
 };
 
+type ProfitProtectionField = {
+  key: string;
+  label: LocaleText;
+  type: "number" | "checkbox";
+  path: string[];
+  step?: number;
+};
+
 const BUILTIN_PROFILE_IDS = ["aggressive", "stable", "conservative"] as const;
 
 const TECHNICAL_GROUP_DIMENSIONS: Record<string, readonly string[]> = {
@@ -299,6 +307,23 @@ const DUAL_PARAM_EXPLAINS: Record<string, ParamExplain> = {
   },
 };
 
+const PROFIT_PROTECTION_FIELDS: ProfitProtectionField[] = [
+  { key: "tech_sell_enabled", label: { zh: "启用技术 SELL 升级", en: "Enable technical SELL upgrade" }, type: "checkbox", path: ["tech_sell_enabled"] },
+  { key: "tech_sell_peak_pct", label: { zh: "技术升级峰值浮盈(%)", en: "Tech upgrade peak profit (%)" }, type: "number", path: ["tech_sell_peak_pct"], step: 1 },
+  { key: "tech_sell_drawdown_pct", label: { zh: "技术升级峰值回撤(pp)", en: "Tech upgrade drawdown (pp)" }, type: "number", path: ["tech_sell_drawdown_pct"], step: 1 },
+  { key: "tech_sell_min_price_gain", label: { zh: "技术升级最小价差(元)", en: "Tech upgrade min price gain" }, type: "number", path: ["tech_sell_min_price_gain"], step: 0.1 },
+  { key: "tech_sell_min_price_gain_pct", label: { zh: "技术升级最小价差率(%)", en: "Tech upgrade min price gain (%)" }, type: "number", path: ["tech_sell_min_price_gain_pct"], step: 1 },
+  { key: "tech_sell_min_profit_amount", label: { zh: "技术升级最小浮盈(元)", en: "Tech upgrade min profit amount" }, type: "number", path: ["tech_sell_min_profit_amount"], step: 100 },
+  { key: "tech_sell_min_profit_amount_pct", label: { zh: "技术升级最小浮盈率(%)", en: "Tech upgrade min profit amount (%)" }, type: "number", path: ["tech_sell_min_profit_amount_pct"], step: 1 },
+  { key: "hard_trailing_enabled", label: { zh: "启用硬移动止盈", en: "Enable hard trailing stop" }, type: "checkbox", path: ["hard_trailing_enabled"] },
+  { key: "hard_trailing_peak_pct", label: { zh: "硬止盈峰值浮盈(%)", en: "Hard trailing peak profit (%)" }, type: "number", path: ["hard_trailing_peak_pct"], step: 1 },
+  { key: "hard_trailing_drawdown_pct", label: { zh: "硬止盈峰值回撤(pp)", en: "Hard trailing drawdown (pp)" }, type: "number", path: ["hard_trailing_drawdown_pct"], step: 1 },
+  { key: "hard_trailing_min_price_gain", label: { zh: "硬止盈最小价差(元)", en: "Hard trailing min price gain" }, type: "number", path: ["hard_trailing_min_price_gain"], step: 0.1 },
+  { key: "hard_trailing_min_price_gain_pct", label: { zh: "硬止盈最小价差率(%)", en: "Hard trailing min price gain (%)" }, type: "number", path: ["hard_trailing_min_price_gain_pct"], step: 1 },
+  { key: "hard_trailing_min_profit_amount", label: { zh: "硬止盈最小浮盈(元)", en: "Hard trailing min profit amount" }, type: "number", path: ["hard_trailing_min_profit_amount"], step: 100 },
+  { key: "hard_trailing_min_profit_amount_pct", label: { zh: "硬止盈最小浮盈率(%)", en: "Hard trailing min profit amount (%)" }, type: "number", path: ["hard_trailing_min_profit_amount_pct"], step: 1 },
+];
+
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value ?? {})) as T;
 const pickText = (text: LocaleText, locale: string) => (locale === "zh-CN" ? text.zh : text.en);
@@ -344,6 +369,20 @@ const getStringAt = (root: Record<string, unknown>, path: string[], fallback: st
   return text || fallback;
 };
 
+const getBooleanAt = (root: Record<string, unknown>, path: string[], fallback: boolean): boolean => {
+  let cursor: unknown = root;
+  for (const segment of path) {
+    if (!isObject(cursor)) return fallback;
+    cursor = cursor[segment];
+  }
+  if (typeof cursor === "boolean") return cursor;
+  if (typeof cursor === "number") return cursor !== 0;
+  const text = `${cursor ?? ""}`.trim().toLowerCase();
+  if (["true", "1", "yes", "on", "enabled"].includes(text)) return true;
+  if (["false", "0", "no", "off", "disabled"].includes(text)) return false;
+  return fallback;
+};
+
 const ensureWeightMap = (root: Record<string, unknown>, path: string[], keys: readonly string[], fallback: number) => {
   const container = ensureObjectPath(root, path);
   keys.forEach((key) => {
@@ -380,6 +419,38 @@ const ensureDualTrackDefaults = (root: Record<string, unknown>, path: string[]) 
   if (!Number.isFinite(Number(trackWeights.context))) trackWeights.context = 1;
 };
 
+const ensureProfitProtectionDefaults = (root: Record<string, unknown>, path: string[]) => {
+  const container = ensureObjectPath(root, path);
+  const defaults: Record<string, number | boolean> = {
+    tech_sell_enabled: true,
+    tech_sell_peak_pct: 30,
+    tech_sell_drawdown_pct: 10,
+    tech_sell_min_price_gain: 1.5,
+    tech_sell_min_price_gain_pct: 8,
+    tech_sell_min_profit_amount: 800,
+    tech_sell_min_profit_amount_pct: 8,
+    hard_trailing_enabled: true,
+    hard_trailing_peak_pct: 50,
+    hard_trailing_drawdown_pct: 18,
+    hard_trailing_min_price_gain: 2,
+    hard_trailing_min_price_gain_pct: 12,
+    hard_trailing_min_profit_amount: 1200,
+    hard_trailing_min_profit_amount_pct: 12,
+  };
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!(key in container)) {
+      container[key] = value;
+      return;
+    }
+    if (typeof value === "boolean") {
+      container[key] = getBooleanAt(container, [key], value);
+      return;
+    }
+    const parsed = Number(container[key]);
+    container[key] = Number.isFinite(parsed) ? parsed : value;
+  });
+};
+
 const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Record<string, unknown> => {
   const next = deepClone(raw ?? {});
   ensureWeightMap(next, ["base", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
@@ -392,18 +463,21 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   dimensionGroups.tradability_timing = [...CONTEXT_GROUP_DIMENSIONS.tradability_timing];
   dimensionGroups.source_execution = [...CONTEXT_GROUP_DIMENSIONS.source_execution];
   ensureDualTrackDefaults(next, ["base", "dual_track"]);
+  ensureProfitProtectionDefaults(next, ["base", "veto", "profit_protection"]);
 
   ensureWeightMap(next, ["profiles", "candidate", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "candidate", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
   ensureWeightMap(next, ["profiles", "candidate", "context", "group_weights"], CONTEXT_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "candidate", "context", "dimension_weights"], CONTEXT_DIMENSIONS, 1);
   ensureDualTrackDefaults(next, ["profiles", "candidate", "dual_track"]);
+  ensureProfitProtectionDefaults(next, ["profiles", "candidate", "veto", "profit_protection"]);
 
   ensureWeightMap(next, ["profiles", "position", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "position", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
   ensureWeightMap(next, ["profiles", "position", "context", "group_weights"], CONTEXT_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "position", "context", "dimension_weights"], CONTEXT_DIMENSIONS, 1);
   ensureDualTrackDefaults(next, ["profiles", "position", "dual_track"]);
+  ensureProfitProtectionDefaults(next, ["profiles", "position", "veto", "profit_protection"]);
   return next;
 };
 
@@ -416,13 +490,16 @@ const buildUnifiedEditableConfig = (raw: Record<string, unknown> | undefined): R
   baseRoot.technical = deepClone(candidateRoot.technical ?? baseRoot.technical ?? {});
   baseRoot.context = deepClone(candidateRoot.context ?? baseRoot.context ?? {});
   baseRoot.dual_track = deepClone(candidateRoot.dual_track ?? baseRoot.dual_track ?? {});
+  baseRoot.veto = deepClone(baseRoot.veto ?? {});
 
   positionRoot.technical = deepClone(baseRoot.technical);
   positionRoot.context = deepClone(baseRoot.context);
   positionRoot.dual_track = deepClone(baseRoot.dual_track);
+  positionRoot.veto = deepClone(baseRoot.veto);
   candidateRoot.technical = deepClone(baseRoot.technical);
   candidateRoot.context = deepClone(baseRoot.context);
   candidateRoot.dual_track = deepClone(baseRoot.dual_track);
+  candidateRoot.veto = deepClone(baseRoot.veto);
   return next;
 };
 
@@ -438,6 +515,8 @@ const buildUnifiedSaveConfig = (raw: Record<string, unknown>): Record<string, un
   positionRoot.technical = deepClone(baseRoot.technical ?? {});
   positionRoot.context = deepClone(baseRoot.context ?? {});
   positionRoot.dual_track = deepClone(baseRoot.dual_track ?? {});
+  positionRoot.veto = deepClone(baseRoot.veto ?? {});
+  candidateRoot.veto = deepClone(baseRoot.veto ?? {});
   return next;
 };
 
@@ -573,6 +652,17 @@ export function StrategyConfigPage({ client }: StrategyConfigPageProps) {
   };
 
   const updateStringPath = (path: string[], value: string, section?: 1 | 2 | 3 | 4, param?: string) => {
+    setEditableConfig((prev) => {
+      const next = deepClone(prev);
+      const target = ensureObjectPath(next, path.slice(0, -1));
+      target[path[path.length - 1]] = value;
+      return next;
+    });
+    if (section) setFocusedFormulaSection(section);
+    if (param) setFocusedParam(param);
+  };
+
+  const updateBooleanPath = (path: string[], value: boolean, section?: 1 | 2 | 3 | 4, param?: string) => {
     setEditableConfig((prev) => {
       const next = deepClone(prev);
       const target = ensureObjectPath(next, path.slice(0, -1));
@@ -957,6 +1047,59 @@ export function StrategyConfigPage({ client }: StrategyConfigPageProps) {
                           setFocusedParam(field.key);
                         }}
                         onChange={(event) => updateNumberPath(fullPath, event.target.value, section, field.key)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </WorkbenchCard>
+
+          <WorkbenchCard className="strategy-config-card">
+            <div className="strategy-config-card__header">
+              <div>
+                <h2 className="strategy-config-card__title">{locale === "zh-CN" ? "浮盈保护" : "Profit protection"}</h2>
+                <div className="strategy-config-card__subtitle">
+                  {locale === "zh-CN"
+                    ? "仅对持仓生效。通过峰值浮盈、峰值回撤、价格价差和实际浮盈金额决定是否把 SELL 升级为强制卖出。"
+                    : "Position-only gates. Uses peak profit, drawdown, price gain and realized profit scale to decide whether SELL becomes a forced exit."}
+                </div>
+              </div>
+            </div>
+            <div className="strategy-config-dual-grid">
+              {PROFIT_PROTECTION_FIELDS.map((field) => {
+                const fullPath = ["base", "veto", "profit_protection", ...field.path];
+                return (
+                  <div key={`profit-protection-${field.key}`} className="strategy-config-dual-item">
+                    <label>
+                      <span>{pickText(field.label, locale)}</span>
+                    </label>
+                    {field.type === "checkbox" ? (
+                      <label className="strategy-config-switch" aria-label={pickText(field.label, locale)}>
+                        <input
+                          type="checkbox"
+                          checked={getBooleanAt(editableConfig, fullPath, true)}
+                          onFocus={() => {
+                            setFocusedFormulaSection(4);
+                            setFocusedParam(field.key);
+                          }}
+                          onChange={(event) => updateBooleanPath(fullPath, event.target.checked, 4, field.key)}
+                        />
+                        <span className="strategy-config-switch__track">
+                          <span className="strategy-config-switch__thumb" />
+                        </span>
+                      </label>
+                    ) : (
+                      <input
+                        className="input"
+                        type="number"
+                        step={field.step ?? 0.01}
+                        value={getNumberAt(editableConfig, fullPath, 0)}
+                        onFocus={() => {
+                          setFocusedFormulaSection(4);
+                          setFocusedParam(field.key);
+                        }}
+                        onChange={(event) => updateNumberPath(fullPath, event.target.value, 4, field.key)}
                       />
                     )}
                   </div>

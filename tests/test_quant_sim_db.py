@@ -203,6 +203,30 @@ def test_builtin_strategy_profiles_rebalance_fusion_gates_by_strategy(tmp_path):
     assert conservative_position["dual_track"]["min_fusion_confidence"] == 0.60
 
 
+def test_builtin_strategy_profiles_tier_profit_protection_by_risk_style(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    configs = db._build_builtin_strategy_profile_configs()
+    aggressive = _resolve_profile(configs["aggressive"], "position")["veto"]["profit_protection"]
+    stable = _resolve_profile(configs["stable"], "position")["veto"]["profit_protection"]
+    conservative = _resolve_profile(configs["conservative"], "position")["veto"]["profit_protection"]
+
+    assert aggressive["tech_sell_peak_pct"] == 50.0
+    assert aggressive["tech_sell_drawdown_pct"] == 15.0
+    assert aggressive["hard_trailing_peak_pct"] == 80.0
+    assert aggressive["hard_trailing_drawdown_pct"] == 25.0
+
+    assert stable["tech_sell_peak_pct"] == 30.0
+    assert stable["tech_sell_drawdown_pct"] == 10.0
+    assert stable["hard_trailing_peak_pct"] == 50.0
+    assert stable["hard_trailing_drawdown_pct"] == 18.0
+
+    assert conservative["tech_sell_peak_pct"] == 20.0
+    assert conservative["tech_sell_drawdown_pct"] == 6.0
+    assert conservative["hard_trailing_peak_pct"] == 35.0
+    assert conservative["hard_trailing_drawdown_pct"] == 12.0
+
+
 def test_aggressive_candidate_profile_downweights_low_value_missing_dimensions(tmp_path):
     db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
@@ -287,6 +311,76 @@ def test_confirm_buy_creates_simulated_position(tmp_path):
     assert positions[0]["avg_price"] == 10.5
     assert signals[0]["status"] == "executed"
     assert signals[0]["execution_note"] == "手工买入"
+
+
+def test_position_market_price_tracks_unrealized_peak_without_lowering_it(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    signal_id = db.add_signal(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "action": "BUY",
+            "confidence": 78,
+            "reasoning": "趋势改善",
+            "status": "pending",
+        }
+    )
+    db.confirm_signal(signal_id, executed_action="buy", price=10.0, quantity=100, note="建仓")
+
+    db.update_position_market_price("600000", 15.0)
+    first = db.get_positions()[0]
+    assert first["peak_price"] == 15.0
+    assert first["peak_unrealized_pnl_pct"] == 50.0
+    assert first["peak_unrealized_pnl"] == 500.0
+    assert first["peak_at"]
+
+    db.update_position_market_price("600000", 13.0)
+    second = db.get_positions()[0]
+    assert second["latest_price"] == 13.0
+    assert second["unrealized_pnl_pct"] == 30.0
+    assert second["peak_price"] == 15.0
+    assert second["peak_unrealized_pnl_pct"] == 50.0
+    assert second["peak_unrealized_pnl"] == 500.0
+
+
+def test_add_position_recomputes_historical_peak_without_lowering_it(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    first_signal_id = db.add_signal(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "action": "BUY",
+            "confidence": 78,
+            "reasoning": "建仓",
+            "status": "pending",
+        }
+    )
+    db.confirm_signal(first_signal_id, executed_action="buy", price=10.0, quantity=100, note="建仓")
+    db.update_position_market_price("600000", 20.0)
+
+    second_signal_id = db.add_signal(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "action": "BUY",
+            "confidence": 78,
+            "reasoning": "加仓",
+            "status": "pending",
+        }
+    )
+    db.confirm_signal(second_signal_id, executed_action="buy", price=12.0, quantity=100, note="加仓")
+
+    position = db.get_positions()[0]
+
+    assert position["quantity"] == 200
+    assert position["avg_price"] == 11.0
+    assert position["latest_price"] == 12.0
+    assert position["unrealized_pnl_pct"] == 9.0909
+    assert position["peak_price"] == 20.0
+    assert position["peak_unrealized_pnl_pct"] == 81.8182
+    assert position["peak_unrealized_pnl"] == 1800.0
 
 
 def test_account_summary_and_trade_history_track_cash_and_realized_pnl(tmp_path):

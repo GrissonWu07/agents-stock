@@ -2396,11 +2396,22 @@ a {
 .live-position-lot-card__top em {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(21, 153, 104, 0.1);
-  color: var(--success);
+  background: rgba(82, 100, 134, 0.1);
+  color: var(--text-soft);
   font-style: normal;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.live-position-lot-card__top em.is-sellable,
+.live-position-lot-card__top em.is-partial {
+  background: rgba(77, 134, 247, 0.14);
+  color: #2f5cff;
+}
+
+.live-position-lot-card__top em.is-unavailable {
+  background: rgba(82, 100, 134, 0.1);
+  color: var(--text-soft);
 }
 
 .live-position-lot-card__facts,
@@ -3034,12 +3045,23 @@ a {
 .replay-capital-slot__head span,
 .replay-capital-lot-card__top em {
   border-radius: 999px;
-  background: rgba(103, 209, 179, 0.16);
-  color: #1f8557;
+  background: rgba(82, 100, 134, 0.1);
+  color: var(--text-soft);
   padding: 3px 8px;
   font-size: 0.72rem;
   font-style: normal;
   font-weight: 800;
+}
+
+.replay-capital-lot-card__top em.is-sellable,
+.replay-capital-lot-card__top em.is-partial {
+  background: rgba(77, 134, 247, 0.14);
+  color: #2f5cff;
+}
+
+.replay-capital-lot-card__top em.is-unavailable {
+  background: rgba(82, 100, 134, 0.1);
+  color: var(--text-soft);
 }
 
 .replay-capital-stock-link {

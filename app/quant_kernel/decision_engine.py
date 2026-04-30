@@ -13,6 +13,8 @@ VETO_PRIORITY: dict[str, int] = {
     "risk_stop": 2,
     "stop_loss": 2,
     "hard_stop_loss": 3,
+    "profit_tech_sell": 3,
+    "hard_profit_trailing_stop": 3,
     "hard_constraint": 4,
     "context_veto": 9,
 }

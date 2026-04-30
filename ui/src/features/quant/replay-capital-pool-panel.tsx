@@ -39,6 +39,13 @@ function localizeLotStatus(status: string) {
   return status || "--";
 }
 
+function lotStatusClass(status: string) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "available") return "is-sellable";
+  if (normalized === "mixed") return "is-partial";
+  return "is-unavailable";
+}
+
 type LotWithSlot = ReplayCapitalLot & {
   slotTitle: string;
   slotIndex: number;
@@ -420,7 +427,7 @@ export function ReplayCapitalPoolPanel({
                       >
                         {`${group.stockCode} ${group.stockName || ""}`.trim()}
                       </Link>
-                      <em>{localizeLotStatus(group.status)}</em>
+                      <em className={lotStatusClass(group.status)}>{localizeLotStatus(group.status)}</em>
                     </div>
                     <div className="replay-capital-lot-price">
                       <span>{price.priceText}</span>
@@ -550,7 +557,7 @@ export function ReplayCapitalPoolPanel({
                           <Link className="replay-capital-stock-link" to={`/portfolio/position/${lot.stockCode}`}>
                             {`${lot.stockCode} ${lot.stockName || ""}`.trim()}
                           </Link>
-                          <em>{localizeLotStatus(lot.status)}</em>
+                          <em className={lotStatusClass(lot.status)}>{localizeLotStatus(lot.status)}</em>
                         </div>
                         <strong>{`${lot.lotCount} lot · ${lot.quantity} 股`}</strong>
                         {renderLotPriceLine(lot)}

@@ -1,6 +1,28 @@
 from datetime import datetime
 
+from app.quant_kernel.config import StrategyScoringConfig
+from app.quant_kernel.models import ContextualScore
 from app.quant_kernel.runtime import KernelStrategyRuntime
+
+
+def _strategy_binding_with_profit_protection(config: dict) -> dict:
+    payload = StrategyScoringConfig.default()
+    base = dict(payload.base)
+    base["veto"] = {
+        **(base.get("veto") or {}),
+        "profit_protection": config,
+    }
+    return {
+        "profile_id": "test",
+        "profile_name": "测试策略",
+        "version_id": 1,
+        "version": 1,
+        "config": {
+            "schema_version": payload.schema_version,
+            "base": base,
+            "profiles": payload.profiles,
+        },
+    }
 
 
 def test_kernel_candidate_decision_exposes_structured_vote_breakdown():
@@ -259,3 +281,212 @@ def test_position_forced_risk_and_hard_stop_veto_labels_are_distinct():
     assert forced[0]["display_label"] == "强制风控触发"
     assert hard_stop[0]["id"] == "hard_stop_loss"
     assert hard_stop[0]["display_label"] == "硬止损线触发"
+
+
+def test_position_profit_tech_sell_veto_forces_sell_after_large_peak_drawdown():
+    runtime = KernelStrategyRuntime()
+    binding = _strategy_binding_with_profit_protection(
+        {
+            "tech_sell_enabled": True,
+            "tech_sell_peak_pct": 50.0,
+            "tech_sell_drawdown_pct": 15.0,
+            "tech_sell_min_price_gain": 2.5,
+            "tech_sell_min_price_gain_pct": 12.0,
+            "tech_sell_min_profit_amount": 1500.0,
+            "tech_sell_min_profit_amount_pct": 12.0,
+            "hard_trailing_enabled": False,
+        }
+    )
+
+    decision = runtime.evaluate_position(
+        candidate={"stock_code": "605298", "stock_name": "必得科技", "source": "manual", "sources": ["manual"]},
+        position={
+            "stock_code": "605298",
+            "stock_name": "必得科技",
+            "quantity": 900,
+            "avg_price": 12.8939,
+            "latest_price": 50.0,
+            "peak_price": 54.37,
+            "peak_unrealized_pnl_pct": 321.6723,
+            "peak_unrealized_pnl": 37328.49,
+        },
+        market_snapshot={
+            "current_price": 50.0,
+            "ma5": 50.8,
+            "ma10": 51.2,
+            "ma20": 52.0,
+            "ma60": 42.0,
+            "ma20_slope": -0.01,
+            "macd": -0.8,
+            "dif": -0.8,
+            "dea": -0.2,
+            "hist": -0.6,
+            "hist_prev": -0.2,
+            "rsi14": 82.0,
+            "rsi12": 82.0,
+            "volume_ratio": 0.7,
+            "trend": "down",
+        },
+        current_time=datetime(2025, 9, 18, 10, 0),
+        analysis_timeframe="30m",
+        strategy_mode="aggressive",
+        strategy_profile_binding=binding,
+    )
+
+    explainability = (decision.strategy_profile or {}).get("explainability") or {}
+    vetoes = explainability.get("vetoes") or []
+    fusion = explainability.get("fusion_breakdown") or {}
+
+    assert decision.action == "SELL"
+    assert vetoes[0]["id"] == "profit_tech_sell"
+    assert vetoes[0]["display_label"] == "高浮盈技术卖出"
+    assert fusion["matched_branch"] == "veto_first"
+
+
+def test_position_profit_veto_ranks_above_context_hold_veto():
+    runtime = KernelStrategyRuntime()
+
+    vetoes = runtime._build_vetoes(
+        profile_kind="position",
+        contextual_score=ContextualScore(score=-0.95, signal="bearish", confidence=0.9, components={}, reason="弱环境"),
+        dual_track={"fusion_sell_threshold": -0.7},
+        veto_config={
+            "thresholds": {"context_veto": {"enabled": True, "min_context_score": -0.7}},
+            "profit_protection": {
+                "tech_sell_enabled": True,
+                "tech_sell_peak_pct": 50.0,
+                "tech_sell_drawdown_pct": 15.0,
+                "tech_sell_min_price_gain": 2.5,
+                "tech_sell_min_price_gain_pct": 12.0,
+                "tech_sell_min_profit_amount": 1500.0,
+                "tech_sell_min_profit_amount_pct": 12.0,
+                "hard_trailing_enabled": False,
+            },
+        },
+        position={
+            "stock_code": "605298",
+            "quantity": 900,
+            "avg_price": 12.8939,
+            "peak_price": 54.37,
+            "peak_unrealized_pnl_pct": 321.6723,
+            "peak_unrealized_pnl": 37328.49,
+        },
+        market_snapshot={"current_price": 50.0},
+        core_rule_action="SELL",
+    )
+
+    assert [item["id"] for item in vetoes[:2]] == ["profit_tech_sell", "context_veto"]
+    assert vetoes[0]["action"] == "SELL"
+
+
+def test_position_hard_profit_trailing_veto_does_not_require_technical_sell():
+    runtime = KernelStrategyRuntime()
+    binding = _strategy_binding_with_profit_protection(
+        {
+            "tech_sell_enabled": False,
+            "hard_trailing_enabled": True,
+            "hard_trailing_peak_pct": 80.0,
+            "hard_trailing_drawdown_pct": 25.0,
+            "hard_trailing_min_price_gain": 4.0,
+            "hard_trailing_min_price_gain_pct": 18.0,
+            "hard_trailing_min_profit_amount": 2500.0,
+            "hard_trailing_min_profit_amount_pct": 18.0,
+        }
+    )
+
+    decision = runtime.evaluate_position(
+        candidate={"stock_code": "301662", "stock_name": "宏工科技", "source": "manual", "sources": ["manual"]},
+        position={
+            "stock_code": "301662",
+            "stock_name": "宏工科技",
+            "quantity": 200,
+            "avg_price": 55.9168,
+            "latest_price": 170.0,
+            "peak_price": 201.93,
+            "peak_unrealized_pnl_pct": 261.1258,
+            "peak_unrealized_pnl": 29202.64,
+        },
+        market_snapshot={
+            "current_price": 170.0,
+            "ma5": 168.0,
+            "ma10": 165.0,
+            "ma20": 150.0,
+            "ma60": 120.0,
+            "macd": 0.6,
+            "dif": 0.6,
+            "dea": 0.3,
+            "hist": 0.3,
+            "hist_prev": 0.2,
+            "rsi14": 62.0,
+            "rsi12": 62.0,
+            "volume_ratio": 1.1,
+            "trend": "up",
+        },
+        current_time=datetime(2026, 2, 10, 10, 0),
+        analysis_timeframe="30m",
+        strategy_mode="aggressive",
+        strategy_profile_binding=binding,
+    )
+
+    explainability = (decision.strategy_profile or {}).get("explainability") or {}
+    vetoes = explainability.get("vetoes") or []
+
+    assert decision.action == "SELL"
+    assert vetoes[0]["id"] == "hard_profit_trailing_stop"
+    assert vetoes[0]["display_label"] == "硬移动止盈触发"
+
+
+def test_profit_protection_ignores_large_pct_when_absolute_gain_is_too_small():
+    runtime = KernelStrategyRuntime()
+    binding = _strategy_binding_with_profit_protection(
+        {
+            "tech_sell_enabled": True,
+            "tech_sell_peak_pct": 30.0,
+            "tech_sell_drawdown_pct": 8.0,
+            "tech_sell_min_price_gain": 1.5,
+            "tech_sell_min_price_gain_pct": 8.0,
+            "tech_sell_min_profit_amount": 800.0,
+            "tech_sell_min_profit_amount_pct": 8.0,
+            "hard_trailing_enabled": False,
+        }
+    )
+
+    decision = runtime.evaluate_position(
+        candidate={"stock_code": "000001", "stock_name": "小额测试", "source": "manual", "sources": ["manual"]},
+        position={
+            "stock_code": "000001",
+            "stock_name": "小额测试",
+            "quantity": 100,
+            "avg_price": 2.0,
+            "latest_price": 2.5,
+            "peak_price": 2.8,
+            "peak_unrealized_pnl_pct": 40.0,
+            "peak_unrealized_pnl": 80.0,
+        },
+        market_snapshot={
+            "current_price": 2.5,
+            "ma5": 2.55,
+            "ma10": 2.6,
+            "ma20": 2.7,
+            "ma60": 2.4,
+            "ma20_slope": -0.01,
+            "macd": -0.2,
+            "dif": -0.2,
+            "dea": -0.05,
+            "hist": -0.15,
+            "hist_prev": -0.05,
+            "rsi14": 82.0,
+            "rsi12": 82.0,
+            "volume_ratio": 0.7,
+            "trend": "down",
+        },
+        current_time=datetime(2026, 1, 5, 10, 0),
+        analysis_timeframe="30m",
+        strategy_mode="stable",
+        strategy_profile_binding=binding,
+    )
+
+    explainability = (decision.strategy_profile or {}).get("explainability") or {}
+    vetoes = explainability.get("vetoes") or []
+
+    assert [item["id"] for item in vetoes] == []

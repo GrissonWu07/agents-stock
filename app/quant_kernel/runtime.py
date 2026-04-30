@@ -424,6 +424,7 @@ class KernelStrategyRuntime:
             veto_config=scoring_profile.get("veto") if isinstance(scoring_profile.get("veto"), dict) else {},
             position=position,
             market_snapshot=market_snapshot,
+            core_rule_action=tech_decision.action,
         )
         action_resolution = resolve_final_action(
             mode=str(scoring_profile["dual_track"].get("mode") or "rule_only"),
@@ -439,7 +440,7 @@ class KernelStrategyRuntime:
             action_resolution = self._downgrade_candidate_sell_action(action_resolution)
             resolved.action = "HOLD"
             resolved.decision_type = "candidate_reject"
-        elif mode_value != "rule_only":
+        elif action_resolution.get("matched_branch") == "veto_first" or mode_value != "rule_only":
             resolved.action = str(action_resolution["final_action"])
             if resolved.action == "BUY":
                 resolved.decision_type = "dual_track_weighted_buy"
@@ -1193,6 +1194,7 @@ class KernelStrategyRuntime:
         veto_config: dict[str, Any],
         position: dict[str, Any] | None = None,
         market_snapshot: dict[str, Any] | None = None,
+        core_rule_action: str | None = None,
     ) -> list[dict[str, Any]]:
         vetoes: list[dict[str, Any]] = []
         thresholds = veto_config.get("thresholds") if isinstance(veto_config.get("thresholds"), dict) else {}
@@ -1203,20 +1205,43 @@ class KernelStrategyRuntime:
             vetoes.append(
                 {
                     "id": "context_veto",
-                    "priority": 3,
+                    "priority": 9,
                     "action": "HOLD" if profile_kind == "position" else "HOLD",
                     "reason": f"context_score={contextual_score.score:.4f} < {context_veto_floor:.4f}",
                 }
             )
         if profile_kind == "position":
-            vetoes.extend(self._build_position_risk_vetoes(position=position, market_snapshot=market_snapshot))
+            profit_protection_config = (
+                veto_config.get("profit_protection")
+                if isinstance(veto_config.get("profit_protection"), dict)
+                else self._default_profit_protection_config(profile_kind)
+            )
+            vetoes.extend(
+                self._build_position_risk_vetoes(
+                    position=position,
+                    market_snapshot=market_snapshot,
+                    profit_protection_config=profit_protection_config,
+                    core_rule_action=core_rule_action,
+                )
+            )
         return sorted(vetoes, key=self._veto_sort_key)
+
+    def _default_profit_protection_config(self, profile_kind: str) -> dict[str, Any]:
+        try:
+            veto = self.config.resolve_strategy_scoring(profile_kind).get("veto")
+            if isinstance(veto, dict) and isinstance(veto.get("profit_protection"), dict):
+                return dict(veto["profit_protection"])
+        except Exception:
+            return {}
+        return {}
 
     def _build_position_risk_vetoes(
         self,
         *,
         position: dict[str, Any] | None,
         market_snapshot: dict[str, Any] | None,
+        profit_protection_config: dict[str, Any] | None = None,
+        core_rule_action: str | None = None,
     ) -> list[dict[str, Any]]:
         if not isinstance(position, dict):
             return []
@@ -1286,7 +1311,136 @@ class KernelStrategyRuntime:
                 }
             )
 
+        vetoes.extend(
+            self._build_profit_protection_vetoes(
+                position=position,
+                current_price=current_price,
+                avg_price=avg_price,
+                quantity=self._first_float(position, ("quantity", "shares", "volume"), default=0.0),
+                current_pnl_pct=pnl_pct,
+                profit_protection_config=profit_protection_config if isinstance(profit_protection_config, dict) else {},
+                core_rule_action=core_rule_action,
+            )
+        )
         return vetoes
+
+    def _build_profit_protection_vetoes(
+        self,
+        *,
+        position: dict[str, Any],
+        current_price: float,
+        avg_price: float,
+        quantity: float,
+        current_pnl_pct: float,
+        profit_protection_config: dict[str, Any],
+        core_rule_action: str | None,
+    ) -> list[dict[str, Any]]:
+        if current_price <= 0 or avg_price <= 0 or quantity <= 0:
+            return []
+
+        peak_price = self._first_float(position, ("peak_price", "peakPrice"), default=current_price)
+        peak_pnl_pct = self._first_float(
+            position,
+            ("peak_unrealized_pnl_pct", "peakUnrealizedPnlPct", "peak_pnl_pct", "peakPnlPct"),
+            default=current_pnl_pct,
+        )
+        peak_pnl_amount = self._first_float(
+            position,
+            ("peak_unrealized_pnl", "peakUnrealizedPnl", "peak_pnl", "peakPnl"),
+            default=max((peak_price - avg_price) * quantity, 0.0),
+        )
+        drawdown_pct = max(0.0, peak_pnl_pct - current_pnl_pct)
+        price_gain = max(0.0, peak_price - avg_price)
+        position_cost = max(avg_price * quantity, 0.0)
+        vetoes: list[dict[str, Any]] = []
+
+        if self._profit_protection_thresholds_met(
+            cfg=profit_protection_config,
+            prefix="hard_trailing",
+            enabled_key="hard_trailing_enabled",
+            default_enabled=False,
+            peak_pnl_pct=peak_pnl_pct,
+            drawdown_pct=drawdown_pct,
+            price_gain=price_gain,
+            peak_pnl_amount=peak_pnl_amount,
+            avg_price=avg_price,
+            position_cost=position_cost,
+        ):
+            vetoes.append(
+                {
+                    "id": "hard_profit_trailing_stop",
+                    "priority": 3,
+                    "action": "SELL",
+                    "trigger_type": "hard_profit_trailing_stop",
+                    "display_label": "硬移动止盈触发",
+                    "reason": (
+                        f"peak_pnl_pct={peak_pnl_pct:.4f}%, current_pnl_pct={current_pnl_pct:.4f}%, "
+                        f"drawdown={drawdown_pct:.4f}pp, peak_price={peak_price:.4f}, current_price={current_price:.4f}"
+                    ),
+                }
+            )
+
+        is_core_sell = str(core_rule_action or "").strip().upper() == "SELL"
+        if is_core_sell and self._profit_protection_thresholds_met(
+            cfg=profit_protection_config,
+            prefix="tech_sell",
+            enabled_key="tech_sell_enabled",
+            default_enabled=False,
+            peak_pnl_pct=peak_pnl_pct,
+            drawdown_pct=drawdown_pct,
+            price_gain=price_gain,
+            peak_pnl_amount=peak_pnl_amount,
+            avg_price=avg_price,
+            position_cost=position_cost,
+        ):
+            vetoes.append(
+                {
+                    "id": "profit_tech_sell",
+                    "priority": 3,
+                    "action": "SELL",
+                    "trigger_type": "profit_tech_sell",
+                    "display_label": "高浮盈技术卖出",
+                    "reason": (
+                        f"tech_signal=SELL, peak_pnl_pct={peak_pnl_pct:.4f}%, "
+                        f"current_pnl_pct={current_pnl_pct:.4f}%, drawdown={drawdown_pct:.4f}pp"
+                    ),
+                }
+            )
+
+        return vetoes
+
+    def _profit_protection_thresholds_met(
+        self,
+        *,
+        cfg: dict[str, Any],
+        prefix: str,
+        enabled_key: str,
+        default_enabled: bool,
+        peak_pnl_pct: float,
+        drawdown_pct: float,
+        price_gain: float,
+        peak_pnl_amount: float,
+        avg_price: float,
+        position_cost: float,
+    ) -> bool:
+        if not bool(cfg.get(enabled_key, default_enabled)):
+            return False
+        peak_threshold = self._to_float(cfg.get(f"{prefix}_peak_pct"), 0.0)
+        drawdown_threshold = self._to_float(cfg.get(f"{prefix}_drawdown_pct"), 0.0)
+        min_price_gain = max(
+            self._to_float(cfg.get(f"{prefix}_min_price_gain"), 0.0),
+            avg_price * self._to_float(cfg.get(f"{prefix}_min_price_gain_pct"), 0.0) / 100.0,
+        )
+        min_profit_amount = max(
+            self._to_float(cfg.get(f"{prefix}_min_profit_amount"), 0.0),
+            position_cost * self._to_float(cfg.get(f"{prefix}_min_profit_amount_pct"), 0.0) / 100.0,
+        )
+        return (
+            peak_pnl_pct >= peak_threshold
+            and drawdown_pct >= drawdown_threshold
+            and price_gain >= min_price_gain
+            and peak_pnl_amount >= min_profit_amount
+        )
 
     @staticmethod
     def _has_forced_risk_sell(position: dict[str, Any], snapshot: dict[str, Any]) -> bool:
