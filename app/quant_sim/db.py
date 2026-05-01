@@ -6,7 +6,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,6 +19,7 @@ from app.quant_sim.capital_slots import (
     normalize_capital_slot_config,
 )
 from app.quant_sim.execution_constraints import trade_block_reason
+from app.quant_sim.stock_execution_feedback import STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS
 from app.runtime_paths import default_db_path
 
 
@@ -1225,6 +1226,99 @@ class QuantSimDB:
         rows = [self._signal_row_to_dict(row) for row in cursor.fetchall()]
         conn.close()
         return rows
+
+    def get_stock_execution_feedback_summary(
+        self,
+        stock_code: str,
+        *,
+        as_of: str | datetime | None = None,
+        lookback_days: int = 20,
+    ) -> dict[str, Any]:
+        code = str(stock_code or "").strip()
+        days = max(1, int(lookback_days or 20))
+        if not code:
+            return {
+                "stock_code": "",
+                "lookback_days": days,
+                "recent_stop_loss_count": 0,
+                "recent_loss_trade_count": 0,
+                "recent_realized_pnl": 0.0,
+                "recent_realized_pnl_pct": 0.0,
+                "sample_count": 0,
+                "last_stop_loss_at": None,
+                "last_loss_sell_at": None,
+                "recent_checkpoints": [],
+            }
+
+        as_of_dt = self._ensure_datetime(as_of)
+        since_text = self._format_datetime(as_of_dt - timedelta(days=days))
+        as_of_text = self._format_datetime(as_of_dt)
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                t.*,
+                s.decision_type AS signal_decision_type,
+                s.strategy_profile_json AS signal_strategy_profile_json,
+                s.execution_note AS signal_execution_note
+            FROM sim_trades t
+            LEFT JOIN strategy_signals s ON s.id = t.signal_id
+            WHERE t.stock_code = ?
+              AND UPPER(t.action) = 'SELL'
+              AND t.executed_at >= ?
+              AND t.executed_at <= ?
+            ORDER BY t.executed_at DESC, t.id DESC
+            """,
+            (code, since_text, as_of_text),
+        )
+        rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        realized_pnl = sum(float(row.get("realized_pnl") or 0.0) for row in rows)
+        cost_basis = 0.0
+        loss_count = 0
+        stop_count = 0
+        last_loss_at = None
+        last_stop_at = None
+        for row in rows:
+            pnl = float(row.get("realized_pnl") or 0.0)
+            gross = float(row.get("gross_amount") or 0.0)
+            if gross <= 0:
+                gross = float(row.get("price") or 0.0) * float(row.get("quantity") or 0.0)
+            estimated_cost = gross - pnl
+            if estimated_cost > 0:
+                cost_basis += estimated_cost
+            if pnl < 0:
+                loss_count += 1
+                last_loss_at = last_loss_at or row.get("executed_at")
+            if self._trade_row_is_stop_loss(row):
+                stop_count += 1
+                last_stop_at = last_stop_at or row.get("executed_at")
+        realized_pct = (realized_pnl / cost_basis * 100.0) if cost_basis > 0 else 0.0
+        return {
+            "stock_code": code,
+            "lookback_days": days,
+            "recent_stop_loss_count": stop_count,
+            "recent_loss_trade_count": loss_count,
+            "recent_realized_pnl": round(realized_pnl, 4),
+            "recent_realized_pnl_pct": round(realized_pct, 4),
+            "sample_count": len(rows),
+            "last_stop_loss_at": last_stop_at,
+            "last_loss_sell_at": last_loss_at,
+            "recent_checkpoints": [],
+        }
+
+    def _trade_row_is_stop_loss(self, row: dict[str, Any]) -> bool:
+        decision_type = str(row.get("signal_decision_type") or "").lower()
+        note = f"{row.get('note') or ''} {row.get('signal_execution_note') or ''}".lower()
+        if "stop_loss" in decision_type or "hard_stop_loss" in decision_type or "止损" in note:
+            return True
+        profile = self._loads_metadata(row.get("signal_strategy_profile_json"))
+        explainability = profile.get("explainability") if isinstance(profile, dict) else {}
+        fusion = explainability.get("fusion_breakdown") if isinstance(explainability, dict) and isinstance(explainability.get("fusion_breakdown"), dict) else {}
+        veto_id = str(fusion.get("veto_id") or fusion.get("veto_trigger_type") or "").strip()
+        return veto_id in {"stop_loss", "hard_stop_loss", "risk_stop"}
 
     def count_trade_history(
         self,
@@ -4767,6 +4861,9 @@ class QuantSimDB:
         aggressive_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.25
         aggressive_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.12
         aggressive_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(aggressive_profit_protection)
+        aggressive_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
+            STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["aggressive"]
+        )
         aggressive_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.60,
             "momentum": 1.35,
@@ -4805,7 +4902,7 @@ class QuantSimDB:
             "account_posture": 0.05,
             "liquidity": 0.85,
             "session": 0.35,
-            "source_prior": 0.75,
+            "source_prior": 0.0,
             "execution_feedback": 0.05,
             "stock_analysis": 1.00,
         }
@@ -4853,7 +4950,7 @@ class QuantSimDB:
             "account_posture": 0.90,
             "liquidity": 0.90,
             "session": 0.60,
-            "source_prior": 0.80,
+            "source_prior": 0.0,
             "execution_feedback": 0.70,
             "stock_analysis": 1.00,
         }
@@ -4876,6 +4973,9 @@ class QuantSimDB:
         stable_config["base"]["dual_track"]["lambda_divergence"] = 0.60
         stable_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.35
         stable_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(stable_profit_protection)
+        stable_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
+            STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["stable"]
+        )
         stable_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.30,
             "momentum": 1.15,
@@ -4911,7 +5011,7 @@ class QuantSimDB:
             "account_posture": 0.10,
             "liquidity": 0.95,
             "session": 0.60,
-            "source_prior": 0.85,
+            "source_prior": 0.0,
             "execution_feedback": 0.10,
             "stock_analysis": 1.00,
         }
@@ -4956,7 +5056,7 @@ class QuantSimDB:
             "account_posture": 1.20,
             "liquidity": 0.85,
             "session": 0.55,
-            "source_prior": 0.75,
+            "source_prior": 0.0,
             "execution_feedback": 0.90,
             "stock_analysis": 1.00,
         }
@@ -4982,6 +5082,9 @@ class QuantSimDB:
         conservative_config["base"]["dual_track"]["lambda_sign_conflict"] = 0.50
         conservative_config["base"]["dual_track"]["sign_conflict_min_abs_score"] = 0.15
         conservative_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(conservative_profit_protection)
+        conservative_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
+            STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["conservative"]
+        )
         conservative_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.05,
             "momentum": 0.80,
@@ -5017,7 +5120,7 @@ class QuantSimDB:
             "account_posture": 0.15,
             "liquidity": 0.90,
             "session": 0.55,
-            "source_prior": 0.70,
+            "source_prior": 0.0,
             "execution_feedback": 0.12,
             "stock_analysis": 1.00,
         }
@@ -5062,7 +5165,7 @@ class QuantSimDB:
             "account_posture": 1.45,
             "liquidity": 0.80,
             "session": 0.50,
-            "source_prior": 0.65,
+            "source_prior": 0.0,
             "execution_feedback": 1.10,
             "stock_analysis": 1.00,
         }

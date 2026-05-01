@@ -229,7 +229,7 @@ def calculate_slot_units(
     cash_pressure_units = _cash_pressure_slot_units(strategy_profile_id=strategy_profile_id, cash_ratio=cash_ratio)
     if cash_pressure_units > 0:
         slot_units = min(slot_units + cash_pressure_units, cfg["capital_high_price_max_slot_units"])
-    reentry_size_multiplier = _reentry_size_multiplier(signal)
+    reentry_size_multiplier = gate_size_multiplier(signal)
     if reentry_size_multiplier < 1.0:
         slot_units = slot_units * reentry_size_multiplier
         if one_lot_floor_units > 0:
@@ -247,15 +247,20 @@ def calculate_slot_units(
     }
 
 
-def _reentry_size_multiplier(signal: dict[str, Any]) -> float:
+def gate_size_multiplier(signal: dict[str, Any]) -> float:
     profile = _nested_dict(signal.get("strategy_profile"))
-    gate = _nested_dict(profile.get("reentry_gate"))
-    if str(gate.get("status") or "").strip().lower() != "downgraded":
-        return 1.0
-    try:
-        return clamp(float(gate.get("size_multiplier") or 1.0), 0.0, 1.0)
-    except (TypeError, ValueError):
-        return 1.0
+    multipliers: list[float] = []
+    for key in ("reentry_gate", "stock_execution_feedback_gate"):
+        gate = _nested_dict(profile.get(key))
+        if str(gate.get("status") or "").strip().lower() != "downgraded":
+            continue
+        try:
+            raw_multiplier = gate.get("size_multiplier")
+            multiplier = 1.0 if raw_multiplier in (None, "") else float(raw_multiplier)
+            multipliers.append(clamp(multiplier, 0.0, 1.0))
+        except (TypeError, ValueError):
+            continue
+    return min(multipliers) if multipliers else 1.0
 
 
 def _cash_pressure_slot_units(*, strategy_profile_id: str | None, cash_ratio: float | None) -> float:

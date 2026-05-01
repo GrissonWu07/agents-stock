@@ -275,7 +275,7 @@ const mockPayload = {
           { id: "source_execution", track_contribution: 0.040959, score: 0.28, coverage: 0.407474 },
         ],
         dimensions: [
-          { id: "source_prior", track_contribution: 0.040959, score: 0.28, reason: "source prior" },
+          { id: "source_prior", track_contribution: 0, score: 0, reason: "source metadata only" },
           { id: "price_structure", track_contribution: 0.012198, score: 0.14, reason: "bull stack" },
           { id: "momentum", track_contribution: 0.007842, score: 0.12, reason: "context momentum" },
           { id: "risk_balance", track_contribution: -0.034901, score: -0.08, reason: "risk high" },

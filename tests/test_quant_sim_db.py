@@ -227,6 +227,19 @@ def test_builtin_strategy_profiles_tier_profit_protection_by_risk_style(tmp_path
     assert conservative["hard_trailing_drawdown_pct"] == 12.0
 
 
+def test_builtin_strategy_profiles_tier_stock_execution_feedback_policy(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    configs = db._build_builtin_strategy_profile_configs()
+    aggressive = configs["aggressive"]["base"]["context"]["stock_execution_feedback_policy"]
+    stable = configs["stable"]["base"]["context"]["stock_execution_feedback_policy"]
+    conservative = configs["conservative"]["base"]["context"]["stock_execution_feedback_policy"]
+
+    assert aggressive["lookback_days"] < stable["lookback_days"] < conservative["lookback_days"]
+    assert aggressive["loss_reentry_size_multiplier"] > stable["loss_reentry_size_multiplier"] > conservative["loss_reentry_size_multiplier"]
+    assert aggressive["stop_loss_cooldown_days"] < stable["stop_loss_cooldown_days"] < conservative["stop_loss_cooldown_days"]
+
+
 def test_aggressive_candidate_profile_downweights_low_value_missing_dimensions(tmp_path):
     db = QuantSimDB(tmp_path / "app.quant_sim.db")
 

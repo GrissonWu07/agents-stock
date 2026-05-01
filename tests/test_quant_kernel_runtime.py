@@ -59,6 +59,9 @@ def test_kernel_candidate_decision_exposes_structured_vote_breakdown():
     assert "dual_track" in explainability
     assert any(vote["factor"] == "MACD" for vote in explainability["tech_votes"])
     assert any(vote["component"] == "source_prior" for vote in explainability["context_votes"])
+    source_prior_vote = next(vote for vote in explainability["context_votes"] if vote["component"] == "source_prior")
+    assert source_prior_vote["score"] == 0
+    assert "不参与评分加分" in source_prior_vote["reason"]
     assert explainability["dual_track"]["tech_signal"] in {"BUY", "SELL", "HOLD"}
     assert "rule_hit" in explainability["dual_track"]
 

@@ -140,8 +140,8 @@ const GROUP_EXPLAINS: Record<string, ParamExplain> = {
     effect: { zh: "分类权重越高，低流动时更抑制动作。", en: "Higher category weight suppresses action in poor liquidity/session." },
   },
   source_execution: {
-    meaning: { zh: "来源反馈维度，关注来源先验和执行反馈。", en: "Source/execution dimensions for prior and feedback." },
-    effect: { zh: "分类权重越高，历史执行结果更影响决策。", en: "Higher category weight makes execution feedback stronger." },
+    meaning: { zh: "执行反馈维度，来源仅用于候选入池和溯源，执行反馈用于约束复买。", en: "Execution feedback dimensions. Source is metadata only; feedback constrains reentry." },
+    effect: { zh: "分类权重越高，历史执行结果更影响决策；来源本身不加分。", en: "Higher category weight makes execution feedback stronger; source itself does not add score." },
   },
 };
 
@@ -223,8 +223,8 @@ const DIMENSION_EXPLAINS: Record<string, ParamExplain> = {
     effect: { zh: "执行友好时段通常轻微加分，噪声/冲击时段通常轻微减分；权重越高，时段过滤越明显。", en: "Execution-friendly sessions mildly add score; noisy/shock sessions mildly subtract. Higher weight makes timing filter stronger." },
   },
   source_prior: {
-    meaning: { zh: "根据信号来源历史稳定性与胜率给出先验可靠性评分。", en: "Assigns prior reliability by source stability and historical hit rate." },
-    effect: { zh: "高质量来源通常加分，低质量来源通常减分；权重越高，来源质量影响越大。", en: "High-quality sources usually add score; low-quality sources usually subtract. Higher weight increases source-quality influence." },
+    meaning: { zh: "信号来源仅用于候选入池和溯源展示，不再参与环境评分。", en: "Signal source is used only for candidate intake and traceability, not context scoring." },
+    effect: { zh: "该维度固定为 0 分；来源质量不会给 BUY/HOLD/SELL 加分或减分。", en: "This dimension is fixed at 0; source quality does not add or subtract from BUY/HOLD/SELL decisions." },
   },
   execution_feedback: {
     meaning: { zh: "结合近期执行成功率、滑点与偏差，衡量策略执行闭环质量。", en: "Uses recent fill success, slippage, and deviation to evaluate execution-loop quality." },
@@ -322,6 +322,23 @@ const PROFIT_PROTECTION_FIELDS: ProfitProtectionField[] = [
   { key: "hard_trailing_min_price_gain_pct", label: { zh: "硬止盈最小价差率(%)", en: "Hard trailing min price gain (%)" }, type: "number", path: ["hard_trailing_min_price_gain_pct"], step: 1 },
   { key: "hard_trailing_min_profit_amount", label: { zh: "硬止盈最小浮盈(元)", en: "Hard trailing min profit amount" }, type: "number", path: ["hard_trailing_min_profit_amount"], step: 100 },
   { key: "hard_trailing_min_profit_amount_pct", label: { zh: "硬止盈最小浮盈率(%)", en: "Hard trailing min profit amount (%)" }, type: "number", path: ["hard_trailing_min_profit_amount_pct"], step: 1 },
+];
+
+const STOCK_EXECUTION_FEEDBACK_FIELDS: ProfitProtectionField[] = [
+  { key: "enabled", label: { zh: "启用个股执行反馈", en: "Enable stock execution feedback" }, type: "checkbox", path: ["enabled"] },
+  { key: "lookback_days", label: { zh: "回看天数", en: "Lookback days" }, type: "number", path: ["lookback_days"], step: 1 },
+  { key: "stop_loss_count_threshold", label: { zh: "止损次数阈值", en: "Stop-loss count threshold" }, type: "number", path: ["stop_loss_count_threshold"], step: 1 },
+  { key: "stop_loss_cooldown_days", label: { zh: "止损冷却天数", en: "Stop-loss cooldown days" }, type: "number", path: ["stop_loss_cooldown_days"], step: 1 },
+  { key: "loss_pnl_pct_threshold", label: { zh: "累计亏损率阈值(%)", en: "Loss pct threshold (%)" }, type: "number", path: ["loss_pnl_pct_threshold"], step: 0.5 },
+  { key: "loss_amount_threshold", label: { zh: "累计亏损金额阈值", en: "Loss amount threshold" }, type: "number", path: ["loss_amount_threshold"], step: 100 },
+  { key: "loss_reentry_size_multiplier", label: { zh: "亏损再买仓位倍率", en: "Loss reentry size multiplier" }, type: "number", path: ["loss_reentry_size_multiplier"], step: 0.05 },
+  { key: "repeated_stop_size_multiplier", label: { zh: "连续止损例外仓位倍率", en: "Repeated stop exception multiplier" }, type: "number", path: ["repeated_stop_size_multiplier"], step: 0.05 },
+  { key: "require_trend_confirmation", label: { zh: "要求趋势确认", en: "Require trend confirmation" }, type: "checkbox", path: ["require_trend_confirmation"] },
+  { key: "trend_confirm_checkpoints", label: { zh: "连续站上MA20检查点", en: "MA20 confirmation checkpoints" }, type: "number", path: ["trend_confirm_checkpoints"], step: 1 },
+  { key: "require_ma20_slope", label: { zh: "要求MA20上行", en: "Require rising MA20" }, type: "checkbox", path: ["require_ma20_slope"] },
+  { key: "allow_ma_stack_confirmation", label: { zh: "允许均线多头确认", en: "Allow MA stack confirmation" }, type: "checkbox", path: ["allow_ma_stack_confirmation"] },
+  { key: "allow_ma20_retest_confirmation", label: { zh: "允许回踩不破MA20确认", en: "Allow MA20 retest confirmation" }, type: "checkbox", path: ["allow_ma20_retest_confirmation"] },
+  { key: "execution_feedback_score_cap", label: { zh: "执行反馈分上限", en: "Execution feedback score cap" }, type: "number", path: ["execution_feedback_score_cap"], step: 0.01 },
 ];
 
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -451,6 +468,38 @@ const ensureProfitProtectionDefaults = (root: Record<string, unknown>, path: str
   });
 };
 
+const ensureStockExecutionFeedbackDefaults = (root: Record<string, unknown>, path: string[]) => {
+  const container = ensureObjectPath(root, path);
+  const defaults: Record<string, number | boolean> = {
+    enabled: true,
+    lookback_days: 20,
+    stop_loss_count_threshold: 2,
+    stop_loss_cooldown_days: 12,
+    loss_pnl_pct_threshold: -5,
+    loss_amount_threshold: -1000,
+    loss_reentry_size_multiplier: 0.35,
+    repeated_stop_size_multiplier: 0.25,
+    require_trend_confirmation: true,
+    trend_confirm_checkpoints: 3,
+    require_ma20_slope: true,
+    allow_ma_stack_confirmation: true,
+    allow_ma20_retest_confirmation: true,
+    execution_feedback_score_cap: 0.25,
+  };
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!(key in container)) {
+      container[key] = value;
+      return;
+    }
+    if (typeof value === "boolean") {
+      container[key] = getBooleanAt(container, [key], value);
+      return;
+    }
+    const parsed = Number(container[key]);
+    container[key] = Number.isFinite(parsed) ? parsed : value;
+  });
+};
+
 const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Record<string, unknown> => {
   const next = deepClone(raw ?? {});
   ensureWeightMap(next, ["base", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
@@ -464,6 +513,7 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   dimensionGroups.source_execution = [...CONTEXT_GROUP_DIMENSIONS.source_execution];
   ensureDualTrackDefaults(next, ["base", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["base", "veto", "profit_protection"]);
+  ensureStockExecutionFeedbackDefaults(next, ["base", "context", "stock_execution_feedback_policy"]);
 
   ensureWeightMap(next, ["profiles", "candidate", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "candidate", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
@@ -471,6 +521,7 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   ensureWeightMap(next, ["profiles", "candidate", "context", "dimension_weights"], CONTEXT_DIMENSIONS, 1);
   ensureDualTrackDefaults(next, ["profiles", "candidate", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["profiles", "candidate", "veto", "profit_protection"]);
+  ensureStockExecutionFeedbackDefaults(next, ["profiles", "candidate", "context", "stock_execution_feedback_policy"]);
 
   ensureWeightMap(next, ["profiles", "position", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "position", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
@@ -478,17 +529,18 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   ensureWeightMap(next, ["profiles", "position", "context", "dimension_weights"], CONTEXT_DIMENSIONS, 1);
   ensureDualTrackDefaults(next, ["profiles", "position", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["profiles", "position", "veto", "profit_protection"]);
+  ensureStockExecutionFeedbackDefaults(next, ["profiles", "position", "context", "stock_execution_feedback_policy"]);
   return next;
 };
 
-const buildUnifiedEditableConfig = (raw: Record<string, unknown> | undefined): Record<string, unknown> => {
+export const buildUnifiedEditableConfig = (raw: Record<string, unknown> | undefined): Record<string, unknown> => {
   const next = normalizeStrategyConfig(raw);
   const candidateRoot = ensureObjectPath(next, ["profiles", "candidate"]);
   const baseRoot = ensureObjectPath(next, ["base"]);
   const positionRoot = ensureObjectPath(next, ["profiles", "position"]);
 
   baseRoot.technical = deepClone(candidateRoot.technical ?? baseRoot.technical ?? {});
-  baseRoot.context = deepClone(candidateRoot.context ?? baseRoot.context ?? {});
+  baseRoot.context = deepClone(baseRoot.context ?? candidateRoot.context ?? {});
   baseRoot.dual_track = deepClone(candidateRoot.dual_track ?? baseRoot.dual_track ?? {});
   baseRoot.veto = deepClone(baseRoot.veto ?? {});
 
@@ -1100,6 +1152,59 @@ export function StrategyConfigPage({ client }: StrategyConfigPageProps) {
                           setFocusedParam(field.key);
                         }}
                         onChange={(event) => updateNumberPath(fullPath, event.target.value, 4, field.key)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </WorkbenchCard>
+
+          <WorkbenchCard className="strategy-config-card">
+            <div className="strategy-config-card__header">
+              <div>
+                <h2 className="strategy-config-card__title">{locale === "zh-CN" ? "个股执行反馈" : "Stock execution feedback"}</h2>
+                <div className="strategy-config-card__subtitle">
+                  {locale === "zh-CN"
+                    ? "针对同一股票近期止损、累计亏损和假突破再买进行冷却或降仓；信号来源仅用于入池，不参与加分。"
+                    : "Cools down or down-sizes reentry after recent stop losses, realized losses, and weak breakouts. Signal source is metadata only."}
+                </div>
+              </div>
+            </div>
+            <div className="strategy-config-dual-grid">
+              {STOCK_EXECUTION_FEEDBACK_FIELDS.map((field) => {
+                const fullPath = ["base", "context", "stock_execution_feedback_policy", ...field.path];
+                return (
+                  <div key={`stock-feedback-${field.key}`} className="strategy-config-dual-item">
+                    <label>
+                      <span>{pickText(field.label, locale)}</span>
+                    </label>
+                    {field.type === "checkbox" ? (
+                      <label className="strategy-config-switch" aria-label={pickText(field.label, locale)}>
+                        <input
+                          type="checkbox"
+                          checked={getBooleanAt(editableConfig, fullPath, true)}
+                          onFocus={() => {
+                            setFocusedFormulaSection(4);
+                            setFocusedParam(`stock_execution_feedback.${field.key}`);
+                          }}
+                          onChange={(event) => updateBooleanPath(fullPath, event.target.checked, 4, `stock_execution_feedback.${field.key}`)}
+                        />
+                        <span className="strategy-config-switch__track">
+                          <span className="strategy-config-switch__thumb" />
+                        </span>
+                      </label>
+                    ) : (
+                      <input
+                        className="input"
+                        type="number"
+                        step={field.step ?? 0.01}
+                        value={getNumberAt(editableConfig, fullPath, 0)}
+                        onFocus={() => {
+                          setFocusedFormulaSection(4);
+                          setFocusedParam(`stock_execution_feedback.${field.key}`);
+                        }}
+                        onChange={(event) => updateNumberPath(fullPath, event.target.value, 4, `stock_execution_feedback.${field.key}`)}
                       />
                     )}
                   </div>

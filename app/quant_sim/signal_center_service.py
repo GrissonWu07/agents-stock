@@ -9,6 +9,10 @@ from typing import Any, Optional
 from app.notification_service import notification_service
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.quant_kernel.models import Decision
+from app.quant_sim.stock_execution_feedback import (
+    evaluate_stock_execution_feedback_gate,
+    normalize_stock_execution_feedback_policy,
+)
 from app.smart_monitor_db import SmartMonitorDB, DEFAULT_DB_FILE as SMART_MONITOR_DB_FILE
 
 
@@ -40,6 +44,7 @@ class SignalCenterService:
         payload = self._apply_position_constraints(candidate, payload)
         payload = self._apply_position_add_gate(candidate, payload)
         payload = self._apply_reentry_constraints(candidate, payload)
+        payload = self._apply_stock_execution_feedback(candidate, payload)
         payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
         status = "pending" if action in {"BUY", "SELL"} else "observed"
@@ -498,14 +503,101 @@ class SignalCenterService:
             return normalized
 
         original_size = self._safe_float(normalized.get("position_size_pct"), 0.0) or 0.0
-        adjusted_size = round(max(0.0, original_size * multiplier), 2)
-        normalized["position_size_pct"] = adjusted_size
         normalized["decision_type"] = normalized.get("decision_type") or "reentry_downgraded_buy"
         normalized["reasoning"] = (
             f"{base_reasoning} 再入场门控降仓：{'；'.join(reasons)}，"
-            f"仓位 {original_size:.2f}% -> {adjusted_size:.2f}% 。"
+            f"资金槽执行时将按 {multiplier:.2f} 倍缩放，信号仓位保持 {original_size:.2f}% 。"
         ).strip()
         return normalized
+
+    def _apply_stock_execution_feedback(self, candidate: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        action = str(normalized.get("action") or "HOLD").upper()
+        stock_code = str(candidate.get("stock_code") or "").strip()
+        if action != "BUY" or not stock_code:
+            return normalized
+        if self._current_position(stock_code):
+            return normalized
+
+        strategy_profile = normalized.get("strategy_profile")
+        if not isinstance(strategy_profile, dict):
+            strategy_profile = {}
+        policy = self._stock_execution_feedback_policy(strategy_profile)
+        if not bool(policy.get("enabled", True)):
+            return normalized
+
+        metrics = self._extract_reentry_market_metrics(candidate, normalized)
+        current_time = self._resolve_reentry_time(normalized, metrics)
+        summary = self.db.get_stock_execution_feedback_summary(
+            stock_code,
+            as_of=current_time,
+            lookback_days=int(policy.get("lookback_days") or 20),
+        )
+        market_snapshot = (
+            strategy_profile.get("market_snapshot")
+            if isinstance(strategy_profile.get("market_snapshot"), dict)
+            else {}
+        )
+        recent_checkpoints = market_snapshot.get("recent_checkpoints")
+        if isinstance(recent_checkpoints, list):
+            summary["recent_checkpoints"] = recent_checkpoints
+
+        gate = evaluate_stock_execution_feedback_gate(
+            action=action,
+            stock_code=stock_code,
+            policy=policy,
+            summary=summary,
+            market_snapshot=market_snapshot,
+            current_time=current_time,
+        )
+        if str(gate.get("status") or "passed") == "passed":
+            return normalized
+
+        strategy_profile = dict(strategy_profile)
+        strategy_profile["stock_execution_feedback_policy"] = policy
+        strategy_profile["stock_execution_feedback_gate"] = gate
+        thresholds = strategy_profile.get("effective_thresholds")
+        if not isinstance(thresholds, dict):
+            thresholds = {}
+        thresholds = dict(thresholds)
+        thresholds["stock_execution_feedback_policy"] = policy
+        strategy_profile["effective_thresholds"] = thresholds
+        market_snapshot = dict(market_snapshot)
+        market_snapshot["execution_feedback_score"] = gate.get("execution_feedback_score", 0.0)
+        strategy_profile["market_snapshot"] = market_snapshot
+        normalized["strategy_profile"] = strategy_profile
+
+        base_reasoning = str(normalized.get("reasoning") or "").strip()
+        reasons = "；".join(str(item) for item in gate.get("reasons") or [] if str(item))
+        if str(gate.get("status")) == "blocked":
+            normalized["action"] = "HOLD"
+            normalized["position_size_pct"] = 0.0
+            normalized["decision_type"] = "stock_execution_feedback_blocked"
+            normalized["confidence"] = round(self._clamp((self._safe_float(normalized.get("confidence"), 0.0) or 0.0) * 0.65, 0.0, 100.0))
+            normalized["reasoning"] = f"{base_reasoning} 个股执行反馈阻断：{reasons}，转为HOLD。".strip()
+            return normalized
+
+        original_size = self._safe_float(normalized.get("position_size_pct"), 0.0) or 0.0
+        multiplier = self._safe_float(gate.get("size_multiplier"), 1.0) or 1.0
+        normalized["decision_type"] = normalized.get("decision_type") or "stock_execution_feedback_downgraded_buy"
+        normalized["reasoning"] = (
+            f"{base_reasoning} 个股执行反馈降仓：{reasons}，"
+            f"资金槽执行时将按 {multiplier:.2f} 倍缩放，信号仓位保持 {original_size:.2f}% 。"
+        ).strip()
+        return normalized
+
+    def _stock_execution_feedback_policy(self, strategy_profile: dict[str, Any]) -> dict[str, Any]:
+        selected = strategy_profile.get("selected_strategy_profile") if isinstance(strategy_profile.get("selected_strategy_profile"), dict) else {}
+        profile_id = str(selected.get("id") or "").strip()
+        for candidate in (
+            strategy_profile.get("stock_execution_feedback_policy"),
+            (strategy_profile.get("effective_thresholds") or {}).get("stock_execution_feedback_policy")
+            if isinstance(strategy_profile.get("effective_thresholds"), dict)
+            else None,
+        ):
+            if isinstance(candidate, dict):
+                return normalize_stock_execution_feedback_policy(candidate, profile_id=profile_id)
+        return normalize_stock_execution_feedback_policy(None, profile_id=profile_id)
 
     def _last_profit_sell(self, stock_code: str) -> dict[str, Any] | None:
         for signal in self.db.get_signals(stock_code=stock_code, limit=20):

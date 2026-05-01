@@ -1,0 +1,245 @@
+from __future__ import annotations
+
+from app.quant_sim.db import QuantSimDB
+from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.signal_center_service import SignalCenterService
+from app.quant_sim.stock_execution_feedback import evaluate_stock_execution_feedback_gate
+
+
+def _policy(**overrides):
+    return {
+        "enabled": True,
+        "lookback_days": 20,
+        "stop_loss_count_threshold": 2,
+        "stop_loss_cooldown_days": 12,
+        "loss_pnl_pct_threshold": -5.0,
+        "loss_amount_threshold": -1000.0,
+        "loss_reentry_size_multiplier": 0.35,
+        "repeated_stop_size_multiplier": 0.25,
+        "require_trend_confirmation": True,
+        "trend_confirm_checkpoints": 2,
+        "require_ma20_slope": True,
+        "allow_ma_stack_confirmation": True,
+        "allow_ma20_retest_confirmation": True,
+        "execution_feedback_score_cap": 0.25,
+        **overrides,
+    }
+
+
+def _snapshot(**overrides):
+    return {
+        "current_price": 10.0,
+        "ma5": 9.8,
+        "ma10": 9.9,
+        "ma20": 10.1,
+        "ma20_slope": -0.01,
+        **overrides,
+    }
+
+
+def test_feedback_gate_blocks_repeated_stop_without_trend_confirmation():
+    gate = evaluate_stock_execution_feedback_gate(
+        action="BUY",
+        stock_code="300857",
+        policy=_policy(),
+        summary={
+            "stock_code": "300857",
+            "lookback_days": 20,
+            "recent_stop_loss_count": 2,
+            "recent_realized_pnl": -2500,
+            "recent_realized_pnl_pct": -12,
+        },
+        market_snapshot=_snapshot(),
+        current_time="2026-01-10 10:00:00",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["size_multiplier"] == 0
+    assert gate["trend_confirmed"] is False
+    assert gate["execution_feedback_score"] < 0
+
+
+def test_feedback_gate_downgrades_repeated_stop_when_trend_is_confirmed():
+    gate = evaluate_stock_execution_feedback_gate(
+        action="BUY",
+        stock_code="300857",
+        policy=_policy(),
+        summary={
+            "stock_code": "300857",
+            "lookback_days": 20,
+            "recent_stop_loss_count": 2,
+            "recent_realized_pnl": -300,
+            "recent_realized_pnl_pct": -1.5,
+        },
+        market_snapshot=_snapshot(current_price=12.0, ma5=11.5, ma10=11.0, ma20=10.5, ma20_slope=0.02),
+        current_time="2026-01-10 10:00:00",
+    )
+
+    assert gate["status"] == "downgraded"
+    assert gate["size_multiplier"] == 0.25
+    assert gate["trend_confirmed"] is True
+
+
+def test_feedback_gate_downgrades_recent_realized_loss():
+    gate = evaluate_stock_execution_feedback_gate(
+        action="BUY",
+        stock_code="300857",
+        policy=_policy(loss_reentry_size_multiplier=0.4),
+        summary={
+            "stock_code": "300857",
+            "lookback_days": 20,
+            "recent_stop_loss_count": 0,
+            "recent_realized_pnl": -1200,
+            "recent_realized_pnl_pct": -6,
+        },
+        market_snapshot=_snapshot(current_price=12.0, ma5=11.5, ma10=11.0, ma20=10.5, ma20_slope=0.02),
+        current_time="2026-01-10 10:00:00",
+    )
+
+    assert gate["status"] == "downgraded"
+    assert gate["size_multiplier"] == 0.4
+    assert gate["recent_loss_trade_count"] == 0
+
+
+def test_feedback_gate_uses_stop_loss_cooldown_days():
+    gate = evaluate_stock_execution_feedback_gate(
+        action="BUY",
+        stock_code="300857",
+        policy=_policy(stop_loss_cooldown_days=3),
+        summary={
+            "stock_code": "300857",
+            "lookback_days": 20,
+            "recent_stop_loss_count": 2,
+            "recent_realized_pnl": -300,
+            "recent_realized_pnl_pct": -1.5,
+            "last_stop_loss_at": "2026-01-01 10:00:00",
+        },
+        market_snapshot=_snapshot(),
+        current_time="2026-01-10 10:00:00",
+    )
+
+    assert gate["status"] == "passed"
+    assert gate["stop_loss_cooldown_active"] is False
+
+
+def _seed_stop_loss_round(portfolio: PortfolioService, signals: SignalCenterService, code: str, buy_time: str, sell_time: str) -> None:
+    candidate = {"stock_code": code, "stock_name": "协创数据", "source": "main_force"}
+    buy = signals.create_signal(candidate, {"action": "BUY", "confidence": 90, "position_size_pct": 50, "reasoning": "buy"}, notify=False)
+    portfolio.confirm_buy(buy["id"], price=100.0, quantity=100, note="seed", executed_at=buy_time)
+    sell = signals.create_signal(
+        candidate,
+        {
+            "action": "SELL",
+            "confidence": 90,
+            "position_size_pct": 100,
+            "reasoning": "stop",
+            "decision_type": "hard_stop_loss",
+            "strategy_profile": {
+                "explainability": {
+                    "fusion_breakdown": {
+                        "veto_id": "hard_stop_loss",
+                        "veto_trigger_type": "hard_stop_loss",
+                    }
+                }
+            },
+        },
+        notify=False,
+    )
+    portfolio.confirm_sell(sell["id"], price=90.0, quantity=100, note="止损", executed_at=sell_time)
+
+
+def test_signal_center_applies_live_stock_feedback_gate(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    portfolio = PortfolioService(db_file=db_file)
+    signals = SignalCenterService(db_file=db_file)
+    portfolio.configure_account(100000)
+    _seed_stop_loss_round(portfolio, signals, "300857", "2026-01-01 10:00:00", "2026-01-05 10:00:00")
+    _seed_stop_loss_round(portfolio, signals, "300857", "2026-01-06 10:00:00", "2026-01-07 10:00:00")
+
+    blocked = signals.create_signal(
+        {"stock_code": "300857", "stock_name": "协创数据", "source": "main_force"},
+        {
+            "action": "BUY",
+            "confidence": 88,
+            "position_size_pct": 50,
+            "reasoning": "retry",
+            "decision_time": "2026-01-08 10:00:00",
+            "strategy_profile": {
+                "stock_execution_feedback_policy": _policy(),
+                "market_snapshot": _snapshot(),
+            },
+        },
+        notify=False,
+    )
+
+    assert blocked["action"] == "HOLD"
+    assert blocked["position_size_pct"] == 0
+    assert blocked["strategy_profile"]["stock_execution_feedback_gate"]["status"] == "blocked"
+
+
+def test_signal_center_records_downgrade_without_pre_scaling_position_size(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    portfolio = PortfolioService(db_file=db_file)
+    signals = SignalCenterService(db_file=db_file)
+    portfolio.configure_account(100000)
+    _seed_stop_loss_round(portfolio, signals, "300857", "2026-01-01 10:00:00", "2026-01-05 10:00:00")
+
+    downgraded = signals.create_signal(
+        {"stock_code": "300857", "stock_name": "协创数据", "source": "main_force"},
+        {
+            "action": "BUY",
+            "confidence": 88,
+            "position_size_pct": 50,
+            "reasoning": "retry",
+            "decision_time": "2026-01-08 10:00:00",
+            "strategy_profile": {
+                "stock_execution_feedback_policy": _policy(loss_amount_threshold=-1000, loss_reentry_size_multiplier=0.5),
+                "market_snapshot": _snapshot(current_price=12.0, ma5=11.5, ma10=11.0, ma20=10.5, ma20_slope=0.02),
+            },
+        },
+        notify=False,
+    )
+
+    assert downgraded["action"] == "BUY"
+    assert downgraded["position_size_pct"] == 50
+    gate = downgraded["strategy_profile"]["stock_execution_feedback_gate"]
+    assert gate["status"] == "downgraded"
+    assert gate["size_multiplier"] == 0.5
+
+
+def test_replay_temp_db_feedback_is_isolated_from_live_db(tmp_path):
+    live_db = tmp_path / "live.db"
+    replay_db = tmp_path / "replay.db"
+    live_portfolio = PortfolioService(db_file=live_db)
+    live_signals = SignalCenterService(db_file=live_db)
+    replay_portfolio = PortfolioService(db_file=replay_db)
+    replay_signals = SignalCenterService(db_file=replay_db)
+    live_portfolio.configure_account(100000)
+    replay_portfolio.configure_account(100000)
+    _seed_stop_loss_round(live_portfolio, live_signals, "300857", "2026-01-01 10:00:00", "2026-01-05 10:00:00")
+    _seed_stop_loss_round(live_portfolio, live_signals, "300857", "2026-01-06 10:00:00", "2026-01-07 10:00:00")
+
+    live_summary = QuantSimDB(live_db).get_stock_execution_feedback_summary("300857", as_of="2026-01-08 10:00:00")
+    replay_summary = QuantSimDB(replay_db).get_stock_execution_feedback_summary("300857", as_of="2026-01-08 10:00:00")
+
+    assert live_summary["recent_stop_loss_count"] == 2
+    assert replay_summary["recent_stop_loss_count"] == 0
+
+    replay_signal = replay_signals.create_signal(
+        {"stock_code": "300857", "stock_name": "协创数据", "source": "main_force"},
+        {
+            "action": "BUY",
+            "confidence": 88,
+            "position_size_pct": 50,
+            "reasoning": "replay retry",
+            "decision_time": "2026-01-08 10:00:00",
+            "strategy_profile": {
+                "stock_execution_feedback_policy": _policy(),
+                "market_snapshot": _snapshot(),
+            },
+        },
+        notify=False,
+    )
+
+    assert replay_signal["action"] == "BUY"
+    assert "stock_execution_feedback_gate" not in replay_signal["strategy_profile"]

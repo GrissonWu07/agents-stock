@@ -161,7 +161,7 @@ def _seed_structured_signal_for_detail(context: gateway_api.UIApiContext) -> int
             "dimensions": [
                 {"id": "price_structure", "group": "market_structure", "score": 0.14, "track_contribution": 0.012252, "reason": "bull stack"},
                 {"id": "risk_balance", "group": "risk_account", "score": -0.08, "track_contribution": -0.034901, "reason": "risk high"},
-                {"id": "source_prior", "group": "source_execution", "score": 0.28, "track_contribution": 0.040959, "reason": "source prior"},
+                {"id": "source_prior", "group": "source_execution", "score": 0.0, "track_contribution": 0.0, "reason": "source metadata only"},
             ],
         },
         "fusion_breakdown": {

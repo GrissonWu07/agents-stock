@@ -12,6 +12,7 @@ from app.quant_sim.capital_slots import (
     calculate_buy_priority,
     calculate_slot_plan,
     calculate_slot_units,
+    gate_size_multiplier,
     normalize_capital_slot_config,
 )
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
@@ -276,7 +277,7 @@ class PortfolioService:
         )
 
     def _estimate_legacy_buy_quantity(self, signal: dict, price: float, summary: dict, commission_rate: float) -> int:
-        position_size_pct = self._resolve_buy_position_pct(signal)
+        position_size_pct = self._resolve_buy_position_pct(signal) * gate_size_multiplier(signal)
         if position_size_pct <= 0:
             return 0
         target_cash = min(

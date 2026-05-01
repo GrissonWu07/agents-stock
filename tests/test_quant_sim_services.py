@@ -132,6 +132,28 @@ def test_portfolio_service_confirm_buy_and_delay_signal(tmp_path):
     assert executed["status"] == "executed"
 
 
+def test_portfolio_legacy_sizing_applies_gate_multiplier_when_slots_disabled(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    portfolio_service = PortfolioService(db_file=db_file)
+    portfolio_service.db.update_scheduler_config(capital_slot_enabled=False, commission_rate=0.0)
+    signal = {
+        "action": "BUY",
+        "confidence": 90,
+        "position_size_pct": 50,
+        "strategy_profile": {
+            "reentry_gate": {
+                "status": "downgraded",
+                "size_multiplier": 0.5,
+            }
+        },
+    }
+
+    quantity, explain = portfolio_service._estimate_buy_quantity(signal, 10.0)
+
+    assert quantity == 2500
+    assert explain["mode"] == "legacy_position_pct"
+
+
 def test_signal_center_upserts_repeated_pending_signal_for_same_stock_and_action(tmp_path):
     candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
@@ -579,7 +601,7 @@ def test_signal_center_downgrades_short_profit_sell_reentry_size(tmp_path):
 
     gate = reentry["strategy_profile"]["reentry_gate"]
     assert reentry["action"] == "BUY"
-    assert reentry["position_size_pct"] == 25.0
+    assert reentry["position_size_pct"] == 50
     assert gate["status"] == "downgraded"
     assert gate["last_sell_trigger"] == "profit_tech_sell"
     assert gate["size_multiplier"] == 0.5
@@ -654,6 +676,6 @@ def test_signal_center_allows_hot_buy_with_reduced_size_when_trend_confirmed(tmp
 
     gate = hot["strategy_profile"]["reentry_gate"]
     assert hot["action"] == "BUY"
-    assert hot["position_size_pct"] == 25.0
+    assert hot["position_size_pct"] == 50
     assert gate["status"] == "downgraded"
     assert gate["size_multiplier"] == 0.5

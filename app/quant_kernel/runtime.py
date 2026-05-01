@@ -34,7 +34,7 @@ class MarketRegimeContextProvider:
         components = {
             "source_prior": {
                 "score": round(source_prior, 4),
-                "reason": f"来源策略先验 {', '.join(sources) if sources else 'default'}",
+                "reason": f"来源仅用于候选入池，不参与评分加分：{', '.join(sources) if sources else 'default'}",
             }
         }
         if not market_snapshot:
@@ -42,7 +42,7 @@ class MarketRegimeContextProvider:
                 "score": round(source_prior, 4),
                 "confidence": 0.45,
                 "components": components,
-                "reason": f"仅基于来源先验给出上下文评分 {source_prior:.2f}，等待更多环境数据。",
+                "reason": "缺少市场快照，来源不参与评分加分，等待更多环境数据。",
             }
 
         current_price = float(market_snapshot.get("current_price") or market_snapshot.get("latest_price") or 0)
@@ -127,8 +127,7 @@ class MarketRegimeContextProvider:
             -1.0,
             min(
                 1.0,
-                source_prior
-                + trend_component
+                trend_component
                 + structure_component
                 + momentum_component
                 + risk_component
@@ -150,21 +149,14 @@ class MarketRegimeContextProvider:
             "confidence": round(confidence, 4),
             "components": components,
             "reason": (
-                f"来源先验 {source_prior:.2f}，趋势 {trend_component:+.2f}，结构 {structure_component:+.2f}，"
+                f"来源不加分 {source_prior:.2f}，趋势 {trend_component:+.2f}，结构 {structure_component:+.2f}，"
                 f"动量 {momentum_component:+.2f}，流动性 {liquidity_component:+.2f}，时段 {session_component:+.2f}。"
             ),
         }
 
     def _calculate_source_prior(self, sources: list[str]) -> float:
-        config = self.config.source_context
-        weights = [
-            float(config.source_weights.get(source, config.default_weight))
-            for source in sources
-            if source
-        ]
-        if not weights:
-            return float(config.default_weight)
-        return round(sum(weights) / len(weights), 4)
+        del sources
+        return 0.0
 
 
 class KernelStrategyRuntime:
@@ -681,7 +673,7 @@ class KernelStrategyRuntime:
         )
         feedback_cap = max(0.0, float(feedback_policy.get("execution_feedback_score_cap") or 1.0))
         raw_feedback_score = float(snapshot.get("execution_feedback_score") or (context_components.get("execution_feedback") or {}).get("score") or 0.0)
-        source_prior_score = float((context_components.get("source_prior") or {}).get("score") or 0.1)
+        source_prior_score = 0.0
         account_posture_score = float(snapshot.get("account_posture_score") or (context_components.get("account_posture") or {}).get("score") or 0.0)
         stock_analysis_context = (
             snapshot.get("stock_analysis_context")
@@ -702,13 +694,10 @@ class KernelStrategyRuntime:
         ).strip()
 
         context: dict[str, dict[str, Any]] = {
-            "source_prior": self._score_lookup_dimension(
-                scorer=context_scorers.get("source_prior"),
-                key_value=source,
-                mapping_key="source_score_map",
-                default_score=source_prior_score,
-                reason=f"source={source}",
+            "source_prior": self._score_payload(
+                score=0.0,
                 available=True,
+                reason=f"source={source}; source is candidate metadata only and does not add score",
             ),
             "trend_regime": self._score_lookup_dimension(
                 scorer=context_scorers.get("trend_regime"),
@@ -1583,6 +1572,15 @@ class KernelStrategyRuntime:
                 "version_id": strategy_profile_binding.get("version_id"),
                 "version": strategy_profile_binding.get("version"),
             }
+            feedback_policy = self._extract_stock_execution_feedback_policy(
+                strategy_profile_binding,
+                profile_kind=profile_kind,
+            )
+            if feedback_policy:
+                profile["stock_execution_feedback_policy"] = feedback_policy
+                thresholds = dict(profile.get("effective_thresholds") or {})
+                thresholds["stock_execution_feedback_policy"] = feedback_policy
+                profile["effective_thresholds"] = thresholds
             dynamic_strategy = strategy_profile_binding.get("dynamic_strategy")
             if isinstance(dynamic_strategy, dict):
                 profile["dynamic_strategy"] = json.loads(json.dumps(dynamic_strategy, ensure_ascii=False))
@@ -1612,6 +1610,29 @@ class KernelStrategyRuntime:
                 json.dumps(stock_analysis_context, ensure_ascii=False, default=str)
             )
         return profile
+
+    @staticmethod
+    def _extract_stock_execution_feedback_policy(
+        strategy_profile_binding: dict[str, Any],
+        *,
+        profile_kind: str,
+    ) -> dict[str, Any] | None:
+        config = strategy_profile_binding.get("config")
+        if not isinstance(config, dict):
+            return None
+        merged: dict[str, Any] = {}
+        base = config.get("base") if isinstance(config.get("base"), dict) else {}
+        base_context = base.get("context") if isinstance(base.get("context"), dict) else {}
+        base_policy = base_context.get("stock_execution_feedback_policy")
+        if isinstance(base_policy, dict):
+            merged.update(base_policy)
+        profiles = config.get("profiles") if isinstance(config.get("profiles"), dict) else {}
+        profile = profiles.get(profile_kind) if isinstance(profiles.get(profile_kind), dict) else {}
+        profile_context = profile.get("context") if isinstance(profile.get("context"), dict) else {}
+        profile_policy = profile_context.get("stock_execution_feedback_policy")
+        if isinstance(profile_policy, dict):
+            merged.update(profile_policy)
+        return merged or None
 
     def _build_context_votes(self, contextual_score: ContextualScore) -> list[dict[str, Any]]:
         votes: list[dict[str, Any]] = []

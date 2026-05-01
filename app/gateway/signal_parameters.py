@@ -414,7 +414,7 @@ def _build_parameter_details(
             _item("技术信号", decision.get("techSignal"), "KernelStrategyRuntime._select_tech_action", "tech_score >= buy_threshold => BUY；<= sell_threshold => SELL；否则 HOLD。"),
             _item("环境信号", decision.get("contextSignal"), "KernelStrategyRuntime._select_context_signal", "context_score >= 0.3 => BUY；<= -0.3 => SELL；否则 HOLD。"),
             _item("技术分", decision.get("techScore"), "KernelStrategyRuntime._calculate_candidate_tech_votes / _calculate_position_tech_votes", f"技术投票分值求和后截断到 [-1,1]。当前投票和={tech_vote_sum:.4f}，截断后={tech_vote_clamped:.4f}。"),
-            _item("环境分", decision.get("contextScore"), "MarketRegimeContextProvider.score_context", f"来源先验+趋势+结构+动量+风险平衡+流动性+时段求和后截断到 [-1,1]。当前组件和={context_vote_sum:.4f}，截断后={context_vote_clamped:.4f}。"),
+            _item("环境分", decision.get("contextScore"), "MarketRegimeContextProvider.score_context", f"趋势+结构+动量+风险平衡+流动性+时段求和后截断到 [-1,1]；来源仅用于候选入池，不参与加分。当前组件和={context_vote_sum:.4f}，截断后={context_vote_clamped:.4f}。"),
             _item("置信度", decision.get("confidence"), "KernelStrategyRuntime._select_tech_confidence", "base_confidence + |tech_score|*tech_weight + max(context_score,0)*context_weight + 风格加成，之后夹在[min_confidence,max_confidence]。"),
             _item(
                 "仓位建议(%)",

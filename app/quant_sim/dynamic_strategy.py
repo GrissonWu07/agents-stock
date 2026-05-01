@@ -755,7 +755,7 @@ class DynamicStrategyController:
             self._adjust_weight_and_record(group_weights, "source_execution", directional_signal, strength, coefficient=0.10, path=f"{profile_path}.context.group_weights.source_execution", overlay_regime=overlay_regime, adjustments=adjustments, reason="调整来源执行组权重")
         dimension_weights = context.get("dimension_weights")
         if isinstance(dimension_weights, dict):
-            for key in ("trend_regime", "price_structure", "momentum", "source_prior"):
+            for key in ("trend_regime", "price_structure", "momentum"):
                 self._adjust_weight_and_record(dimension_weights, key, directional_signal, strength, coefficient=0.18, path=f"{profile_path}.context.dimension_weights.{key}", overlay_regime=overlay_regime, adjustments=adjustments, reason="调整环境趋势/来源维度权重")
             for key in ("risk_balance", "account_posture"):
                 self._adjust_weight_and_record(dimension_weights, key, directional_signal, strength, coefficient=-0.32, path=f"{profile_path}.context.dimension_weights.{key}", overlay_regime=overlay_regime, adjustments=adjustments, reason="调整环境风险维度权重")
