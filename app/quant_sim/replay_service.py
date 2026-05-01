@@ -863,8 +863,6 @@ class QuantSimReplayService:
         positions_checked = 0
         checkpoint_signals: list[dict] = []
         checkpoint_text = self._format_datetime(checkpoint)
-        total_candidates = len(candidates)
-        total_positions = len(positions)
         base_profile_id = (
             str(strategy_profile_binding.get("profile_id") or "").strip()
             if isinstance(strategy_profile_binding, dict)
@@ -884,7 +882,7 @@ class QuantSimReplayService:
                 ai_dynamic_lookback=ai_dynamic_lookback,
             )
 
-        for candidate_index, candidate in enumerate(candidates, start=1):
+        for candidate in candidates:
             if run_id is not None and self.db.is_sim_run_cancel_requested(run_id):
                 return {
                     "cancelled": True,
@@ -898,11 +896,6 @@ class QuantSimReplayService:
                     "signals": checkpoint_signals,
                 }
 
-            self._update_run_step_status(
-                run_id=run_id,
-                checkpoint_text=checkpoint_text,
-                message=f"检查点 {checkpoint_text}：分析候选股 {candidate_index}/{total_candidates} {candidate['stock_code']}",
-            )
             candidates_scanned += 1
             snapshot = self.snapshot_provider.get_snapshot(
                 candidate["stock_code"],
@@ -938,7 +931,7 @@ class QuantSimReplayService:
             checkpoint_signals.append(signal)
             signals_created += 1
 
-        for position_index, position in enumerate(positions, start=1):
+        for position in positions:
             candidate = engine.candidate_pool.db.get_candidate(position["stock_code"]) or {
                 "stock_code": position["stock_code"],
                 "stock_name": position.get("stock_name"),
@@ -958,11 +951,6 @@ class QuantSimReplayService:
                     "signals": checkpoint_signals,
                 }
 
-            self._update_run_step_status(
-                run_id=run_id,
-                checkpoint_text=checkpoint_text,
-                message=f"检查点 {checkpoint_text}：分析持仓 {position_index}/{total_positions} {position['stock_code']}",
-            )
             positions_checked += 1
             snapshot = self.snapshot_provider.get_snapshot(
                 position["stock_code"],
@@ -1001,18 +989,6 @@ class QuantSimReplayService:
             signals_created += 1
 
         pending_signals = signal_service.list_pending_signals()
-        total_pending = len(pending_signals)
-        for signal_index, signal in enumerate(pending_signals, start=1):
-            if run_id is not None and self.db.is_sim_run_cancel_requested(run_id):
-                break
-            self._update_run_step_status(
-                run_id=run_id,
-                checkpoint_text=checkpoint_text,
-                message=(
-                    f"检查点 {checkpoint_text}：自动执行信号 {signal_index}/{total_pending} "
-                    f"{str(signal.get('action') or '').upper()} {signal.get('stock_code')}"
-                ),
-            )
         auto_executed = 0
         try:
             auto_executed = portfolio.auto_execute_pending_signals(
@@ -1028,11 +1004,6 @@ class QuantSimReplayService:
                     level="error",
                 )
 
-        self._update_run_step_status(
-            run_id=run_id,
-            checkpoint_text=checkpoint_text,
-            message=f"检查点 {checkpoint_text}：写入账户快照",
-        )
         portfolio.db.add_account_snapshot(run_reason=f"historical_range@{self._format_datetime(checkpoint)}")
         account_summary = portfolio.get_account_summary()
         positions = portfolio.list_positions()
@@ -1051,22 +1022,6 @@ class QuantSimReplayService:
             "slot_summary": self._collect_slot_summary(portfolio.db),
             "signals": checkpoint_signals,
         }
-
-    def _update_run_step_status(
-        self,
-        *,
-        run_id: int | None,
-        checkpoint_text: str,
-        message: str,
-    ) -> None:
-        if run_id is None:
-            return
-        self.db.update_sim_run_progress(
-            run_id,
-            status="running",
-            latest_checkpoint_at=checkpoint_text,
-            status_message=message,
-        )
 
     def _apply_due_corporate_actions(
         self,

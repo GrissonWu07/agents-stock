@@ -749,7 +749,7 @@ def test_run_checkpoint_logs_signal_execution_error_and_continues(tmp_path, monk
     assert any("sell quantity exceeds sellable quantity" in event["message"] for event in events)
 
 
-def test_run_checkpoint_updates_run_status_message_for_substeps(tmp_path):
+def test_run_checkpoint_does_not_update_run_status_message_for_internal_substeps(tmp_path):
     db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)
     candidate_service.add_candidate(
@@ -790,7 +790,7 @@ def test_run_checkpoint_updates_run_status_message_for_substeps(tmp_path):
     run = replay_service.db.get_sim_run(run_id)
 
     assert summary["cancelled"] is False
-    assert "写入账户快照" in str(run["status_message"])
+    assert run["status_message"] == "执行中"
 
 
 def test_run_checkpoint_excludes_held_codes_from_candidate_scan(tmp_path):

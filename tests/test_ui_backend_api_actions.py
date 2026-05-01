@@ -1648,7 +1648,7 @@ def test_his_replay_progress_endpoint_returns_lightweight_task_progress(tmp_path
         progress_current=1497,
         progress_total=1992,
         latest_checkpoint_at="2026-01-06 10:30:00",
-        status_message="检查点 2026-01-06 10:30:00：分析候选股 1/9 002463",
+        status_message="正在执行第 1498/1992 个检查点：2026-01-06 10:30:00",
     )
 
     client = TestClient(create_app(context=context))
@@ -1660,7 +1660,7 @@ def test_his_replay_progress_endpoint_returns_lightweight_task_progress(tmp_path
     task = payload["tasks"][0]
     assert task["runId"] == str(run_id)
     assert task["status"] == "running"
-    assert task["stage"] == "检查点 2026-01-06 10:30:00：分析候选股 1/9 002463"
+    assert task["stage"] == "正在执行第 1498/1992 个检查点：2026-01-06 10:30:00"
     assert task["progressCurrent"] == 1497
     assert task["progressTotal"] == 1992
     assert task["progress"] == 75
