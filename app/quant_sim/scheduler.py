@@ -62,6 +62,17 @@ class QuantSimScheduler:
 
     def run_once(self, run_reason: str = "scheduled_scan") -> dict[str, int | float]:
         config = self.db.get_scheduler_config()
+        if not self._is_trading_time(str(config["market"])):
+            return {
+                "skipped": True,
+                "skip_reason": "outside_trading_time",
+                "candidates_scanned": 0,
+                "signals_created": 0,
+                "positions_checked": 0,
+                "auto_executed": 0,
+                "snapshot_id": 0,
+                "total_equity": self.portfolio.get_account_summary()["total_equity"],
+            }
         analysis_timeframe = str(config["analysis_timeframe"])
         strategy_mode = str(config["strategy_mode"])
         configured_profile_id = str(config.get("strategy_profile_id") or "").strip()
@@ -256,7 +267,7 @@ class QuantSimScheduler:
         config = self.db.get_scheduler_config()
         if not self._has_reached_start_date(str(config["start_date"])):
             return
-        if config["trading_hours_only"] and not self._is_trading_time(config["market"]):
+        if not self._is_trading_time(str(config["market"])):
             return
         self.run_once(run_reason="scheduled_scan")
 

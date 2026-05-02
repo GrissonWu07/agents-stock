@@ -67,6 +67,26 @@ def test_quant_db_enables_wal_for_file_database(tmp_path):
     assert journal_mode.lower() == "wal"
 
 
+def test_add_signal_sets_created_and_updated_at_with_same_local_clock(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    signal_id = db.add_signal(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "action": "HOLD",
+            "confidence": 70,
+            "reasoning": "观察",
+            "position_size_pct": 0,
+            "status": "observed",
+        }
+    )
+    signal = db.get_signals(limit=1)[0]
+
+    assert signal["id"] == signal_id
+    assert signal["created_at"] == signal["updated_at"]
+
+
 def test_quant_db_reads_during_uncommitted_writer_in_wal_mode(tmp_path):
     db_file = tmp_path / "app.quant_sim.db"
     db = QuantSimDB(db_file)

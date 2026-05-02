@@ -76,10 +76,13 @@ class StockPolicyAdapter:
         strategy_profile_binding: Optional[dict[str, Any]] = None,
     ) -> Decision:
         preferred_name = candidate.get("stock_name") or candidate.get("name")
+        live_fetched = market_snapshot is None
         snapshot = market_snapshot or self.market_data_provider.get_comprehensive_data(
             candidate["stock_code"],
             preferred_name=preferred_name,
         )
+        if live_fetched:
+            snapshot = self._mark_live_snapshot(snapshot)
         snapshot = self._merge_account_context(snapshot, candidate)
         return self._call_with_signature_fallback(
             self.runtime.evaluate_candidate,
@@ -103,10 +106,13 @@ class StockPolicyAdapter:
         strategy_profile_binding: Optional[dict[str, Any]] = None,
     ) -> Decision:
         preferred_name = position.get("stock_name") or candidate.get("stock_name") or candidate.get("name")
+        live_fetched = market_snapshot is None
         snapshot = market_snapshot or self.market_data_provider.get_comprehensive_data(
             position["stock_code"],
             preferred_name=preferred_name,
         )
+        if live_fetched:
+            snapshot = self._mark_live_snapshot(snapshot)
         snapshot = self._merge_account_context(snapshot, position, candidate)
         return self._call_with_signature_fallback(
             self.runtime.evaluate_position,
@@ -144,3 +150,13 @@ class StockPolicyAdapter:
         if stock_analysis_context is not None and "stock_analysis_context" not in merged:
             merged["stock_analysis_context"] = stock_analysis_context
         return merged
+
+    @staticmethod
+    def _mark_live_snapshot(snapshot: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        if snapshot is None:
+            return None
+        marked = dict(snapshot)
+        marked.setdefault("_quant_market_data_source", "live_comprehensive")
+        marked.setdefault("_quant_market_data_mode", "live")
+        marked.setdefault("_quant_market_data_fetched_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
+        return marked

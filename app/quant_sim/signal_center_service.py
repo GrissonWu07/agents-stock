@@ -47,6 +47,8 @@ class SignalCenterService:
         payload = self._apply_stock_execution_feedback(candidate, payload)
         payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
+        if action == "HOLD":
+            payload["position_size_pct"] = 0
         status = "pending" if action in {"BUY", "SELL"} else "observed"
         existing_pending_ids = {
             int(item.get("id"))

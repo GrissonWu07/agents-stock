@@ -941,6 +941,7 @@ class QuantSimDB:
         cursor = conn.cursor()
         status = signal.get("status", "observed")
         action = str(signal["action"]).upper()
+        now_text = self._now()
 
         if status == "pending":
             cursor.execute(
@@ -950,7 +951,7 @@ class QuantSimDB:
                     updated_at = ?
                 WHERE stock_code = ? AND status = 'pending' AND action <> ?
                 """,
-                (self._now(), signal["stock_code"], action),
+                (now_text, signal["stock_code"], action),
             )
             cursor.execute(
                 """
@@ -985,7 +986,7 @@ class QuantSimDB:
                         signal.get("tech_score", 0),
                         signal.get("context_score", 0),
                         self._dumps_metadata(signal.get("strategy_profile")),
-                        self._now(),
+                        now_text,
                         signal_id,
                     ),
                 )
@@ -999,9 +1000,9 @@ class QuantSimDB:
             (
                 candidate_id, stock_code, stock_name, action, confidence, reasoning,
                 position_size_pct, stop_loss_pct, take_profit_pct, decision_type,
-                tech_score, context_score, strategy_profile_json, status, updated_at
+                tech_score, context_score, strategy_profile_json, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 signal.get("candidate_id"),
@@ -1018,7 +1019,8 @@ class QuantSimDB:
                 signal.get("context_score", 0),
                 self._dumps_metadata(signal.get("strategy_profile")),
                 status,
-                self._now(),
+                now_text,
+                now_text,
             ),
         )
         signal_id = int(cursor.lastrowid)

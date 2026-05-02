@@ -223,6 +223,27 @@ def test_signal_center_does_not_emit_sell_signal_without_open_position(tmp_path)
     assert "无持仓" in signal["reasoning"]
 
 
+def test_signal_center_zeros_hold_position_size(tmp_path):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
+
+    candidate_service.add_manual_candidate("601918", "新集能源", "main_force")
+    candidate = candidate_service.list_candidates()[0]
+
+    signal = signal_service.create_signal(
+        candidate,
+        {
+            "action": "HOLD",
+            "confidence": 90,
+            "reasoning": "观察",
+            "position_size_pct": 100,
+        },
+    )
+
+    assert signal["action"] == "HOLD"
+    assert signal["position_size_pct"] == 0
+
+
 def test_signal_center_sanitizes_legacy_pending_sell_without_open_position(tmp_path):
     candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")

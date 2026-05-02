@@ -14,6 +14,7 @@ def test_scheduler_run_once_scans_candidates_and_creates_signals(tmp_path, monke
     candidate_service.add_manual_candidate("000001", "平安银行", "profit_growth")
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     def fake_analyze(candidate, market_snapshot=None):
         if candidate["stock_code"] == "600000":
@@ -39,6 +40,22 @@ def test_scheduler_run_once_scans_candidates_and_creates_signals(tmp_path, monke
     assert result["positions_checked"] == 0
 
 
+def test_scheduler_run_once_skips_when_market_is_closed(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "main_force")
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: False)
+
+    result = scheduler.run_once()
+
+    assert result["skipped"] is True
+    assert result["skip_reason"] == "outside_trading_time"
+    assert result["candidates_scanned"] == 0
+    assert result["signals_created"] == 0
+    assert scheduler.engine.candidate_pool.db.get_signals(limit=10) == []
+
+
 def test_scheduler_tracks_positions_and_generates_followup_signals(tmp_path, monkeypatch):
     candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
     signal_service = SignalCenterService(db_file=tmp_path / "app.quant_sim.db")
@@ -58,6 +75,7 @@ def test_scheduler_tracks_positions_and_generates_followup_signals(tmp_path, mon
     )
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -116,6 +134,7 @@ def test_scheduler_run_once_records_account_snapshot(tmp_path, monkeypatch):
     candidate_service.add_manual_candidate("600000", "浦发银行", "main_force")
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
     monkeypatch.setattr(
         scheduler.engine.adapter,
         "analyze_candidate",
@@ -141,6 +160,7 @@ def test_scheduler_run_once_uses_configured_analysis_timeframe(tmp_path, monkeyp
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, analysis_timeframe="1d+30m")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
     captured = {}
 
     def fake_analyze(candidate, market_snapshot=None, analysis_timeframe="1d"):
@@ -178,9 +198,30 @@ def test_scheduled_cycle_skips_before_start_date(tmp_path, monkeypatch):
     assert called["count"] == 0
 
 
-def test_scheduler_run_once_passes_strategy_mode_to_engine(tmp_path):
+def test_scheduled_cycle_always_skips_outside_trading_time(tmp_path, monkeypatch):
+    candidate_service = CandidatePoolService(db_file=tmp_path / "app.quant_sim.db")
+    candidate_service.add_manual_candidate("600000", "浦发银行", "main_force")
+
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    scheduler.update_config(enabled=True, trading_hours_only=False, start_date="2000-01-01")
+    called = {"count": 0}
+
+    def fail_if_called(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("scheduled live simulation must not run outside trading time")
+
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: False)
+    monkeypatch.setattr(scheduler, "run_once", fail_if_called)
+
+    scheduler._run_scheduled_cycle()
+
+    assert called["count"] == 0
+
+
+def test_scheduler_run_once_passes_strategy_mode_to_engine(tmp_path, monkeypatch):
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.db.update_scheduler_config(strategy_mode="neutral")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     scheduler.engine.analyze_active_candidates = Mock(return_value=[])
     scheduler.engine.analyze_positions = Mock(return_value=[])
