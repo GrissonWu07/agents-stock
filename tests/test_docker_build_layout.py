@@ -36,6 +36,7 @@ def test_docker_compose_has_frontend_and_backend_services():
     assert "frontend:" in compose
     assert "backend:" in compose
     assert "build/Dockerfile.ui" in compose
+    assert "APP_REVISION: ${APP_REVISION:-}" in compose
     assert "8080:80" in compose
     assert "8501:8501" in compose
     assert "8503:8503" not in compose
@@ -58,8 +59,17 @@ def test_backend_dockerfiles_point_to_api_server():
     for text in [dockerfile, cn_dockerfile]:
         assert "app/gateway.py" in text
         assert "/api/health" in text
+        assert "ARG APP_REVISION" in text
+        assert "version.json" in text
         assert "_stcore/health" not in text
         assert "streamlit run app.py" not in text.lower()
+
+
+def test_docker_publish_passes_git_revision_into_backend_image():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "docker-publish.yml").read_text(encoding="utf-8")
+    assert "--build-arg APP_REVISION=${SHORT_SHA}" in workflow
+    assert "--build-arg APP_VERSION=sha-${SHORT_SHA}" in workflow
+    assert "--build-arg APP_VERSION_TAG=${GITHUB_REF_NAME}" in workflow
 
 
 def test_backend_api_shim_exposes_health_endpoint():

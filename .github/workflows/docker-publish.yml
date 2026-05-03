@@ -89,7 +89,12 @@ jobs:
           for tag in "${TAGS[@]}"; do
             BUILD_TAG_ARGS="$BUILD_TAG_ARGS -t $tag"
           done
-          docker --config "$DOCKER_CONFIG" build -f build/Dockerfile $BUILD_TAG_ARGS .
+          docker --config "$DOCKER_CONFIG" build \
+            --build-arg APP_VERSION=sha-${SHORT_SHA} \
+            --build-arg APP_VERSION_DISPLAY=sha-${SHORT_SHA} \
+            --build-arg APP_VERSION_TAG=${GITHUB_REF_NAME} \
+            --build-arg APP_REVISION=${SHORT_SHA} \
+            -f build/Dockerfile $BUILD_TAG_ARGS .
           for tag in "${TAGS[@]}"; do
             retry_push "$tag"
           done

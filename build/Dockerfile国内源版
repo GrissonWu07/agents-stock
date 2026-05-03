@@ -42,6 +42,18 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/ &&
 # 复制项目文件
 COPY . .
 
+# 写入镜像版本信息。Docker 构建上下文会排除 .git，因此 CI/部署脚本必须通过
+# build args 注入当前 git revision；未注入时保留源码中的 version.json 兜底。
+ARG APP_VERSION=
+ARG APP_VERSION_DISPLAY=
+ARG APP_VERSION_TAG=
+ARG APP_REVISION=
+RUN APP_VERSION="$APP_VERSION" \
+    APP_VERSION_DISPLAY="${APP_VERSION_DISPLAY:-$APP_VERSION}" \
+    APP_VERSION_TAG="$APP_VERSION_TAG" \
+    APP_REVISION="$APP_REVISION" \
+    python -m app.version_info --write /app/version.json
+
 # 创建必要的目录
 RUN mkdir -p /app/data/local_sources && chmod -R 777 /app/data
 

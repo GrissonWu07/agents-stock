@@ -5,6 +5,11 @@ services:
     build:
       context: ..
       dockerfile: build/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-}
+        APP_VERSION_DISPLAY: ${APP_VERSION_DISPLAY:-}
+        APP_VERSION_TAG: ${APP_VERSION_TAG:-}
+        APP_REVISION: ${APP_REVISION:-}
     container_name: xuanwustock-service
     ports:
       - "8501:8501"
