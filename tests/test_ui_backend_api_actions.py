@@ -1509,6 +1509,45 @@ def test_live_sim_snapshot_does_not_sync_capital_slots_on_get(tmp_path, monkeypa
     assert "capitalSlots" in response.json()
 
 
+def test_live_sim_reset_clears_signals_and_capital_pool_snapshot(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.quant_db()
+    candidate_id = db.add_candidate(
+        {
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "source": "manual",
+            "latest_price": 10.0,
+            "status": "active",
+        }
+    )
+    db.add_signal(
+        {
+            "candidate_id": candidate_id,
+            "stock_code": "600000",
+            "stock_name": "浦发银行",
+            "action": "BUY",
+            "confidence": 80,
+            "reasoning": "重置前信号",
+            "position_size_pct": 20,
+            "status": "pending",
+        }
+    )
+    assert db.get_capital_slots(sync=True)
+
+    response = TestClient(create_app(context=context)).post("/api/v1/quant/live-sim/actions/reset", json={"initialCash": 20000})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert db.get_signals(limit=10) == []
+    assert db.get_capital_slots(sync=False) == []
+    assert payload["pendingSignals"] == []
+    assert payload["capitalSlots"]["rows"] == []
+    assert payload["capitalPool"]["slots"] == []
+    assert payload["capitalPool"]["pool"]["slotCount"] == 0
+    assert payload["capitalPool"]["pool"]["poolReady"] is False
+
+
 def test_live_sim_snapshot_includes_market_time_context(tmp_path):
     context = _make_context(tmp_path)
 

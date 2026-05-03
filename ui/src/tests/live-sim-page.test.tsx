@@ -176,6 +176,68 @@ function renderLiveSimPage(client: ApiClient) {
 }
 
 describe("LiveSimPage", () => {
+  it("clears local signal, trade, and capital pool views after reset", async () => {
+    const resetSnapshot = {
+      ...snapshot,
+      updatedAt: snapshot.updatedAt,
+      capitalPool: {
+        ...snapshot.capitalPool,
+        pool: {
+          ...snapshot.capitalPool.pool,
+          slotCount: 0,
+          slotBudget: "0.00",
+          occupiedCash: "0.00",
+          availableCash: "0.00",
+          poolReady: false,
+        },
+        slots: [],
+        selectedSlotIndex: null,
+      },
+    };
+    const client = {
+      getPageSnapshot: vi.fn().mockResolvedValue(snapshot),
+      runPageAction: vi.fn().mockResolvedValue(resetSnapshot),
+    } as unknown as ApiClient;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({
+            table: String(url).includes("/trades")
+              ? {
+                  columns: ["时间", "代码", "动作", "执行明细"],
+                  rows: [{ id: "trade-1", cells: ["2026-04-23 23:25:00", "600519", "BUY", "占用 Slot 01"], code: "600519", name: "贵州茅台" }],
+                  emptyLabel: "暂无交易记录",
+                }
+              : {
+                  columns: ["信号ID", "时间", "代码", "动作", "状态"],
+                  rows: [{ id: "9001", cells: ["#9001", "2026-04-23 23:20:00", "600000 浦发银行", "BUY", "已执行"], code: "600000", name: "浦发银行" }],
+                  emptyLabel: "暂无信号",
+                },
+          }),
+        }),
+      ),
+    );
+
+    renderLiveSimPage(client);
+
+    expect(await screen.findByRole("link", { name: "#9001" })).toBeInTheDocument();
+    expect(await screen.findByText("占用 Slot 01")).toBeInTheDocument();
+    expect(screen.getAllByText("Slot 01").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "重置" }));
+
+    await waitFor(() => {
+      expect(client.runPageAction).toHaveBeenCalledWith("live-sim", "reset", expect.objectContaining({ initialCash: 120000 }));
+    });
+    expect(screen.queryByRole("link", { name: "#9001" })).not.toBeInTheDocument();
+    expect(screen.queryByText("占用 Slot 01")).not.toBeInTheDocument();
+    expect(screen.queryByText("Slot 01")).not.toBeInTheDocument();
+    expect(screen.getByText("资金池未形成slot")).toBeInTheDocument();
+  });
+
   it("hides strategy from the live summary metric and signal list", async () => {
     const client = {
       getPageSnapshot: vi.fn().mockResolvedValue(snapshot),

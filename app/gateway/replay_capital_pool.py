@@ -336,8 +336,13 @@ def build_live_sim_capital_pool(db: QuantSimDB, *, sync_slots: bool = True) -> d
     open_lots = _open_lots_from_live_positions(db, positions)
     groups = _build_slot_lot_groups(open_lots, positions_by_code)
     max_group_slot = max((slot_index for slot_index, _ in groups.keys()), default=0)
-    slot_count = max(len(slot_rows), _safe_int(plan.get("slot_count")), max_group_slot)
-    slot_budget = _float((slot_rows[0] if slot_rows else {}).get("budget_cash"), _float(plan.get("slot_budget"), 0.0)) or 0.0
+    has_persisted_pool = bool(slot_rows or open_lots or positions)
+    slot_count = max(len(slot_rows), _safe_int(plan.get("slot_count")), max_group_slot) if has_persisted_pool else 0
+    slot_budget = (
+        _float((slot_rows[0] if slot_rows else {}).get("budget_cash"), _float(plan.get("slot_budget"), 0.0)) or 0.0
+        if has_persisted_pool
+        else 0.0
+    )
 
     lots_by_slot: dict[int, list[dict[str, Any]]] = {}
     fallback_occupied_by_slot: dict[int, float] = {}
@@ -397,7 +402,7 @@ def build_live_sim_capital_pool(db: QuantSimDB, *, sync_slots: bool = True) -> d
             "availableCash": _num(sum(_float(slot.get("availableCash"), 0.0) or 0.0 for slot in slots)),
             "occupiedCash": _num(sum(_float(slot.get("occupiedCash"), 0.0) or 0.0 for slot in slots)),
             "settlingCash": _num(sum(_float(slot.get("settlingCash"), 0.0) or 0.0 for slot in slots)),
-            "poolReady": bool(plan.get("pool_ready") or slot_count > 0),
+            "poolReady": bool(has_persisted_pool and (plan.get("pool_ready") or slot_count > 0)),
         },
         "slots": slots,
         "selectedSlotIndex": selected_slot.get("index") if selected_slot else None,

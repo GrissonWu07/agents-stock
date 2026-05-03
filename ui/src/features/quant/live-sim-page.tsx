@@ -160,6 +160,24 @@ function mergeTradeRemarksIntoDetails(table: TableSection): TableSection {
   };
 }
 
+function emptyLiveSignalTable(message = "暂无信号"): TableSection {
+  return {
+    columns: ["信号ID", "时间", "代码", "动作", "状态"],
+    rows: [],
+    emptyLabel: "暂无信号",
+    emptyMessage: message,
+  };
+}
+
+function emptyLiveTradeTable(message = "暂无交易记录"): TableSection {
+  return {
+    columns: ["时间", "代码", "动作", "数量", "价格", "备注"],
+    rows: [],
+    emptyLabel: "暂无交易记录",
+    emptyMessage: message,
+  };
+}
+
 type LiveSimPageProps = {
   client?: ApiClient;
 };
@@ -184,11 +202,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
   const [capitalHighPriceThreshold, setCapitalHighPriceThreshold] = useState(100);
   const [capitalHighPriceMaxSlotUnits, setCapitalHighPriceMaxSlotUnits] = useState(2);
   const [actionPending, setActionPending] = useState<"save" | "reset" | "start" | "stop" | null>(null);
-  const [signalTable, setSignalTable] = useState<TableSection>({
-    columns: ["信号ID", "时间", "股票代码", "股票名称", "动作", "执行状态"],
-    rows: [],
-    emptyLabel: "暂无信号",
-  });
+  const [signalTable, setSignalTable] = useState<TableSection>(emptyLiveSignalTable());
   const [signalLoading, setSignalLoading] = useState(false);
   const [signalStockFilter, setSignalStockFilter] = useState("");
   const [signalActionFilter, setSignalActionFilter] = useState("TRADE");
@@ -248,12 +262,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
         }
       } catch {
         if (mounted) {
-          setSignalTable({
-            columns: ["信号ID", "时间", "代码", "动作", "状态"],
-            rows: [],
-            emptyLabel: "暂无信号",
-            emptyMessage: "信号加载失败，请稍后重试。",
-          });
+          setSignalTable(emptyLiveSignalTable("信号加载失败，请稍后重试。"));
         }
       } finally {
         if (mounted) {
@@ -294,12 +303,7 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
         }
       } catch {
         if (mounted) {
-          setTradeTable({
-            columns: ["时间", "代码", "动作", "数量", "价格", "备注"],
-            rows: [],
-            emptyLabel: "暂无交易记录",
-            emptyMessage: "成交记录加载失败，请稍后重试。",
-          });
+          setTradeTable(emptyLiveTradeTable("成交记录加载失败，请稍后重试。"));
         }
       } finally {
         if (mounted) {
@@ -712,6 +716,10 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
                   setActionPending("reset");
                   try {
                     await resource.runAction("reset", { initialCash });
+                    setSignalTable(emptyLiveSignalTable());
+                    setTradeTable(emptyLiveTradeTable());
+                    setSignalPage(1);
+                    setTradePage(1);
                   } finally {
                     setActionPending(null);
                   }
