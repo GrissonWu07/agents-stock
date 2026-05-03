@@ -793,6 +793,39 @@ def test_run_checkpoint_does_not_update_run_status_message_for_internal_substeps
     assert run["status_message"] == "执行中"
 
 
+def test_run_checkpoint_persists_trade_execution_time_as_utc_for_market_checkpoint(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    candidate_service = CandidatePoolService(db_file=db_file)
+    candidate_service.add_candidate(
+        stock_code="300390",
+        stock_name="天华新能",
+        source="main_force",
+        latest_price=10.0,
+        notes="回放UTC测试",
+    )
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=FakeSnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+    engine = QuantSimEngine(db_file=db_file, adapter=replay_service.adapter)
+    portfolio = PortfolioService(db_file=db_file)
+    signal_service = SignalCenterService(db_file=db_file)
+
+    summary = replay_service._run_checkpoint(  # noqa: SLF001 - validates market checkpoint conversion
+        checkpoint=datetime(2026, 1, 5, 10, 0),
+        timeframe="30m",
+        market="CN",
+        engine=engine,
+        portfolio=portfolio,
+        signal_service=signal_service,
+    )
+    trades = replay_service.db.get_trade_history(limit=5)
+
+    assert summary["auto_executed"] == 1
+    assert trades[0]["executed_at"] == "2026-01-05T02:00:00Z"
+
+
 def test_run_checkpoint_excludes_held_codes_from_candidate_scan(tmp_path):
     db_file = tmp_path / "app.quant_sim.db"
     candidate_service = CandidatePoolService(db_file=db_file)

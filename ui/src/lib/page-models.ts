@@ -290,6 +290,17 @@ export type PortfolioSnapshot = {
 
 export type LiveSimSnapshot = {
   updatedAt: string;
+  timeContext?: {
+    storageTimezone?: string;
+    storageFormat?: string;
+    market?: string;
+    marketTimezone?: string;
+    updatedAtUtc?: string;
+    updatedAtMarket?: string;
+    updatedAtMarketTimezone?: string;
+    lastRunMarket?: string;
+    nextRunMarket?: string;
+  };
   config: {
     interval: string;
     timeframe: string;
@@ -325,6 +336,8 @@ export type LiveSimSnapshot = {
     running: string;
     lastRun: string;
     nextRun: string;
+    lastRunMarket?: string;
+    nextRunMarket?: string;
     candidateCount: string;
   };
   metrics: SummaryMetric[];

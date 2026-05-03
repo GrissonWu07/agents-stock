@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.quant_kernel import KernelStrategyRuntime
 from app.quant_kernel.interfaces import MarketDataProvider
 from app.quant_kernel.models import Decision
+from app.quant_sim.time_utils import format_utc_iso_z, market_timezone
 from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
 
@@ -29,16 +30,20 @@ class StockPolicyAdapter:
         data_fetcher: Optional[SmartMonitorTDXDataFetcher] = None,
         market_data_provider: Optional[MarketDataProvider] = None,
         runtime: Optional[KernelStrategyRuntime] = None,
+        market: str = "CN",
     ):
         if market_data_provider is not None:
             self.market_data_provider = market_data_provider
         else:
             self.market_data_provider = MainProjectMarketDataProvider(data_fetcher)
         self.runtime = runtime or KernelStrategyRuntime()
+        self.market = str(market or "CN").upper()
 
-    @staticmethod
-    def now() -> datetime:
-        return datetime.now()
+    def set_market(self, market: str | None) -> None:
+        self.market = str(market or "CN").upper()
+
+    def now(self) -> datetime:
+        return datetime.now(timezone.utc).astimezone(market_timezone(self.market)).replace(tzinfo=None, microsecond=0)
 
     @staticmethod
     def _call_with_signature_fallback(method: Any, base_kwargs: dict[str, Any]) -> Decision:
@@ -158,5 +163,5 @@ class StockPolicyAdapter:
         marked = dict(snapshot)
         marked.setdefault("_quant_market_data_source", "live_comprehensive")
         marked.setdefault("_quant_market_data_mode", "live")
-        marked.setdefault("_quant_market_data_fetched_at", datetime.now().replace(microsecond=0).isoformat(sep=" "))
+        marked.setdefault("_quant_market_data_fetched_at", format_utc_iso_z())
         return marked

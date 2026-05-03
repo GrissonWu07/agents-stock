@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import schedule
@@ -17,13 +17,14 @@ from app.quant_sim.dynamic_strategy import (
 )
 from app.quant_sim.engine import QuantSimEngine
 from app.quant_sim.portfolio_service import PortfolioService
+from app.quant_sim.time_utils import format_utc_iso_z, market_timezone
 from app.runtime_paths import default_db_path
 
 
 TRADING_HOURS = {
     "CN": [("09:30", "11:30"), ("13:00", "15:00")],
     "HK": [("09:30", "12:00"), ("13:00", "16:00")],
-    "US": [("21:30", "04:00")],
+    "US": [("09:30", "16:00")],
 }
 TRADING_DAYS = {1, 2, 3, 4, 5}
 _SCHEDULER_INSTANCES: dict[str, "QuantSimScheduler"] = {}
@@ -75,6 +76,9 @@ class QuantSimScheduler:
             }
         analysis_timeframe = str(config["analysis_timeframe"])
         strategy_mode = str(config["strategy_mode"])
+        market = str(config["market"])
+        if hasattr(self.engine.adapter, "set_market"):
+            self.engine.adapter.set_market(market)
         configured_profile_id = str(config.get("strategy_profile_id") or "").strip()
         default_profile_id = self.db.get_default_strategy_profile_id()
         strategy_profile_id = configured_profile_id if configured_profile_id and configured_profile_id != default_profile_id else None
@@ -191,7 +195,7 @@ class QuantSimScheduler:
     def get_status(self) -> dict[str, object]:
         config = self.db.get_scheduler_config()
         jobs = self.scheduler.get_jobs(self.job_tag)
-        next_run = jobs[0].next_run.strftime("%Y-%m-%d %H:%M:%S") if jobs else None
+        next_run = format_utc_iso_z(jobs[0].next_run.astimezone()) if jobs else None
         return {
             "running": self.running,
             "enabled": config["enabled"],
@@ -265,9 +269,10 @@ class QuantSimScheduler:
 
     def _run_scheduled_cycle(self) -> None:
         config = self.db.get_scheduler_config()
-        if not self._has_reached_start_date(str(config["start_date"])):
+        market = str(config["market"])
+        if not self._has_reached_start_date(str(config["start_date"]), market):
             return
-        if not self._is_trading_time(str(config["market"])):
+        if not self._is_trading_time(market):
             return
         self.run_once(run_reason="scheduled_scan")
 
@@ -292,8 +297,15 @@ class QuantSimScheduler:
             self.start()
 
     @staticmethod
-    def _is_trading_time(market: str) -> bool:
-        now = datetime.now()
+    def _market_now(market: str, now_utc: datetime | None = None) -> datetime:
+        base = now_utc or datetime.now(timezone.utc)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        return base.astimezone(market_timezone(market))
+
+    @classmethod
+    def _is_trading_time(cls, market: str, *, now_utc: datetime | None = None) -> bool:
+        now = cls._market_now(market, now_utc)
         weekday = now.weekday() + 1
         if weekday not in TRADING_DAYS:
             return False
@@ -312,15 +324,15 @@ class QuantSimScheduler:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+        return format_utc_iso_z()
 
-    @staticmethod
-    def _has_reached_start_date(start_date_text: str) -> bool:
+    @classmethod
+    def _has_reached_start_date(cls, start_date_text: str, market: str = "CN") -> bool:
         try:
             configured_date = date.fromisoformat(str(start_date_text))
         except ValueError:
             return True
-        return datetime.now().date() >= configured_date
+        return cls._market_now(market).date() >= configured_date
 
 
 def get_quant_sim_scheduler(

@@ -1,7 +1,19 @@
 import threading
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.stock_refresh_scheduler import UnifiedStockRefreshScheduler, load_stock_runtime_entries
+
+
+def test_stock_refresh_scheduler_trading_time_uses_market_timezone():
+    assert UnifiedStockRefreshScheduler._is_trading_time(
+        "US",
+        now_utc=datetime(2026, 5, 4, 14, 0, tzinfo=timezone.utc),
+    )
+    assert not UnifiedStockRefreshScheduler._is_trading_time(
+        "US",
+        now_utc=datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc),
+    )
 
 
 def test_runtime_entry_fetches_required_basic_info_even_if_legacy_env_disabled(monkeypatch):

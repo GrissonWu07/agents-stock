@@ -24,7 +24,7 @@ const snapshot = {
     strategyProfiles: [{ id: "aggressive", name: "积极", enabled: true, isDefault: true }],
     autoExecute: "true",
     market: "CN",
-    initialCapital: "100000",
+    initialCapital: "120000",
     commissionRatePct: "0.03",
     sellTaxRatePct: "0.10",
   },
@@ -254,7 +254,8 @@ describe("LiveSimPage", () => {
     renderLiveSimPage(client);
 
     await screen.findByText("信号记录");
-    fireEvent.change(screen.getByDisplayValue("100000"), { target: { value: "500000" } });
+    await waitFor(() => expect(screen.getByDisplayValue("120000")).toBeInTheDocument());
+    fireEvent.change(screen.getByDisplayValue("120000"), { target: { value: "500000" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => {
       expect(client.runPageAction).toHaveBeenCalledWith("live-sim", "save", expect.objectContaining({ initialCash: 500000 }));

@@ -20,6 +20,7 @@ from app.quant_sim.capital_slots import (
 )
 from app.quant_sim.execution_constraints import trade_block_reason
 from app.quant_sim.stock_execution_feedback import STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS
+from app.quant_sim.time_utils import ensure_utc_datetime, format_utc_iso_z
 from app.runtime_paths import default_db_path
 
 
@@ -151,8 +152,8 @@ class QuantSimDB:
                 notes TEXT,
                 metadata_json TEXT,
                 status TEXT DEFAULT 'active',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -162,7 +163,7 @@ class QuantSimDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 candidate_id INTEGER NOT NULL,
                 source TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 UNIQUE(candidate_id, source),
                 FOREIGN KEY(candidate_id) REFERENCES candidate_pool(id)
             )
@@ -188,8 +189,8 @@ class QuantSimDB:
                 executed_action TEXT,
                 execution_note TEXT,
                 delay_count INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 executed_at TEXT,
                 FOREIGN KEY(candidate_id) REFERENCES candidate_pool(id)
             )
@@ -212,8 +213,8 @@ class QuantSimDB:
                 peak_unrealized_pnl_pct REAL DEFAULT 0,
                 peak_at TEXT,
                 status TEXT DEFAULT 'holding',
-                opened_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                opened_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -242,7 +243,7 @@ class QuantSimDB:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 initial_cash REAL NOT NULL DEFAULT 100000,
                 available_cash REAL NOT NULL DEFAULT 100000,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -266,7 +267,7 @@ class QuantSimDB:
                 realized_pnl REAL DEFAULT 0,
                 note TEXT,
                 executed_at TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -281,7 +282,7 @@ class QuantSimDB:
                 total_equity REAL NOT NULL,
                 realized_pnl REAL NOT NULL,
                 unrealized_pnl REAL NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -315,7 +316,7 @@ class QuantSimDB:
                 capital_high_price_max_slot_units REAL DEFAULT 2,
                 capital_sell_cash_reuse_policy TEXT DEFAULT 'next_batch',
                 last_run_at TEXT,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -328,7 +329,7 @@ class QuantSimDB:
                 available_cash REAL NOT NULL DEFAULT 0,
                 occupied_cash REAL NOT NULL DEFAULT 0,
                 settling_cash REAL NOT NULL DEFAULT 0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -345,8 +346,8 @@ class QuantSimDB:
                 released_cash REAL NOT NULL DEFAULT 0,
                 released_quantity INTEGER NOT NULL DEFAULT 0,
                 status TEXT DEFAULT 'open',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(position_lot_db_id) REFERENCES sim_position_lots(id)
             )
             """
@@ -362,7 +363,7 @@ class QuantSimDB:
                 cash_dividend_per_share REAL DEFAULT 0,
                 description TEXT,
                 applied_at TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 UNIQUE(stock_code, ex_date)
             )
             """
@@ -397,8 +398,8 @@ class QuantSimDB:
                 selected_strategy_profile_version_id INTEGER,
                 strategy_profile_snapshot_json TEXT,
                 metadata_json TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -410,8 +411,8 @@ class QuantSimDB:
                 description TEXT,
                 enabled INTEGER DEFAULT 1,
                 is_default INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             )
             """
         )
@@ -423,7 +424,7 @@ class QuantSimDB:
                 version INTEGER NOT NULL,
                 config_json TEXT NOT NULL,
                 note TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 UNIQUE(profile_id, version),
                 FOREIGN KEY(profile_id) REFERENCES strategy_profiles(id)
             )
@@ -443,7 +444,7 @@ class QuantSimDB:
                 market_value REAL DEFAULT 0,
                 total_equity REAL DEFAULT 0,
                 metadata_json TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -469,7 +470,7 @@ class QuantSimDB:
                 realized_pnl REAL DEFAULT 0,
                 note TEXT,
                 executed_at TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -506,7 +507,7 @@ class QuantSimDB:
                 sellable_quantity INTEGER DEFAULT 0,
                 locked_quantity INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'holding',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -528,7 +529,7 @@ class QuantSimDB:
                 strategy_profile_json TEXT,
                 checkpoint_at TEXT,
                 signal_status TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -540,7 +541,7 @@ class QuantSimDB:
                 run_id INTEGER NOT NULL,
                 level TEXT NOT NULL DEFAULT 'info',
                 message TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -584,7 +585,7 @@ class QuantSimDB:
         self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl", "REAL DEFAULT 0")
         self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl_pct", "REAL DEFAULT 0")
         self._ensure_column(cursor, "sim_positions", "peak_at", "TEXT")
-        self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+        self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "closed_at", "TEXT")
@@ -681,11 +682,12 @@ class QuantSimDB:
             )
             candidate_id = int(existing["id"])
         else:
+            now_text = self._now()
             cursor.execute(
                 """
                 INSERT INTO candidate_pool
-                (stock_code, stock_name, source, latest_price, notes, metadata_json, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (stock_code, stock_name, source, latest_price, notes, metadata_json, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["stock_code"],
@@ -695,7 +697,8 @@ class QuantSimDB:
                     payload["notes"],
                     json.dumps(payload["metadata"], ensure_ascii=False),
                     payload["status"],
-                    self._now(),
+                    now_text,
+                    now_text,
                 ),
             )
             candidate_id = int(cursor.lastrowid)
@@ -5601,16 +5604,12 @@ class QuantSimDB:
 
     @staticmethod
     def _ensure_datetime(value: str | datetime | None) -> datetime:
-        if value is None:
-            return datetime.now().replace(microsecond=0)
-        if isinstance(value, datetime):
-            return value.replace(microsecond=0)
-        return datetime.fromisoformat(str(value).replace("T", " ")).replace(microsecond=0)
+        return ensure_utc_datetime(value).replace(tzinfo=None)
 
     @staticmethod
     def _format_datetime(value: datetime) -> str:
-        return value.replace(microsecond=0).isoformat(sep=" ")
+        return format_utc_iso_z(value)
 
     @staticmethod
     def _now() -> str:
-        return QuantSimDB._format_datetime(datetime.now())
+        return format_utc_iso_z()

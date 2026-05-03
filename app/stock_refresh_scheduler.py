@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import threading
@@ -11,6 +11,7 @@ from typing import Any, Callable
 import schedule
 
 from app.quant_sim.scheduler import TRADING_DAYS, TRADING_HOURS
+from app.quant_sim.time_utils import format_utc_iso_z, market_timezone
 from app.selector_result_store import DEFAULT_SELECTOR_RESULT_DIR, load_latest_result, save_latest_result
 from app.selector_ui_state import load_main_force_state, load_simple_selector_state
 from app.watchlist_selector_integration import normalize_stock_code
@@ -142,7 +143,7 @@ def save_stock_runtime_entries(
 
 
 def _now() -> str:
-    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+    return format_utc_iso_z()
 
 
 class UnifiedStockRefreshScheduler:
@@ -196,7 +197,7 @@ class UnifiedStockRefreshScheduler:
 
     def get_status(self) -> dict[str, Any]:
         jobs = self.scheduler.get_jobs(self.job_tag)
-        next_run = jobs[0].next_run.strftime("%Y-%m-%d %H:%M:%S") if jobs else None
+        next_run = format_utc_iso_z(jobs[0].next_run.astimezone()) if jobs else None
         return {
             "running": self.running,
             "interval_minutes": self.interval_minutes,
@@ -405,8 +406,11 @@ class UnifiedStockRefreshScheduler:
             return "CN"
 
     @staticmethod
-    def _is_trading_time(market: str) -> bool:
-        now = datetime.now()
+    def _is_trading_time(market: str, *, now_utc: datetime | None = None) -> bool:
+        base = now_utc or datetime.now(timezone.utc)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        now = base.astimezone(market_timezone(market))
         weekday = now.weekday() + 1
         if weekday not in TRADING_DAYS:
             return False

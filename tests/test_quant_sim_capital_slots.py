@@ -253,6 +253,7 @@ def test_batch_execution_prioritizes_stronger_buy_signal_when_cash_has_one_slot(
     scheduler = QuantSimScheduler(db_file=db_file)
     scheduler.update_config(enabled=True, auto_execute=True)
     scheduler.portfolio.configure_account(20000)
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     def fake_analyze(candidate, market_snapshot=None, analysis_timeframe="30m", strategy_mode="auto"):
         code = candidate["stock_code"]

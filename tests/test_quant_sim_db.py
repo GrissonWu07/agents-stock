@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_sim.db import QuantSimDB
@@ -67,7 +68,7 @@ def test_quant_db_enables_wal_for_file_database(tmp_path):
     assert journal_mode.lower() == "wal"
 
 
-def test_add_signal_sets_created_and_updated_at_with_same_local_clock(tmp_path):
+def test_add_signal_sets_created_and_updated_at_as_utc_iso_z(tmp_path):
     db = QuantSimDB(tmp_path / "app.quant_sim.db")
 
     signal_id = db.add_signal(
@@ -85,6 +86,10 @@ def test_add_signal_sets_created_and_updated_at_with_same_local_clock(tmp_path):
 
     assert signal["id"] == signal_id
     assert signal["created_at"] == signal["updated_at"]
+    assert signal["created_at"].endswith("Z")
+    assert "T" in signal["created_at"]
+    parsed = datetime.fromisoformat(signal["created_at"].replace("Z", "+00:00"))
+    assert parsed.tzinfo == timezone.utc
 
 
 def test_quant_db_reads_during_uncommitted_writer_in_wal_mode(tmp_path):

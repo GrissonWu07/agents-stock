@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 import sqlite3
 from unittest.mock import Mock
 
@@ -6,6 +6,25 @@ from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.signal_center_service import SignalCenterService
 from app.quant_sim.scheduler import QuantSimScheduler
+
+
+def test_scheduler_trading_time_uses_market_timezone_for_cn_hk_and_us():
+    assert QuantSimScheduler._is_trading_time(
+        "CN",
+        now_utc=datetime(2026, 5, 4, 2, 0, tzinfo=timezone.utc),
+    )
+    assert QuantSimScheduler._is_trading_time(
+        "HK",
+        now_utc=datetime(2026, 5, 4, 7, 0, tzinfo=timezone.utc),
+    )
+    assert QuantSimScheduler._is_trading_time(
+        "US",
+        now_utc=datetime(2026, 5, 4, 14, 0, tzinfo=timezone.utc),
+    )
+    assert not QuantSimScheduler._is_trading_time(
+        "US",
+        now_utc=datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc),
+    )
 
 
 def test_scheduler_run_once_scans_candidates_and_creates_signals(tmp_path, monkeypatch):
@@ -243,6 +262,25 @@ def test_scheduler_run_once_passes_strategy_mode_to_engine(tmp_path, monkeypatch
         ai_dynamic_strength=0.5,
         ai_dynamic_lookback=48,
     )
+
+
+def test_scheduler_run_once_sets_adapter_market_before_analysis(tmp_path, monkeypatch):
+    scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
+    scheduler.db.update_scheduler_config(market="US")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
+    captured: dict[str, str] = {}
+
+    def capture_market(market):
+        captured["market"] = market
+
+    monkeypatch.setattr(scheduler.engine.adapter, "set_market", capture_market)
+    scheduler.engine.analyze_active_candidates = Mock(return_value=[])
+    scheduler.engine.analyze_positions = Mock(return_value=[])
+    scheduler.portfolio.list_positions = Mock(return_value=[])
+
+    scheduler.run_once("manual_scan")
+
+    assert captured["market"] == "US"
 
 
 def test_scheduler_restores_background_job_from_persisted_config(tmp_path, monkeypatch):

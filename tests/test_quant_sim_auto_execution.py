@@ -12,6 +12,7 @@ def test_scheduler_auto_executes_buy_signal_when_enabled(tmp_path, monkeypatch):
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -130,6 +131,7 @@ def test_scheduler_auto_executes_buy_signal_from_watchlist_candidate_and_syncs_w
 
     scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
     scheduler.update_config(enabled=True, auto_execute=True)
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -179,6 +181,7 @@ def test_scheduler_auto_executes_sell_signal_when_enabled(tmp_path, monkeypatch)
 
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -272,6 +275,7 @@ def test_scheduler_auto_execute_buy_signal_records_skip_reason_when_under_one_lo
     scheduler = QuantSimScheduler(db_file=tmp_path / "app.quant_sim.db")
     scheduler.update_config(enabled=True, auto_execute=True)
     PortfolioService(db_file=tmp_path / "app.quant_sim.db").configure_account(10000.0)
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,

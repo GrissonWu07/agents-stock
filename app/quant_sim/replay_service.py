@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +27,7 @@ from app.quant_sim.replay_runner import get_quant_sim_replay_runner
 from app.quant_sim.scheduler import get_quant_sim_scheduler
 from app.quant_sim.signal_center_service import SignalCenterService
 from app.quant_sim.stockpolicy_adapter import StockPolicyAdapter
+from app.quant_sim.time_utils import format_utc_iso_z, market_timezone, market_timezone_name
 from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
 
@@ -214,6 +215,8 @@ class QuantSimReplayService:
             commission_rate=commission_rate,
             sell_tax_rate=sell_tax_rate,
         )
+        if hasattr(self.adapter, "set_market"):
+            self.adapter.set_market(market)
         run_id = self._create_replay_run(
             mode="historical_range",
             handoff_to_live=False,
@@ -501,6 +504,8 @@ class QuantSimReplayService:
             metadata={
                 "candidate_count": len(context["candidates"]),
                 "strategy_mode": context["strategy_mode"],
+                "checkpoint_market": market,
+                "checkpoint_timezone": market_timezone_name(market),
                 "strategy_profile_id": str(profile_binding.get("profile_id") or ""),
                 "strategy_profile_name": str(profile_binding.get("profile_name") or ""),
                 "strategy_profile_version_id": int(profile_binding["version_id"]) if profile_binding.get("version_id") is not None else None,
@@ -642,6 +647,7 @@ class QuantSimReplayService:
                 self._apply_due_corporate_actions(
                     temp_db=temp_db,
                     checkpoint=checkpoint,
+                    market=context["market"],
                     start_dt=start_dt,
                     end_dt=end_dt,
                 )
@@ -649,6 +655,7 @@ class QuantSimReplayService:
                     run_id=run_id,
                     checkpoint=checkpoint,
                     timeframe=timeframe,
+                    market=context["market"],
                     strategy_mode=strategy_mode,
                     strategy_profile_binding=strategy_profile_binding,
                     ai_dynamic_strategy=ai_dynamic_strategy,
@@ -838,6 +845,7 @@ class QuantSimReplayService:
         run_id: int | None = None,
         checkpoint: datetime,
         timeframe: str,
+        market: str = "CN",
         strategy_mode: str = "auto",
         strategy_profile_binding: dict | None = None,
         ai_dynamic_strategy: str = DEFAULT_AI_DYNAMIC_STRATEGY,
@@ -863,6 +871,7 @@ class QuantSimReplayService:
         positions_checked = 0
         checkpoint_signals: list[dict] = []
         checkpoint_text = self._format_datetime(checkpoint)
+        checkpoint_utc = self._market_time_to_utc(checkpoint, market)
         base_profile_id = (
             str(strategy_profile_binding.get("profile_id") or "").strip()
             if isinstance(strategy_profile_binding, dict)
@@ -994,7 +1003,7 @@ class QuantSimReplayService:
             auto_executed = portfolio.auto_execute_pending_signals(
                 pending_signals,
                 note="历史回放自动执行",
-                executed_at=checkpoint,
+                executed_at=checkpoint_utc,
             )
         except Exception as exc:
             if run_id is not None:
@@ -1028,13 +1037,14 @@ class QuantSimReplayService:
         *,
         temp_db: QuantSimDB,
         checkpoint: datetime,
+        market: str = "CN",
         start_dt: datetime,
         end_dt: datetime,
     ) -> None:
         positions = temp_db.get_positions(as_of=checkpoint)
         if not positions:
             return
-        checkpoint_text = self._format_datetime(checkpoint)
+        checkpoint_text = format_utc_iso_z(self._market_time_to_utc(checkpoint, market))
         ex_date = checkpoint.date().isoformat()
         actions: list[dict] = []
         for position in positions:
@@ -1176,6 +1186,15 @@ class QuantSimReplayService:
     @staticmethod
     def _format_datetime(value: datetime) -> str:
         return value.replace(microsecond=0).isoformat(sep=" ")
+
+    @staticmethod
+    def _market_time_to_utc(value: datetime, market: str = "CN") -> datetime:
+        local_value = (
+            value.replace(tzinfo=market_timezone(market))
+            if value.tzinfo is None
+            else value.astimezone(market_timezone(market))
+        )
+        return local_value.astimezone(timezone.utc).replace(microsecond=0)
 
 
 def execute_prepared_replay_worker(

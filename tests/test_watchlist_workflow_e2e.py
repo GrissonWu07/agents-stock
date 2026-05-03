@@ -26,6 +26,7 @@ def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_p
 
     scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
     scheduler.update_config(enabled=True, auto_execute=False, analysis_timeframe="30m", strategy_mode="auto")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,
@@ -76,6 +77,7 @@ def test_research_outputs_flow_into_watchlist_quant_and_holdings(tmp_path, monke
 
     scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
     scheduler.update_config(enabled=True, auto_execute=True, analysis_timeframe="30m", strategy_mode="auto")
+    monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
     monkeypatch.setattr(
         scheduler.engine.adapter,

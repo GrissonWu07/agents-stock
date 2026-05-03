@@ -1509,6 +1509,21 @@ def test_live_sim_snapshot_does_not_sync_capital_slots_on_get(tmp_path, monkeypa
     assert "capitalSlots" in response.json()
 
 
+def test_live_sim_snapshot_includes_market_time_context(tmp_path):
+    context = _make_context(tmp_path)
+
+    context.scheduler().update_config(market="US")
+    response = TestClient(create_app(context=context)).get("/api/v1/quant/live-sim")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["updatedAt"].endswith("Z")
+    assert payload["timeContext"]["storageTimezone"] == "UTC"
+    assert payload["timeContext"]["marketTimezone"] == "America/New_York"
+    assert payload["timeContext"]["updatedAtUtc"].endswith("Z")
+    assert payload["timeContext"]["updatedAtMarketTimezone"] == "America/New_York"
+
+
 def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatch):
     context = _make_context(tmp_path)
     fake_replay = FakeReplayService()
