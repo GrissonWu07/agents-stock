@@ -88,31 +88,61 @@
 1. 默认倍率 `1.0`。
 2. 组合冷却时最多 `0.5`。
 
-## 必须回答的问题
+## BUY 判定需求
 
-### 是否是反弹尾段
+### 反弹尾段识别
 
-通过 `ma20_slope`、price 与 MA20 的连续关系、MA 排列、最近 checkpoint 是否刚从 MA20 下方反抽来判断。若只是刚站上 MA20 或 MA20 仍下行，最多 weak_buy。
+系统必须识别疑似反弹尾段，而不是只看 MACD/RSI 转强。满足任一条件时，`portfolio_execution_guard` 必须设置 `is_late_rebound = true`，并写入 `late_rebound_reasons`：
 
-### 技术指标滞后
+1. `ma20_slope <= 0`，但价格刚重新站上 MA20。
+2. `above_ma20_checkpoints < confirm_checkpoints`。
+3. MA5 > MA10 > MA20 不成立。
+4. 价格从短期低点反弹幅度较大，但 MA20 仍未上行。
 
-MACD/RSI 单独转强不能产生 normal/strong。必须叠加 MA20 上行、连续站稳、MA 多头排列或回踩确认。否则视为滞后反弹信号。
+疑似反弹尾段的 BUY 最多只能归类为 `weak_buy`，除非同时满足 strong_buy 的全部趋势结构要求。
 
-### BUY 阈值太宽
+### 技术指标滞后过滤
 
-fusion/tech 只比阈值高一点时，不再等同普通 BUY。edge 小于 `weak_edge_pct` 时强制 weak_buy。edge 达到 `normal_edge_pct` 或趋势确认后才能 normal_buy。
+MACD、RSI、量比、main_force 只能作为 BUY 候选证据，不能单独把信号提升为 `normal_buy` 或 `strong_buy`。提升层级必须额外满足以下趋势确认之一：
 
-### 市场/个股失败环境
+1. MA20 上行且价格连续站稳 MA20 达到 `confirm_checkpoints`。
+2. MA5 > MA10 > MA20。
+3. 价格突破后回踩 MA20 不破，再重新转强。
 
-组合最近 N checkpoint 或 N 天内止损过多，所有 BUY 自动降级。达到熔断阈值时，非 strong_buy 转 HOLD。个股亏损反馈仍独立生效，最终倍率取所有 gate 的最严格值。
+如果只有技术指标转强，但趋势确认不足，信号必须保持 `weak_buy`。
 
-### T+1 放大风险
+### BUY 边缘阈值处理
 
-A 股 30m BUY 如果缺少多 checkpoint 确认，不能 normal/strong。冷启动或边缘 BUY 默认轻仓，减少当天买入后次日止损的损失。
+fusion/tech 只比 BUY 阈值高一点时，不再等同普通 BUY。系统必须计算 BUY edge：
 
-### 确认强度不足
+1. `edge < weak_edge_pct`：强制 `weak_buy`。
+2. `weak_edge_pct <= edge < normal_edge_pct`：只有满足趋势确认后才能 `normal_buy`，否则仍为 `weak_buy`。
+3. `edge >= normal_edge_pct`：可以进入 `normal_buy` 判定，但仍不能绕过失败环境和 T+1 风险门控。
 
-仅“指标满足可买”不够。normal/strong 必须具备 MA20 上行、连续站稳、MA 多头排列或回踩确认之一。
+### T+1 风险处理
+
+A 股 30m BUY 如果是当天或当前 checkpoint 刚转强，且缺少多 checkpoint 确认，不能归类为 `normal_buy` 或 `strong_buy`。此类信号必须：
+
+1. 默认归类为 `weak_buy`。
+2. 冷启动时继续套用 `cold_start_weak_multiplier`。
+3. 在交易明细或信号详情中写入 T+1 风险原因。
+
+### 入场确认强度
+
+普通 BUY 和强 BUY 必须代表“趋势确认后入场”，不是“指标满足可买”。实现时必须保证：
+
+1. `normal_buy` 至少满足 MA20 上行、连续站稳 MA20、MA 多头排列、回踩确认之一。
+2. `strong_buy` 必须同时满足 MA5 > MA10 > MA20、price > MA20、MA20 上行，以及量能或融合分确认。
+3. 缺少趋势确认时，BUY 只能作为轻仓试错或观察信号。
+
+### 市场与个股失败环境
+
+个股失败环境和组合失败环境必须作为 BUY 分层的输入，而不是事后解释：
+
+1. 个股近期连续止损或累计亏损时，继续由 `stock_execution_feedback_gate` 降仓或阻断该股。
+2. 组合最近 N checkpoint 或 N 天内止损过多时，所有 BUY 自动降级。
+3. 达到组合熔断阈值时，非 `strong_buy` 转 HOLD。
+4. 个股亏损反馈、止盈后再入场、组合防守的最终仓位倍率取所有 gate 的最严格值，并保留 `0.0`。
 
 ## 组合级防守
 
