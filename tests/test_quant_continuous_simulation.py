@@ -226,7 +226,7 @@ def test_continuous_replay_preserves_snapshot_order_and_allows_open_ended_end_da
         market="CN",
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     run = db.get_sim_runs(limit=1)[0]
     replay_snapshots = db.get_sim_run_snapshots(run["id"])
 

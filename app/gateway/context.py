@@ -8,6 +8,7 @@ class UIApiContext:
     selector_result_dir: Path | str = DEFAULT_SELECTOR_RESULT_DIR
     watchlist_db_file: Path | str = field(default_factory=lambda: default_db_path("watchlist.db"))
     quant_sim_db_file: Path | str = field(default_factory=lambda: default_db_path("quant_sim.db"))
+    quant_sim_replay_db_file: Path | str = field(default_factory=lambda: default_db_path("quant_sim_replay.db"))
     portfolio_db_file: Path | str = field(default_factory=lambda: default_db_path("portfolio_stocks.db"))
     monitor_db_file: Path | str = field(default_factory=lambda: default_db_path("stock_monitor.db"))
     smart_monitor_db_file: Path | str = field(default_factory=lambda: default_db_path("smart_monitor.db"))
@@ -28,6 +29,7 @@ class UIApiContext:
         self.selector_result_dir = _p(self.selector_result_dir)
         self.watchlist_db_file = _p(self.watchlist_db_file)
         self.quant_sim_db_file = _p(self.quant_sim_db_file)
+        self.quant_sim_replay_db_file = _p(self.quant_sim_replay_db_file)
         self.portfolio_db_file = _p(self.portfolio_db_file)
         self.monitor_db_file = _p(self.monitor_db_file)
         self.smart_monitor_db_file = _p(self.smart_monitor_db_file)
@@ -52,6 +54,11 @@ class UIApiContext:
     def quant_db(self) -> QuantSimDB:
         return QuantSimDB(self.quant_sim_db_file)
 
+    def replay_db(self):
+        from app.quant_sim.db import QuantSimReplayDB
+
+        return QuantSimReplayDB(self.quant_sim_replay_db_file)
+
     def scheduler(self):
         return get_quant_sim_scheduler(
             db_file=self.quant_sim_db_file,
@@ -60,7 +67,10 @@ class UIApiContext:
         )
 
     def replay_service(self):
-        return QuantSimReplayService(db_file=self.quant_sim_db_file)
+        return QuantSimReplayService(
+            db_file=self.quant_sim_db_file,
+            replay_db_file=self.quant_sim_replay_db_file,
+        )
 
     def portfolio_manager(self):
         from app.portfolio_manager import PortfolioManager

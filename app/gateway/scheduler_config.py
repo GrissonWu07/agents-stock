@@ -88,7 +88,7 @@ def _latest_replay_defaults(context: UIApiContext) -> dict[str, Any]:
     default_ai_dynamic_strategy = _txt(scheduler_cfg.get("ai_dynamic_strategy"), DEFAULT_AI_DYNAMIC_STRATEGY)
     default_ai_dynamic_strength = _normalize_dynamic_strength(scheduler_cfg.get("ai_dynamic_strength"), DEFAULT_AI_DYNAMIC_STRENGTH)
     default_ai_dynamic_lookback = _normalize_dynamic_lookback(scheduler_cfg.get("ai_dynamic_lookback"), DEFAULT_AI_DYNAMIC_LOOKBACK)
-    latest = next(iter(context.quant_db().get_sim_runs(limit=20)), None)
+    latest = next(iter(context.replay_db().get_sim_runs(limit=20)), None)
     if latest:
         metadata = latest.get("metadata") if isinstance(latest.get("metadata"), dict) else {}
         return {

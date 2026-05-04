@@ -315,14 +315,14 @@ def test_historical_replay_persists_run_artifacts_without_touching_live_account(
         market="CN",
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     runs = db.get_sim_runs(limit=5)
     run = runs[0]
     checkpoints = db.get_sim_run_checkpoints(run["id"])
     trades = db.get_sim_run_trades(run["id"])
     snapshots = db.get_sim_run_snapshots(run["id"])
     signals = db.get_sim_run_signals(run["id"])
-    live_account = db.get_account_summary()
+    live_account = QuantSimDB(db_file).get_account_summary()
 
     assert summary["status"] == "completed"
     assert summary["trade_count"] == 2
@@ -370,7 +370,7 @@ def test_historical_replay_applies_a_share_corporate_actions_before_position_dec
         initial_cash=100000,
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     run = db.get_sim_runs(limit=1)[0]
     trades = db.get_sim_run_trades(run["id"])
 
@@ -524,7 +524,7 @@ def test_historical_replay_persists_run_strategy_signals(tmp_path):
         market="CN",
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     run = db.get_sim_runs(limit=1)[0]
     replay_signals = db.get_sim_run_signals(run["id"])
 
@@ -532,7 +532,8 @@ def test_historical_replay_persists_run_strategy_signals(tmp_path):
     assert replay_signals
     assert all(signal["run_id"] == run["id"] for signal in replay_signals)
     assert any(signal["action"] == "BUY" for signal in replay_signals)
-    assert replay_signals[0]["strategy_profile"]["analysis_timeframe"]["key"] == "30m"
+    replay_signal_detail = db.get_sim_run_signal(replay_signals[0]["id"])
+    assert replay_signal_detail["strategy_profile"]["analysis_timeframe"]["key"] == "30m"
 
 
 def test_historical_replay_persists_signals_incrementally_per_checkpoint(tmp_path, monkeypatch):
@@ -609,14 +610,15 @@ def test_historical_replay_persists_selected_strategy_mode(tmp_path):
         strategy_mode="neutral",
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     run = db.get_sim_runs(limit=1)[0]
     replay_signals = db.get_sim_run_signals(run["id"])
 
     assert summary["status"] == "completed"
     assert run["metadata"]["strategy_mode"] == "neutral"
     assert adapter.candidate_calls[0]["strategy_mode"] == "neutral"
-    assert replay_signals[0]["strategy_profile"]["strategy_mode"]["key"] == "neutral"
+    replay_signal_detail = db.get_sim_run_signal(replay_signals[0]["id"])
+    assert replay_signal_detail["strategy_profile"]["strategy_mode"]["key"] == "neutral"
 
 
 def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monkeypatch):
@@ -652,7 +654,7 @@ def test_enqueue_historical_replay_creates_background_run_record(tmp_path, monke
         market="CN",
     )
 
-    db = QuantSimDB(db_file)
+    db = replay_service.db
     run = db.get_sim_runs(limit=1)[0]
     expected_checkpoints = len(
         replay_service.timepoint_generator.generate(
@@ -820,7 +822,7 @@ def test_run_checkpoint_persists_trade_execution_time_as_utc_for_market_checkpoi
         portfolio=portfolio,
         signal_service=signal_service,
     )
-    trades = replay_service.db.get_trade_history(limit=5)
+    trades = QuantSimDB(db_file).get_trade_history(limit=5)
 
     assert summary["auto_executed"] == 1
     assert trades[0]["executed_at"] == "2026-01-05T02:00:00Z"
@@ -870,7 +872,7 @@ def test_run_checkpoint_excludes_held_codes_from_candidate_scan(tmp_path):
         note="seed position",
         executed_at=datetime(2026, 1, 5, 9, 30),
     )
-    conn = replay_service.db._connect()  # noqa: SLF001 - force inconsistent active+holding state
+    conn = QuantSimDB(db_file)._connect()  # noqa: SLF001 - force inconsistent active+holding state
     try:
         conn.execute("UPDATE candidate_pool SET status = 'active' WHERE stock_code = '300390'")
         conn.commit()

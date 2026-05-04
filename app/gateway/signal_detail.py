@@ -275,6 +275,7 @@ def _find_signal_detail(
     fetch_realtime_snapshot: bool = False,
 ) -> dict[str, Any]:
     db = context.quant_db()
+    replay_db = context.replay_db()
     normalized_source = _txt(source, "auto").lower()
     sid_int = _int(signal_id)
     if sid_int is None:
@@ -291,10 +292,10 @@ def _find_signal_detail(
             )
 
     if normalized_source in {"auto", "replay"}:
-        replay_signal = db.get_sim_run_signal(sid_int)
+        replay_signal = replay_db.get_sim_run_signal(sid_int)
         if replay_signal:
             run_id = _int(replay_signal.get("run_id"))
-            replay_run = db.get_sim_run(run_id) if run_id is not None else None
+            replay_run = replay_db.get_sim_run(run_id) if run_id is not None else None
             return _build_signal_detail_payload(
                 context,
                 replay_signal,

@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from app.quant_kernel.config import StrategyScoringConfig
-from app.quant_sim.db import QuantSimDB
+from app.quant_sim.db import QuantSimDB, QuantSimReplayDB
 
 
 def _resolve_profile(payload: dict, profile_kind: str) -> dict:
@@ -23,6 +23,66 @@ def _piecewise_score(value: float, bands: list[float], scores: list[float]) -> f
         idx += 1
     idx = min(idx, len(scores) - 1)
     return float(scores[idx])
+
+
+def _table_names(db_file) -> set[str]:
+    conn = sqlite3.connect(db_file)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {str(row[0]) for row in rows}
+
+
+def test_quant_sim_db_does_not_create_historical_replay_tables(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+
+    QuantSimDB(db_file)
+
+    tables = _table_names(db_file)
+    assert "strategy_signals" in tables
+    assert "sim_trades" in tables
+    assert "sim_positions" in tables
+    assert not any(name.startswith("sim_run_") for name in tables)
+    assert "sim_runs" not in tables
+
+
+def test_quant_sim_db_drops_legacy_historical_replay_tables(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.execute("CREATE TABLE sim_runs (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE sim_run_signals (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE sim_run_signal_details (id INTEGER PRIMARY KEY)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    QuantSimDB(db_file)
+
+    tables = _table_names(db_file)
+    assert "sim_runs" not in tables
+    assert "sim_run_signals" not in tables
+    assert "sim_run_signal_details" not in tables
+
+
+def test_quant_replay_db_only_creates_replay_tables(tmp_path):
+    db_file = tmp_path / "quant_sim_replay.db"
+
+    QuantSimReplayDB(db_file)
+
+    assert _table_names(db_file) == {
+        "sim_runs",
+        "sim_run_checkpoints",
+        "sim_run_events",
+        "sim_run_trades",
+        "sim_run_snapshots",
+        "sim_run_positions",
+        "sim_run_signals",
+        "sim_run_signal_details",
+    }
 
 
 def test_quant_db_reuses_initialized_schema_when_database_is_locked(tmp_path):
@@ -93,8 +153,8 @@ def test_add_signal_sets_created_and_updated_at_as_utc_iso_z(tmp_path):
 
 
 def test_quant_db_reads_during_uncommitted_writer_in_wal_mode(tmp_path):
-    db_file = tmp_path / "app.quant_sim.db"
-    db = QuantSimDB(db_file)
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -611,7 +671,7 @@ def test_account_summary_and_trade_history_track_cash_and_realized_pnl(tmp_path)
 
 
 def test_finalize_cancelled_run_preserves_completed_progress(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -645,7 +705,7 @@ def test_finalize_cancelled_run_preserves_completed_progress(tmp_path):
 
 
 def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -698,19 +758,21 @@ def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
     )
 
     signals = db.get_sim_run_signals(run_id)
+    signal_detail = db.get_sim_run_signal(signals[0]["id"])
     trades = db.get_sim_run_trades(run_id)
 
     assert len(signals) == 1
     assert signals[0]["stock_code"] == "300390"
     assert signals[0]["action"] == "BUY"
-    assert signals[0]["strategy_profile"]["risk_style"]["label"] == "激进"
+    assert signals[0]["strategy_profile"] == {}
+    assert signal_detail["strategy_profile"]["risk_style"]["label"] == "激进"
     assert signals[0]["checkpoint_at"] == "2026-04-01 10:00:00"
     assert len(trades) == 1
     assert trades[0]["signal_id"] == signals[0]["id"]
 
 
 def test_replace_sim_run_runtime_results_preserves_incremental_signals(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -936,7 +998,7 @@ def test_delete_position_records_sell_costs_and_releases_slot_ledger(tmp_path):
 
 
 def test_replay_trade_results_preserve_full_trade_ledger_fields(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -997,7 +1059,7 @@ def test_replay_trade_results_preserve_full_trade_ledger_fields(tmp_path):
 
 
 def test_replay_trade_cost_summary_counts_sold_lots_by_share_quantity(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1040,8 +1102,8 @@ def test_replay_trade_cost_summary_counts_sold_lots_by_share_quantity(tmp_path):
 
 
 def test_trade_cost_summary_falls_back_for_legacy_zero_ledger_columns(tmp_path):
-    db_file = tmp_path / "app.quant_sim.db"
-    db = QuantSimDB(db_file)
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1088,7 +1150,7 @@ def test_trade_cost_summary_falls_back_for_legacy_zero_ledger_columns(tmp_path):
 
 
 def test_upsert_sim_run_signals_updates_existing_checkpoint_signal(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1149,7 +1211,7 @@ def test_upsert_sim_run_signals_updates_existing_checkpoint_signal(tmp_path):
 
 
 def test_delete_sim_run_removes_all_replay_artifacts(tmp_path):
-    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+    db = QuantSimReplayDB(tmp_path / "quant_sim_replay.db")
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",

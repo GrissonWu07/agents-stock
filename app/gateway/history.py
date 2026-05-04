@@ -19,9 +19,10 @@ def _snapshot_history(context: UIApiContext, table_query: dict[str, Any] | None 
         offset=(pagination["page"] - 1) * page_size,
     )
     timeline_records = db.get_records_page(limit=10)
-    runs = context.quant_db().get_sim_runs(limit=20)
+    replay_db = context.replay_db()
+    runs = replay_db.get_sim_runs(limit=20)
     latest = runs[0] if runs else None
-    snapshots = context.quant_db().get_sim_run_snapshots(int(latest.get("id") or 0)) if latest else []
+    snapshots = replay_db.get_sim_run_snapshots(int(latest.get("id") or 0)) if latest else []
     recent_replay = {"title": "暂无最近回放", "body": "当前还没有可展示的回放记录。", "tags": []}
     if latest:
         recent_replay = {"title": f"#{latest.get('id')} {_txt(latest.get('mode'), '历史回放')}", "body": _txt(latest.get("status_message") or "最近一次回放已完成。"), "tags": [_txt(latest.get("checkpoint_count"), "0") + " 检查点", _txt(latest.get("trade_count"), "0") + " 笔成交", _pct(latest.get("total_return_pct"))]}

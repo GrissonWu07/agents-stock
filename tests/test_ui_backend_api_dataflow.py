@@ -110,6 +110,7 @@ def _make_context(tmp_path: Path):
         selector_result_dir=tmp_path / "selector_results",
         watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
+        quant_sim_replay_db_file=tmp_path / "quant_sim_replay.db",
         portfolio_db_file=tmp_path / "portfolio_stocks.db",
         monitor_db_file=tmp_path / "stock_monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",

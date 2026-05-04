@@ -25,6 +25,7 @@ def _make_context(tmp_path: Path) -> UIApiContext:
         selector_result_dir=selector_dir,
         watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
+        quant_sim_replay_db_file=tmp_path / "quant_sim_replay.db",
         portfolio_db_file=tmp_path / "portfolio.db",
         monitor_db_file=tmp_path / "monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
@@ -1568,7 +1569,7 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
     fake_replay = FakeReplayService()
     monkeypatch.setattr(UIApiContext, "replay_service", lambda self: fake_replay, raising=False)
 
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1617,7 +1618,7 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
 
     cancel_resp = client.post("/api/v1/quant/his-replay/actions/cancel", json={"id": run_id})
     assert cancel_resp.status_code == 200
-    latest_run = context.quant_db().get_sim_runs(limit=1)[0]
+    latest_run = context.replay_db().get_sim_runs(limit=1)[0]
     assert latest_run["status"] in {"cancel_requested", "cancelled", "completed"}
 
     history_resp = client.post("/api/v1/history/actions/rerun", json={})
@@ -1626,12 +1627,12 @@ def test_his_replay_actions_enqueue_cancel_delete_and_rerun(tmp_path, monkeypatc
 
     delete_resp = client.post("/api/v1/quant/his-replay/actions/delete", json={"id": run_id})
     assert delete_resp.status_code == 200
-    assert all(int(item["id"]) != run_id for item in context.quant_db().get_sim_runs(limit=20))
+    assert all(int(item["id"]) != run_id for item in context.replay_db().get_sim_runs(limit=20))
 
 
 def test_his_replay_cancel_stale_running_run_clears_active_lock(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1649,16 +1650,16 @@ def test_his_replay_cancel_stale_running_run_clears_active_lock(tmp_path):
     cancel_resp = client.post("/api/v1/quant/his-replay/actions/cancel", json={"id": run_id})
 
     assert cancel_resp.status_code == 200
-    run = context.quant_db().get_sim_run(run_id)
+    run = context.replay_db().get_sim_run(run_id)
     assert run is not None
     assert run["status"] == "cancelled"
     assert run["cancel_requested"] == 1
-    assert context.quant_db().get_active_sim_run() is None
+    assert context.replay_db().get_active_sim_run() is None
 
 
 def test_his_replay_cancel_live_running_run_releases_active_lock(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1677,16 +1678,16 @@ def test_his_replay_cancel_live_running_run_releases_active_lock(tmp_path):
     cancel_resp = client.post("/api/v1/quant/his-replay/actions/cancel", json={"id": run_id})
 
     assert cancel_resp.status_code == 200
-    run = context.quant_db().get_sim_run(run_id)
+    run = context.replay_db().get_sim_run(run_id)
     assert run is not None
     assert run["status"] == "cancel_requested"
     assert run["cancel_requested"] == 1
-    assert context.quant_db().get_active_sim_run() is None
+    assert context.replay_db().get_active_sim_run() is None
 
 
 def test_his_replay_progress_endpoint_returns_lightweight_task_progress(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1726,7 +1727,7 @@ def test_his_replay_progress_endpoint_returns_lightweight_task_progress(tmp_path
 
 def test_his_replay_progress_endpoint_uses_requested_run_for_tables_and_liquidation(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     completed_run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1817,7 +1818,7 @@ def test_his_replay_progress_endpoint_uses_requested_run_for_tables_and_liquidat
 
 def test_his_replay_progress_endpoint_does_not_read_full_trade_cost_summary(tmp_path, monkeypatch):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -1832,7 +1833,7 @@ def test_his_replay_progress_endpoint_does_not_read_full_trade_cost_summary(tmp_
     def fail_if_called(*args, **kwargs):
         raise AssertionError("progress endpoint must not scan full trade cost summary")
 
-    monkeypatch.setattr("app.quant_sim.db.QuantSimDB.get_sim_run_trade_cost_summary", fail_if_called)
+    monkeypatch.setattr("app.quant_sim.db.QuantSimReplayDB.get_sim_run_trade_cost_summary", fail_if_called)
 
     response = TestClient(create_app(context=context)).get("/api/v1/quant/his-replay/progress")
 
@@ -1946,7 +1947,7 @@ def test_live_sim_snapshot_exposes_trade_cost_ledger(tmp_path):
 
 def test_his_replay_snapshot_exposes_trade_cost_ledger(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2067,7 +2068,7 @@ def test_his_replay_snapshot_exposes_trade_cost_ledger(tmp_path):
 
 def test_his_replay_capital_pool_endpoint_exposes_slots_and_lots(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2184,7 +2185,7 @@ def test_his_replay_capital_pool_endpoint_exposes_slots_and_lots(tmp_path):
 
 def test_his_replay_snapshot_adds_terminal_liquidation_summary_and_ranked_rows(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2272,7 +2273,7 @@ def test_his_replay_snapshot_adds_terminal_liquidation_summary_and_ranked_rows(t
 
 def test_his_replay_capital_pool_endpoint_rebuilds_lots_at_selected_checkpoint(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2427,7 +2428,7 @@ def test_his_replay_capital_pool_endpoint_rebuilds_lots_at_selected_checkpoint(t
 
 def test_his_replay_capital_pool_keeps_board_lot_quantity_when_split_across_slots(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2529,7 +2530,7 @@ def test_his_replay_capital_pool_keeps_board_lot_quantity_when_split_across_slot
 
 def test_his_replay_snapshot_returns_only_first_page_for_heavy_tables(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2583,7 +2584,7 @@ def test_his_replay_snapshot_returns_only_first_page_for_heavy_tables(tmp_path):
 
 def test_his_replay_task_metrics_explain_low_win_rate_profitability(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2673,7 +2674,7 @@ def test_his_replay_task_metrics_explain_low_win_rate_profitability(tmp_path):
 
 def test_his_replay_signal_filters_are_applied_by_database(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2737,7 +2738,7 @@ def test_his_replay_signal_filters_are_applied_by_database(tmp_path):
 
 def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_failed(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -2795,7 +2796,7 @@ def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_fa
 
 def test_his_replay_start_returns_400_when_active_replay_exists(tmp_path):
     context = _make_context(tmp_path)
-    db = context.quant_db()
+    db = context.replay_db()
     db.create_sim_run(
         mode="historical_range",
         timeframe="30m",

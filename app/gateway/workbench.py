@@ -468,7 +468,7 @@ def build_workbench_snapshot(
             _metric(t("My watchlist"), total_watchlist),
             _metric(t("My positions"), summary.get("position_count", 0)),
             _metric(t("Quant candidates"), quant_count),
-            _metric(t("Quant jobs"), len(context.quant_db().get_sim_runs(limit=1000))),
+            _metric(t("Quant jobs"), len(context.replay_db().get_sim_runs(limit=1000))),
         ],
         "watchlist": {
             **_table(

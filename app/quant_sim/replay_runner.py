@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
+from app.quant_sim.db import DEFAULT_REPLAY_DB_FILE, QuantSimReplayDB
 
 
 _RUNNER_INSTANCES: dict[str, "QuantSimReplayRunner"] = {}
@@ -46,7 +46,7 @@ def _calculate_partial_metrics(
 
 
 def _mark_run_failed_from_worker_exit(
-    db: QuantSimDB,
+    db: QuantSimReplayDB,
     run_id: int,
     *,
     exc: BaseException | None,
@@ -97,7 +97,7 @@ def _worker_process_entry(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> None:
-    db = QuantSimDB(db_file)
+    db = QuantSimReplayDB(db_file)
     db.set_sim_run_worker_pid(run_id, os.getpid())
     try:
         target(*args, **kwargs)
@@ -130,9 +130,9 @@ def _is_pid_running(pid: int) -> bool:
 class QuantSimReplayRunner:
     """Run replay jobs in isolated worker processes and support cooperative cancellation."""
 
-    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
+    def __init__(self, db_file: str | Path = DEFAULT_REPLAY_DB_FILE):
         self.db_file = str(db_file)
-        self.db = QuantSimDB(db_file)
+        self.db = QuantSimReplayDB(db_file)
         self._ctx = multiprocessing.get_context("spawn")
         self._processes: dict[int, multiprocessing.Process] = {}
         self._lock = multiprocessing.Lock()
@@ -194,7 +194,7 @@ class QuantSimReplayRunner:
         return _is_pid_running(worker_pid)
 
 
-def get_quant_sim_replay_runner(db_file: str | Path = DEFAULT_DB_FILE) -> QuantSimReplayRunner:
+def get_quant_sim_replay_runner(db_file: str | Path = DEFAULT_REPLAY_DB_FILE) -> QuantSimReplayRunner:
     key = str(db_file)
     runner = _RUNNER_INSTANCES.get(key)
     if runner is None:

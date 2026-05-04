@@ -2,7 +2,7 @@ import json
 import time
 from pathlib import Path
 
-from app.quant_sim.db import QuantSimDB
+from app.quant_sim.db import QuantSimReplayDB
 from app.quant_sim.replay_runner import get_quant_sim_replay_runner
 
 
@@ -18,7 +18,7 @@ def _sleep_worker(seconds: float) -> None:
     time.sleep(seconds)
 
 
-def _wait_for_terminal_status(db: QuantSimDB, run_id: int, *, timeout_seconds: float = 2.0) -> dict:
+def _wait_for_terminal_status(db: QuantSimReplayDB, run_id: int, *, timeout_seconds: float = 2.0) -> dict:
     deadline = time.monotonic() + timeout_seconds
     last_run = db.get_sim_run(run_id)
     while time.monotonic() < deadline:
@@ -33,7 +33,7 @@ def _wait_for_terminal_status(db: QuantSimDB, run_id: int, *, timeout_seconds: f
     return last_run
 
 
-def _wait_for_matching_event(db: QuantSimDB, run_id: int, expected_text: str, *, timeout_seconds: float = 2.0) -> list[dict]:
+def _wait_for_matching_event(db: QuantSimReplayDB, run_id: int, expected_text: str, *, timeout_seconds: float = 2.0) -> list[dict]:
     deadline = time.monotonic() + timeout_seconds
     events: list[dict] = []
     while time.monotonic() < deadline:
@@ -45,8 +45,8 @@ def _wait_for_matching_event(db: QuantSimDB, run_id: int, expected_text: str, *,
 
 
 def test_replay_runner_persists_worker_pid_and_reports_running(tmp_path):
-    db_file = tmp_path / "app.quant_sim.db"
-    db = QuantSimDB(db_file)
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -68,8 +68,8 @@ def test_replay_runner_persists_worker_pid_and_reports_running(tmp_path):
 
 
 def test_replay_runner_marks_unhandled_worker_failure_as_failed(tmp_path):
-    db_file = tmp_path / "app.quant_sim.db"
-    db = QuantSimDB(db_file)
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",
@@ -96,8 +96,8 @@ def test_replay_runner_marks_unhandled_worker_failure_as_failed(tmp_path):
 
 
 def test_replay_runner_marks_silent_worker_exit_as_failed(tmp_path):
-    db_file = tmp_path / "app.quant_sim.db"
-    db = QuantSimDB(db_file)
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file)
     run_id = db.create_sim_run(
         mode="historical_range",
         timeframe="30m",

@@ -15,7 +15,7 @@ from app.quant_kernel import ReplayTimepointGenerator
 from app.quant_sim.candidate_pool_service import CandidatePoolService
 from app.quant_sim.capital_slots import DEFAULT_CAPITAL_SLOT_CONFIG
 from app.quant_sim.corporate_actions import AkshareCorporateActionProvider
-from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
+from app.quant_sim.db import DEFAULT_DB_FILE, DEFAULT_REPLAY_DB_FILE, QuantSimDB, QuantSimReplayDB
 from app.quant_sim.dynamic_strategy import (
     DEFAULT_AI_DYNAMIC_LOOKBACK,
     DEFAULT_AI_DYNAMIC_STRENGTH,
@@ -173,13 +173,18 @@ class QuantSimReplayService:
         self,
         db_file: str | Path = DEFAULT_DB_FILE,
         *,
+        replay_db_file: str | Path | None = None,
         snapshot_provider: Optional[MainProjectHistoricalSnapshotProvider] = None,
         adapter: Optional[StockPolicyAdapter] = None,
         timepoint_generator: Optional[ReplayTimepointGenerator] = None,
         corporate_action_provider: Optional[AkshareCorporateActionProvider] = None,
     ):
         self.db_file = str(db_file)
-        self.db = QuantSimDB(db_file)
+        if replay_db_file is None:
+            replay_db_file = DEFAULT_REPLAY_DB_FILE if str(db_file) == str(DEFAULT_DB_FILE) else Path(db_file).with_name("quant_sim_replay.db")
+        self.replay_db_file = str(replay_db_file)
+        self.shared_db = QuantSimDB(db_file)
+        self.db = QuantSimReplayDB(replay_db_file)
         self.snapshot_provider = snapshot_provider or MainProjectHistoricalSnapshotProvider()
         self.adapter = adapter or StockPolicyAdapter()
         self.timepoint_generator = timepoint_generator or ReplayTimepointGenerator()
@@ -310,11 +315,12 @@ class QuantSimReplayService:
             status="queued",
             status_message="等待后台任务启动",
         )
-        runner = get_quant_sim_replay_runner(db_file=self.db_file)
+        runner = get_quant_sim_replay_runner(db_file=self.replay_db_file)
         started = runner.start_run(
             run_id,
             execute_prepared_replay_worker,
             self.db_file,
+            self.replay_db_file,
             run_id,
             "historical_range",
             False,
@@ -401,7 +407,7 @@ class QuantSimReplayService:
         checkpoints = self.timepoint_generator.generate(start_dt, end_dt, timeframe)
         if not checkpoints:
             raise ValueError("指定区间内没有可用的交易检查点")
-        account_summary = self.db.get_account_summary()
+        account_summary = self.shared_db.get_account_summary()
         try:
             resolved_initial_cash = float(initial_cash) if initial_cash is not None else float(account_summary["initial_cash"])
         except (TypeError, ValueError):
@@ -416,7 +422,7 @@ class QuantSimReplayService:
             "total_equity": resolved_initial_cash,
         }
         scheduler_config = {
-            **self.db.get_scheduler_config(),
+            **self.shared_db.get_scheduler_config(),
             "capital_slot_enabled": True,
             "capital_pool_min_cash": float(DEFAULT_CAPITAL_SLOT_CONFIG["capital_pool_min_cash"]),
             "capital_pool_max_cash": 1_000_000_000_000.0,
@@ -428,7 +434,7 @@ class QuantSimReplayService:
             if strategy_profile_id not in (None, "")
             else scheduler_config.get("strategy_profile_id")
         ).strip() or None
-        strategy_profile_binding = self.db.resolve_strategy_profile_binding(selected_profile_id)
+        strategy_profile_binding = self.shared_db.resolve_strategy_profile_binding(selected_profile_id)
         dynamic_strategy_mode = str(
             ai_dynamic_strategy if ai_dynamic_strategy not in (None, "") else scheduler_config.get("ai_dynamic_strategy")
         ).strip().lower() or DEFAULT_AI_DYNAMIC_STRATEGY
@@ -1199,13 +1205,14 @@ class QuantSimReplayService:
 
 def execute_prepared_replay_worker(
     db_file: str,
+    replay_db_file: str,
     run_id: int,
     mode: str,
     handoff_to_live: bool,
     context: dict,
     auto_start_scheduler: bool,
 ) -> None:
-    service = QuantSimReplayService(db_file=db_file)
+    service = QuantSimReplayService(db_file=db_file, replay_db_file=replay_db_file)
     service._execute_prepared_replay(
         run_id=run_id,
         mode=mode,

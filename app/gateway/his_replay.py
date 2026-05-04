@@ -501,7 +501,7 @@ def _reconcile_stale_his_replay_runs(db: QuantSimDB) -> None:
 
 
 def _snapshot_his_replay_progress(context: UIApiContext, table_query: dict[str, Any] | None = None) -> dict[str, Any]:
-    db = context.quant_db()
+    db = context.replay_db()
     _reconcile_stale_his_replay_runs(db)
     query = table_query or {}
     runs = db.get_sim_runs(limit=20)
@@ -547,7 +547,7 @@ def _build_checkpoint_selector_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot_his_replay_capital_pool(context: UIApiContext, table_query: dict[str, Any] | None = None) -> dict[str, Any]:
-    db = context.quant_db()
+    db = context.replay_db()
     query = table_query or {}
     requested_run_id = _int(query.get("run_id"))
     run = db.get_sim_run(requested_run_id) if requested_run_id is not None else None
@@ -606,9 +606,10 @@ def _snapshot_his_replay_capital_pool(context: UIApiContext, table_query: dict[s
 
 
 def _snapshot_his_replay(context: UIApiContext, table_query: dict[str, Any] | None = None) -> dict[str, Any]:
-    db = context.quant_db()
+    db = context.replay_db()
     _reconcile_stale_his_replay_runs(db)
     scheduler_status = context.scheduler().get_status()
+    quant_db = context.quant_db()
     strategy_profiles = [
         {
             "id": _txt(item.get("id")),
@@ -616,7 +617,7 @@ def _snapshot_his_replay(context: UIApiContext, table_query: dict[str, Any] | No
             "enabled": bool(item.get("enabled", True)),
             "isDefault": bool(item.get("is_default", False)),
         }
-        for item in db.list_strategy_profiles(include_disabled=False)
+        for item in quant_db.list_strategy_profiles(include_disabled=False)
     ]
     runs = db.get_sim_runs(limit=20)
     query = table_query or {}
@@ -847,10 +848,10 @@ def _action_his_replay_cancel(context: UIApiContext, payload: Any) -> dict[str, 
     body = _payload_dict(payload)
     run_id = _int(body.get("id"))
     if run_id is None:
-        latest = next(iter(context.quant_db().get_sim_runs(limit=1)), None)
+        latest = next(iter(context.replay_db().get_sim_runs(limit=1)), None)
         run_id = _int(latest.get("id")) if latest else None
     if run_id is not None:
-        db = context.quant_db()
+        db = context.replay_db()
         db.request_sim_run_cancel(run_id)
         run = db.get_sim_run(run_id)
         if run is not None and not _his_replay_run_has_live_worker(run):
@@ -864,5 +865,5 @@ def _action_his_replay_delete(context: UIApiContext, payload: Any) -> dict[str, 
     body = _payload_dict(payload)
     run_id = _int(body.get("id"))
     if run_id is not None:
-        context.quant_db().delete_sim_run(run_id)
+        context.replay_db().delete_sim_run(run_id)
     return _snapshot_his_replay(context)

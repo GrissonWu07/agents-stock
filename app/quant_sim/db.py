@@ -25,6 +25,7 @@ from app.runtime_paths import default_db_path
 
 
 DEFAULT_DB_FILE = str(default_db_path("quant_sim.db"))
+DEFAULT_REPLAY_DB_FILE = str(default_db_path("quant_sim_replay.db"))
 TRADING_DAY_CALENDAR = ReplayTimepointGenerator()
 DEFAULT_ANALYSIS_TIMEFRAME = "30m"
 SUPPORTED_ANALYSIS_TIMEFRAMES = {"30m", "1d", "1d+30m"}
@@ -87,6 +88,7 @@ class QuantSimDB:
 
     _init_lock = threading.Lock()
     _initialized_db_files: set[str] = set()
+    include_replay_tables = False
 
     def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
         self.db_file = str(db_file)
@@ -370,6 +372,34 @@ class QuantSimDB:
         )
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS strategy_profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strategy_profile_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                config_json TEXT NOT NULL,
+                note TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                UNIQUE(profile_id, version),
+                FOREIGN KEY(profile_id) REFERENCES strategy_profiles(id)
+            )
+            """
+        )
+        if self.include_replay_tables:
+            cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS sim_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mode TEXT NOT NULL,
@@ -403,6 +433,56 @@ class QuantSimDB:
             )
             """
         )
+        if not self.include_replay_tables:
+            self._drop_replay_tables_from_live_db(cursor)
+            self._ensure_column(cursor, "strategy_signals", "decision_type", "TEXT")
+            self._ensure_column(cursor, "strategy_signals", "tech_score", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "strategy_signals", "context_score", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "strategy_signals", "strategy_profile_json", "TEXT")
+            self._ensure_column(cursor, "sim_positions", "peak_price", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl_pct", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "sim_positions", "peak_at", "TEXT")
+            self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT")
+            self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
+            self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
+            self._ensure_column(cursor, "sim_position_lots", "closed_at", "TEXT")
+            self._ensure_column(cursor, "sim_scheduler_config", "auto_execute", "INTEGER DEFAULT 0")
+            self._ensure_column(cursor, "sim_scheduler_config", "analysis_timeframe", "TEXT DEFAULT '30m'")
+            self._ensure_column(cursor, "sim_scheduler_config", "strategy_mode", "TEXT DEFAULT 'auto'")
+            self._ensure_column(cursor, "sim_scheduler_config", "strategy_profile_id", "TEXT")
+            self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_strategy", "TEXT DEFAULT 'off'")
+            self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_strength", f"REAL DEFAULT {DEFAULT_AI_DYNAMIC_STRENGTH}")
+            self._ensure_column(cursor, "sim_scheduler_config", "ai_dynamic_lookback", f"INTEGER DEFAULT {DEFAULT_AI_DYNAMIC_LOOKBACK}")
+            self._ensure_column(cursor, "sim_scheduler_config", "start_date", "TEXT")
+            self._ensure_column(cursor, "sim_scheduler_config", "commission_rate", f"REAL DEFAULT {DEFAULT_COMMISSION_RATE}")
+            self._ensure_column(cursor, "sim_scheduler_config", "sell_tax_rate", f"REAL DEFAULT {DEFAULT_SELL_TAX_RATE}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_slot_enabled", "INTEGER DEFAULT 1")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_pool_min_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_POOL_MIN_CASH}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_pool_max_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_POOL_MAX_CASH}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_slot_min_cash", f"REAL DEFAULT {DEFAULT_CAPITAL_SLOT_MIN_CASH}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_max_slots", f"INTEGER DEFAULT {DEFAULT_CAPITAL_MAX_SLOTS}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_min_buy_slot_fraction", f"REAL DEFAULT {DEFAULT_CAPITAL_MIN_BUY_SLOT_FRACTION}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_full_buy_edge", f"REAL DEFAULT {DEFAULT_CAPITAL_FULL_BUY_EDGE}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_confidence_weight", f"REAL DEFAULT {DEFAULT_CAPITAL_CONFIDENCE_WEIGHT}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_threshold", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_max_slot_units", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS}")
+            self._ensure_column(cursor, "sim_scheduler_config", "capital_sell_cash_reuse_policy", "TEXT DEFAULT 'next_batch'")
+            for table_name in ("sim_trades",):
+                self._ensure_column(cursor, table_name, "gross_amount", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "commission_fee", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "sell_tax_fee", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "net_amount", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "fee_total", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "trade_metadata_json", "TEXT")
+            self._backfill_candidate_sources(cursor)
+            self._backfill_lot_defaults(cursor)
+            self._ensure_sim_account(cursor)
+            self._ensure_scheduler_config(cursor)
+            self._ensure_default_strategy_profile(cursor)
+            conn.commit()
+            conn.close()
+            return
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS strategy_profiles (
@@ -523,14 +603,28 @@ class QuantSimDB:
                 confidence INTEGER DEFAULT 0,
                 reasoning TEXT,
                 position_size_pct REAL DEFAULT 0,
+                stop_loss_pct REAL DEFAULT 0,
+                take_profit_pct REAL DEFAULT 0,
                 decision_type TEXT,
                 tech_score REAL DEFAULT 0,
                 context_score REAL DEFAULT 0,
-                strategy_profile_json TEXT,
                 checkpoint_at TEXT,
                 signal_status TEXT,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sim_run_signal_details (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_id INTEGER NOT NULL UNIQUE,
+                strategy_profile_json TEXT,
+                explainability_json TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                FOREIGN KEY(signal_id) REFERENCES sim_run_signals(id)
             )
             """
         )
@@ -615,24 +709,34 @@ class QuantSimDB:
         self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_threshold", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_THRESHOLD}")
         self._ensure_column(cursor, "sim_scheduler_config", "capital_high_price_max_slot_units", f"REAL DEFAULT {DEFAULT_CAPITAL_HIGH_PRICE_MAX_SLOT_UNITS}")
         self._ensure_column(cursor, "sim_scheduler_config", "capital_sell_cash_reuse_policy", "TEXT DEFAULT 'next_batch'")
-        self._ensure_column(cursor, "sim_runs", "progress_current", "INTEGER DEFAULT 0")
-        self._ensure_column(cursor, "sim_runs", "progress_total", "INTEGER DEFAULT 0")
-        self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
-        self._ensure_column(cursor, "sim_runs", "cancel_requested", "INTEGER DEFAULT 0")
-        self._ensure_column(cursor, "sim_runs", "worker_pid", "INTEGER")
-        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_id", "TEXT")
-        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_name", "TEXT")
-        self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_version_id", "INTEGER")
-        self._ensure_column(cursor, "sim_runs", "strategy_profile_snapshot_json", "TEXT")
-        self._ensure_column(cursor, "sim_run_trades", "signal_id", "INTEGER")
-        for table_name in ("sim_trades", "sim_run_trades"):
+        for table_name in ("sim_trades",):
             self._ensure_column(cursor, table_name, "gross_amount", "REAL DEFAULT 0")
             self._ensure_column(cursor, table_name, "commission_fee", "REAL DEFAULT 0")
             self._ensure_column(cursor, table_name, "sell_tax_fee", "REAL DEFAULT 0")
             self._ensure_column(cursor, table_name, "net_amount", "REAL DEFAULT 0")
             self._ensure_column(cursor, table_name, "fee_total", "REAL DEFAULT 0")
             self._ensure_column(cursor, table_name, "trade_metadata_json", "TEXT")
-        self._ensure_column(cursor, "sim_run_signals", "source_signal_id", "INTEGER")
+        if self.include_replay_tables:
+            self._ensure_column(cursor, "sim_runs", "progress_current", "INTEGER DEFAULT 0")
+            self._ensure_column(cursor, "sim_runs", "progress_total", "INTEGER DEFAULT 0")
+            self._ensure_column(cursor, "sim_runs", "status_message", "TEXT")
+            self._ensure_column(cursor, "sim_runs", "cancel_requested", "INTEGER DEFAULT 0")
+            self._ensure_column(cursor, "sim_runs", "worker_pid", "INTEGER")
+            self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_id", "TEXT")
+            self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_name", "TEXT")
+            self._ensure_column(cursor, "sim_runs", "selected_strategy_profile_version_id", "INTEGER")
+            self._ensure_column(cursor, "sim_runs", "strategy_profile_snapshot_json", "TEXT")
+            self._ensure_column(cursor, "sim_run_trades", "signal_id", "INTEGER")
+            self._ensure_column(cursor, "sim_run_signals", "stop_loss_pct", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "sim_run_signals", "take_profit_pct", "REAL DEFAULT 0")
+            for table_name in ("sim_run_trades",):
+                self._ensure_column(cursor, table_name, "gross_amount", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "commission_fee", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "sell_tax_fee", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "net_amount", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "fee_total", "REAL DEFAULT 0")
+                self._ensure_column(cursor, table_name, "trade_metadata_json", "TEXT")
+            self._ensure_column(cursor, "sim_run_signals", "source_signal_id", "INTEGER")
 
         self._backfill_candidate_sources(cursor)
         self._backfill_lot_defaults(cursor)
@@ -642,6 +746,19 @@ class QuantSimDB:
 
         conn.commit()
         conn.close()
+
+    def _drop_replay_tables_from_live_db(self, cursor: sqlite3.Cursor) -> None:
+        for table_name in (
+            "sim_run_signal_details",
+            "sim_run_signals",
+            "sim_run_trades",
+            "sim_run_snapshots",
+            "sim_run_positions",
+            "sim_run_checkpoints",
+            "sim_run_events",
+            "sim_runs",
+        ):
+            cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
 
     def add_candidate(self, candidate: dict[str, Any]) -> int:
         payload = {
@@ -1617,6 +1734,13 @@ class QuantSimDB:
         cursor.execute("DELETE FROM sim_run_trades WHERE run_id = ?", (run_id,))
         cursor.execute("DELETE FROM sim_run_snapshots WHERE run_id = ?", (run_id,))
         cursor.execute("DELETE FROM sim_run_positions WHERE run_id = ?", (run_id,))
+        cursor.execute(
+            """
+            DELETE FROM sim_run_signal_details
+            WHERE signal_id IN (SELECT id FROM sim_run_signals WHERE run_id = ?)
+            """,
+            (run_id,),
+        )
         cursor.execute("DELETE FROM sim_run_signals WHERE run_id = ?", (run_id,))
         cursor.execute("DELETE FROM sim_run_events WHERE run_id = ?", (run_id,))
         cursor.execute("DELETE FROM sim_runs WHERE id = ?", (run_id,))
@@ -1941,6 +2065,13 @@ class QuantSimDB:
             cursor.execute("DELETE FROM sim_run_trades WHERE run_id = ?", (run_id,))
             cursor.execute("DELETE FROM sim_run_snapshots WHERE run_id = ?", (run_id,))
             cursor.execute("DELETE FROM sim_run_positions WHERE run_id = ?", (run_id,))
+            cursor.execute(
+                """
+                DELETE FROM sim_run_signal_details
+                WHERE signal_id IN (SELECT id FROM sim_run_signals WHERE run_id = ?)
+                """,
+                (run_id,),
+            )
             cursor.execute("DELETE FROM sim_run_signals WHERE run_id = ?", (run_id,))
 
             self._insert_sim_run_snapshots_with_cursor(cursor, run_id, snapshots)
@@ -2372,7 +2503,7 @@ class QuantSimDB:
         offset: int = 0,
         actions: list[str] | tuple[str, ...] | None = None,
         stock_keyword: str | None = None,
-        include_strategy_profile: bool = True,
+        include_strategy_profile: bool = False,
     ) -> list[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
@@ -2423,8 +2554,21 @@ class QuantSimDB:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM sim_run_signals WHERE id = ?", (signal_id,))
         row = cursor.fetchone()
+        detail = None
+        if row is not None:
+            cursor.execute("SELECT * FROM sim_run_signal_details WHERE signal_id = ?", (signal_id,))
+            detail = cursor.fetchone()
         conn.close()
-        return self._signal_row_to_dict(row) if row is not None else None
+        if row is None:
+            return None
+        payload = self._signal_row_to_dict(row, include_strategy_profile=False)
+        if detail is not None:
+            payload["strategy_profile"] = self._loads_metadata(detail["strategy_profile_json"])
+            payload["explainability"] = self._loads_metadata(detail["explainability_json"])
+        else:
+            payload["strategy_profile"] = {}
+            payload["explainability"] = {}
+        return payload
 
     def get_default_strategy_profile_id(self) -> str:
         conn = self._connect()
@@ -2611,13 +2755,20 @@ class QuantSimDB:
                 int(signal.get("confidence") or 0),
                 signal.get("reasoning"),
                 float(signal.get("position_size_pct") or 0),
+                float(signal.get("stop_loss_pct") or 0),
+                float(signal.get("take_profit_pct") or 0),
                 signal.get("decision_type"),
                 float(signal.get("tech_score") or 0),
                 float(signal.get("context_score") or 0),
-                self._dumps_metadata(signal.get("strategy_profile")),
                 checkpoint_at,
                 signal.get("status") or signal.get("signal_status") or "observed",
                 created_at,
+            )
+            strategy_profile_json = self._dumps_metadata(signal.get("strategy_profile"))
+            explainability_json = self._dumps_metadata(
+                (signal.get("strategy_profile") or {}).get("explainability")
+                if isinstance(signal.get("strategy_profile"), dict)
+                else {}
             )
 
             existing_id: int | None = None
@@ -2641,10 +2792,10 @@ class QuantSimDB:
                     INSERT INTO sim_run_signals
                     (
                         run_id, source_signal_id, stock_code, stock_name, action, confidence, reasoning,
-                        position_size_pct, decision_type, tech_score, context_score,
-                        strategy_profile_json, checkpoint_at, signal_status, created_at
+                        position_size_pct, stop_loss_pct, take_profit_pct, decision_type, tech_score, context_score,
+                        checkpoint_at, signal_status, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -2660,10 +2811,11 @@ class QuantSimDB:
                         confidence = ?,
                         reasoning = ?,
                         position_size_pct = ?,
+                        stop_loss_pct = ?,
+                        take_profit_pct = ?,
                         decision_type = ?,
                         tech_score = ?,
                         context_score = ?,
-                        strategy_profile_json = ?,
                         checkpoint_at = ?,
                         signal_status = ?,
                         created_at = ?
@@ -2672,6 +2824,19 @@ class QuantSimDB:
                     payload[1:] + (existing_id,),
                 )
                 persisted_id = existing_id
+
+            cursor.execute(
+                """
+                INSERT INTO sim_run_signal_details
+                (signal_id, strategy_profile_json, explainability_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(signal_id) DO UPDATE SET
+                    strategy_profile_json = excluded.strategy_profile_json,
+                    explainability_json = excluded.explainability_json,
+                    updated_at = excluded.updated_at
+                """,
+                (persisted_id, strategy_profile_json, explainability_json, created_at, self._now()),
+            )
 
             if source_signal_id is not None:
                 persisted_signal_ids_by_source_id[source_signal_id] = persisted_id
@@ -5613,3 +5778,34 @@ class QuantSimDB:
     @staticmethod
     def _now() -> str:
         return format_utc_iso_z()
+
+
+class QuantSimReplayDB(QuantSimDB):
+    """Persistence layer for historical replay artifacts."""
+
+    include_replay_tables = True
+    _replay_owned_tables = {
+        "sim_runs",
+        "sim_run_checkpoints",
+        "sim_run_events",
+        "sim_run_trades",
+        "sim_run_snapshots",
+        "sim_run_positions",
+        "sim_run_signals",
+        "sim_run_signal_details",
+    }
+
+    def __init__(self, db_file: str | Path = DEFAULT_REPLAY_DB_FILE):
+        super().__init__(db_file)
+
+    def _init_database(self) -> None:
+        super()._init_database()
+        conn = self._connect(timeout=1.0)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        table_names = [str(row["name"]) for row in cursor.fetchall()]
+        for table_name in table_names:
+            if table_name not in self._replay_owned_tables:
+                cursor.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        conn.commit()
+        conn.close()
