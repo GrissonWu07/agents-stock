@@ -16,7 +16,7 @@ Status: Draft for review
 
 1. `/portfolio` 明确升级为“持仓诊断”页面，覆盖持仓列表、组合诊断、组合最终建议、个股详情、分析师观点、个股最终建议。
 2. `/live-sim` 保持“实时模拟账户执行台”定位，只展示执行状态、策略配置、候选池、资金槽、信号、成交和费用统计。
-3. 明确数据口径：持仓诊断默认使用 portfolio 持仓分析口径；实时模拟账户数据只在 `/live-sim` 展示，或在 `/portfolio` 中带明确来源标签。
+3. 明确数据口径：`/portfolio` 展示层合并 portfolio 持仓、live-sim 持仓、候选池和关注池为统一股票诊断列表；底层账户、成本、收益和执行状态仍按来源隔离。
 4. 修复技术指标映射，保证价格均线和成交量均线不混淆。
 5. 让组合级最终建议可追溯，必须展示建议动作、目标仓位、主要原因和优先处理对象。
 6. 让个股最终建议优先展示，并和分析师观点形成一个完整分析 block。
@@ -81,9 +81,25 @@ Status: Draft for review
 
 ## 数据口径
 
-### 持仓诊断口径
+### 统一股票诊断列表
 
-`/portfolio` 的默认账户和持仓指标使用 portfolio 持仓分析口径。
+`/portfolio` 只展示一个统一股票诊断列表。该列表按 `symbol` 去重，合并以下来源：
+
+1. portfolio 持仓分析库。
+2. live-sim 实时模拟账户。
+3. 量化候选池。
+4. 关注池 / watchlist。
+5. 已缓存的个股分析结果。
+
+合并规则：
+
+1. 同一股票只显示一行。
+2. 行内必须展示来源标签：`portfolio`、`live_sim`、`candidate_pool`、`watchlist`、`analysis_cache`。
+3. 如果同一股票同时存在 portfolio 和 live-sim 持仓，不能互相覆盖成本、数量和收益。
+4. portfolio 持仓字段和 live-sim 持仓字段必须分开保存到 row payload。
+5. 默认排序优先级：任一来源有持仓 > 高风险 > 浮亏金额大 > 接近止损 > 候选观察。
+
+### portfolio 持仓口径
 
 字段含义：
 
@@ -99,26 +115,31 @@ Status: Draft for review
 
 `/live-sim` 继续使用 live `quant_sim.db` 中的账户、持仓、信号、成交、资金槽。
 
-`/portfolio` 如果引用实时模拟数据，必须满足：
+`/portfolio` 合并展示 live-sim 股票时，必须满足：
 
 1. 文案标注“来自实时模拟账户”。
-2. 不参与 portfolio 持仓列表的默认组合收益、仓位占比和组合最终建议。
-3. 只作为“相关实时模拟信号”或跳转引用。
+2. live-sim 数量、成本、市值、浮盈亏进入 live-sim 专属字段。
+3. live-sim 指标不参与 portfolio 组合收益、portfolio 仓位占比和 portfolio 组合最终建议。
+4. 统一列表可以提供“诊断口径”切换：`全部股票`、`portfolio 持仓`、`实时模拟持仓`、`候选观察`。
 
 ### 持仓状态分类
 
-`/portfolio` 的列表必须区分：
+统一股票诊断列表必须区分：
 
-1. `current_holding`：持仓数量大于 0。
-2. `closed_analysis`：持仓数量等于 0，但存在历史分析或近期实时模拟交易引用。
-3. `watch_candidate`：无持仓，但在候选池或关注池中。
+1. `portfolio_holding`：portfolio 持仓数量大于 0。
+2. `live_sim_holding`：live-sim 当前持仓数量大于 0。
+3. `dual_holding`：portfolio 和 live-sim 都有持仓。
+4. `closed_analysis`：当前无持仓，但存在历史分析、近期交易或缓存分析。
+5. `watch_candidate`：无持仓，但在候选池或关注池中。
 
-默认列表只显示 `current_holding`。页面必须提供状态筛选：
+默认列表显示全部有诊断价值的股票，但通过筛选快速收敛。页面必须提供状态筛选：
 
-1. 当前持仓。
-2. 已清仓分析。
-3. 候选观察。
-4. 全部。
+1. 全部。
+2. portfolio 持仓。
+3. 实时模拟持仓。
+4. 双口径持仓。
+5. 已清仓分析。
+6. 候选观察。
 
 ## 技术指标映射
 
@@ -185,7 +206,7 @@ Status: Draft for review
 
 1. 组合最终建议。
 2. 组合诊断指标。
-3. 状态筛选和操作。
+3. 口径筛选、状态筛选和操作。
 
 ### 组合最终建议
 
@@ -245,25 +266,26 @@ Status: Draft for review
 
 1. 代码。
 2. 名称。
-3. 状态。
-4. 行业/板块。
-5. 持仓数量。
-6. 成本价。
-7. 现价。
-8. 市值。
-9. 仓位占比。
-10. 浮盈亏金额。
-11. 浮盈亏率。
-12. 距止损。
-13. 距止盈。
-14. 最新信号。
-15. 建议动作。
-16. 风险标签。
-17. 分析更新时间。
+3. 来源。
+4. 状态。
+5. 行业/板块。
+6. portfolio 持仓。
+7. live-sim 持仓。
+8. 现价。
+9. portfolio 市值。
+10. live-sim 市值。
+11. portfolio 浮盈亏。
+12. live-sim 浮盈亏。
+13. 距止损。
+14. 距止盈。
+15. 最新信号。
+16. 建议动作。
+17. 风险标签。
+18. 分析更新时间。
 
 排序默认规则：
 
-1. 当前持仓优先。
+1. 任一来源有持仓优先。
 2. 高风险持仓优先。
 3. 浮亏金额大的优先。
 4. 接近止损的优先。
@@ -439,7 +461,9 @@ Status: Draft for review
   },
   "metrics": [],
   "holdingGroups": {
-    "currentHolding": [],
+    "portfolioHolding": [],
+    "liveSimHolding": [],
+    "dualHolding": [],
     "closedAnalysis": [],
     "watchCandidate": []
   },
@@ -460,13 +484,23 @@ Status: Draft for review
   "symbol": "601918",
   "stockName": "新集能源",
   "positionStatus": "watch_candidate",
+  "sources": ["candidate_pool", "analysis_cache"],
   "positionSummary": {
-    "quantity": 0,
-    "costPrice": 0,
+    "portfolio": {
+      "quantity": 0,
+      "costPrice": 0,
+      "marketValue": 0,
+      "unrealizedPnl": 0,
+      "unrealizedPnlPct": null
+    },
+    "liveSim": {
+      "quantity": 0,
+      "costPrice": 0,
+      "marketValue": 0,
+      "unrealizedPnl": 0,
+      "unrealizedPnlPct": null
+    },
     "latestPrice": 8.95,
-    "marketValue": 0,
-    "unrealizedPnl": 0,
-    "unrealizedPnlPct": null,
     "takeProfit": null,
     "stopLoss": null,
     "distanceToTakeProfitPct": null,
@@ -501,28 +535,31 @@ Status: Draft for review
 ## 实施顺序
 
 1. 修复技术指标 key 和前端匹配，先保证数据正确。
-2. 分离 `/portfolio` 的 portfolio 口径和 live-sim 口径。
-3. 新增持仓状态分类和诊断指标。
-4. 增强持仓列表字段。
-5. 重做组合最终建议和组合诊断卡片。
-6. 重排个股详情页面，把最终建议、共识、分歧点、分析师观点和完整原文合并为一个分析 block。
-7. 调整 `/live-sim` 文案和持仓快照，避免深度诊断重复。
-8. 补充单元测试和前端构建验证。
+2. 构建 `/portfolio` 统一股票诊断列表，按 symbol 合并 portfolio、live-sim、候选池、关注池和分析缓存。
+3. 在统一列表中分离 portfolio 口径和 live-sim 口径字段。
+4. 新增持仓状态分类和诊断指标。
+5. 增强持仓列表字段。
+6. 重做组合最终建议和组合诊断卡片。
+7. 重排个股详情页面，把最终建议、共识、分歧点、分析师观点和完整原文合并为一个分析 block。
+8. 调整 `/live-sim` 文案和持仓快照，避免深度诊断重复。
+9. 补充单元测试和前端构建验证。
 
 ## 测试要求
 
 ### 后端
 
 1. 指标映射测试：`MA5` 不得匹配 `Volume MA5`。
-2. portfolio 口径测试：`/portfolio` 默认 metrics 不使用 live-sim account summary。
-3. 持仓状态分类测试：quantity > 0、quantity = 0、有候选池记录分别进入正确状态。
-4. 组合诊断测试：亏损数、接近止损数、集中度、风险标签计算正确。
-5. 相关信号测试：个股详情只返回该股简要 signal summary。
+2. 统一列表合并测试：同一 symbol 在 portfolio、live-sim、候选池同时存在时只返回一行，并保留所有来源标签。
+3. portfolio 口径测试：`/portfolio` 默认 portfolio metrics 不使用 live-sim account summary。
+4. live-sim 口径测试：live-sim 数量、成本、市值、浮盈亏只进入 live-sim 字段，不覆盖 portfolio 字段。
+5. 持仓状态分类测试：portfolio 持仓、live-sim 持仓、双口径持仓、已清仓分析、候选观察分别进入正确状态。
+6. 组合诊断测试：亏损数、接近止损数、集中度、风险标签计算正确。
+7. 相关信号测试：个股详情只返回该股简要 signal summary。
 
 ### 前端
 
 1. `/portfolio` 默认展示持仓诊断，不展示资金槽 board。
-2. `/portfolio` 表格展示新增诊断列。
+2. `/portfolio` 表格展示统一股票诊断列表和新增诊断列。
 3. `/portfolio/position/:symbol` 首屏能看到最终建议和持仓风控摘要。
 4. 分析师观点和最终建议在同一个分析 block 内。
 5. `/live-sim` 持仓只作为模拟账户快照，股票链接跳转到个股详情。
@@ -531,7 +568,7 @@ Status: Draft for review
 ## 验收标准
 
 1. 用户打开 `/portfolio`，能先看到组合最终建议和组合风险，而不是只看到基础表格。
-2. 用户能区分当前持仓、已清仓分析、候选观察。
+2. 用户只看到一个股票诊断列表，并能区分 portfolio 持仓、实时模拟持仓、双口径持仓、已清仓分析、候选观察。
 3. 用户打开个股详情，首屏能回答“现在要买、持有、减仓、卖出还是观察”。
 4. 用户能看到最终建议来自哪些原因和哪些分析师观点。
 5. 用户打开 `/live-sim`，能明确这是模拟账户执行台，而不是另一个持仓诊断页。
@@ -543,13 +580,13 @@ Status: Draft for review
 ### 第一轮：产品边界
 
 1. `/portfolio` 和 `/live-sim` 的职责已分别定义。
-2. 重复展示的持仓信息已按“诊断口径”和“执行口径”拆开。
+2. 重复展示的持仓信息已改为 `/portfolio` 统一股票诊断列表，行内保留不同来源口径。
 3. `/portfolio` 只保留相关信号摘要，不展示完整执行链路。
 4. `/live-sim` 不再承载多分析师深度诊断。
 
 ### 第二轮：数据正确性
 
 1. 技术指标错配被列为第一实施步骤和验收标准。
-2. portfolio 和 live-sim 的账户口径已明确隔离。
-3. 持仓数量为 0 的股票不会被默认当成当前持仓。
+2. portfolio 和 live-sim 的账户口径已明确隔离，但展示层按 symbol 合并。
+3. 持仓数量为 0 的股票不会被默认当成 portfolio 当前持仓。
 4. 组合最终建议要求携带原因和优先处理对象，避免只有一句动作。
