@@ -250,7 +250,7 @@ def calculate_slot_units(
 def gate_size_multiplier(signal: dict[str, Any]) -> float:
     profile = _nested_dict(signal.get("strategy_profile"))
     multipliers: list[float] = []
-    for key in ("reentry_gate", "stock_execution_feedback_gate"):
+    for key in ("reentry_gate", "stock_execution_feedback_gate", "portfolio_execution_guard"):
         gate = _nested_dict(profile.get(key))
         if str(gate.get("status") or "").strip().lower() != "downgraded":
             continue

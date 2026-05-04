@@ -192,11 +192,12 @@ def test_signal_center_records_downgrade_without_pre_scaling_position_size(tmp_p
             "position_size_pct": 50,
             "reasoning": "retry",
             "decision_time": "2026-01-08 10:00:00",
-            "strategy_profile": {
-                "stock_execution_feedback_policy": _policy(loss_amount_threshold=-1000, loss_reentry_size_multiplier=0.5),
-                "market_snapshot": _snapshot(current_price=12.0, ma5=11.5, ma10=11.0, ma20=10.5, ma20_slope=0.02),
+                "strategy_profile": {
+                    "stock_execution_feedback_policy": _policy(loss_amount_threshold=-1000, loss_reentry_size_multiplier=0.5),
+                    "portfolio_execution_guard_policy": {"enabled": False},
+                    "market_snapshot": _snapshot(current_price=12.0, ma5=11.5, ma10=11.0, ma20=10.5, ma20_slope=0.02),
+                },
             },
-        },
         notify=False,
     )
 

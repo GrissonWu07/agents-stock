@@ -33,6 +33,19 @@ def _fusion_signal(
         "price": price,
         "strategy_profile": {
             "effective_thresholds": {"min_fusion_confidence": 0.4},
+            "selected_strategy_profile": {"id": "aggressive"},
+            "market_snapshot": {
+                "current_price": price,
+                "ma5": price * 1.02,
+                "ma10": price * 1.01,
+                "ma20": price * 0.98,
+                "ma20_slope": 0.02,
+                "volume_ratio": 1.8,
+                "recent_checkpoints": [
+                    {"close": price * 0.99, "ma20": price * 0.97, "ma20_slope": 0.01},
+                    {"close": price, "ma20": price * 0.975, "ma20_slope": 0.02},
+                ],
+            },
             "explainability": {
                 "fusion_breakdown": {
                     "fusion_score": fusion_score,
@@ -208,6 +221,48 @@ def test_stock_execution_feedback_gate_size_multiplier_reduces_slot_units_once()
 
     assert reduced["reentry_size_multiplier"] == 0.5
     assert reduced["slot_units"] == max(round(base["slot_units"] * 0.5, 6), reduced["one_lot_floor_units"])
+
+
+def test_portfolio_execution_guard_size_multiplier_reduces_slot_units_once():
+    signal = _fusion_signal("300857", fusion_score=0.60, buy_threshold=0.35, fusion_confidence=0.90, price=180.59)
+    downgraded = {
+        **signal,
+        "strategy_profile": {
+            **signal["strategy_profile"],
+            "portfolio_execution_guard": {
+                "status": "downgraded",
+                "size_multiplier": 0.35,
+            },
+        },
+    }
+
+    base = calculate_slot_units(
+        signal,
+        price=180.59,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+    )
+    reduced = calculate_slot_units(
+        downgraded,
+        price=180.59,
+        slot_budget=100000,
+        commission_rate=0.00025,
+        config=DEFAULT_CAPITAL_SLOT_CONFIG,
+    )
+
+    assert reduced["reentry_size_multiplier"] == 0.35
+    assert abs(reduced["slot_units"] - max(round(base["slot_units"] * 0.35, 6), reduced["one_lot_floor_units"])) <= 0.000002
+
+
+def test_portfolio_execution_guard_zero_multiplier_is_preserved():
+    signal = _fusion_signal("300857", fusion_score=0.60, buy_threshold=0.35, fusion_confidence=0.90, price=180.59)
+    signal["strategy_profile"]["portfolio_execution_guard"] = {
+        "status": "downgraded",
+        "size_multiplier": 0.0,
+    }
+
+    assert gate_size_multiplier(signal) == 0.0
 
 
 def test_gate_size_multiplier_preserves_zero_multiplier():

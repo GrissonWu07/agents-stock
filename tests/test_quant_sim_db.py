@@ -325,6 +325,21 @@ def test_builtin_strategy_profiles_tier_stock_execution_feedback_policy(tmp_path
     assert aggressive["stop_loss_cooldown_days"] < stable["stop_loss_cooldown_days"] < conservative["stop_loss_cooldown_days"]
 
 
+def test_builtin_strategy_profiles_tier_portfolio_execution_guard_policy(tmp_path):
+    db = QuantSimDB(tmp_path / "app.quant_sim.db")
+
+    configs = db._build_builtin_strategy_profile_configs()
+    aggressive = configs["aggressive"]["base"]["context"]["portfolio_execution_guard_policy"]
+    stable = configs["stable"]["base"]["context"]["portfolio_execution_guard_policy"]
+    conservative = configs["conservative"]["base"]["context"]["portfolio_execution_guard_policy"]
+
+    assert aggressive["weak_edge_abs"] < stable["weak_edge_abs"] < conservative["weak_edge_abs"]
+    assert aggressive["confirm_checkpoints"] < stable["confirm_checkpoints"] <= conservative["confirm_checkpoints"]
+    assert aggressive["max_new_buys_per_checkpoint"] > stable["max_new_buys_per_checkpoint"] == conservative["max_new_buys_per_checkpoint"]
+    assert aggressive["cooldown_size_multiplier"] > stable["cooldown_size_multiplier"] > conservative["cooldown_size_multiplier"]
+    assert aggressive["loss_budget_pct"] < stable["loss_budget_pct"] < conservative["loss_budget_pct"]
+
+
 def test_aggressive_candidate_profile_downweights_low_value_missing_dimensions(tmp_path):
     db = QuantSimDB(tmp_path / "app.quant_sim.db")
 

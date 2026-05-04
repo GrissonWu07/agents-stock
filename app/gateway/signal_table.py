@@ -17,6 +17,9 @@ SIGNAL_SUMMARY_COLUMNS = [
     "股票代码",
     "股票名称",
     "动作",
+    "BUY分层",
+    "仓位倍率",
+    "防守原因",
     "执行状态",
     "市场状态",
     "趋势",
@@ -83,6 +86,27 @@ def _signal_market_snapshot(profile: dict[str, Any], explainability: dict[str, A
     return {}
 
 
+def _portfolio_guard_summary(profile: dict[str, Any]) -> tuple[str, str, str]:
+    gate = _safe_dict(profile.get("portfolio_execution_guard"))
+    if not gate:
+        return "--", "--", "--"
+    tier = _txt(gate.get("buy_tier_label") or gate.get("buy_tier"), "--")
+    score = _metric_text(gate.get("buy_strength_score"))
+    multiplier = _metric_text(gate.get("size_multiplier"))
+    reasons: list[str] = []
+    for source in (
+        gate.get("reasons"),
+        _safe_dict(gate.get("portfolio_guard")).get("reasons"),
+        gate.get("late_rebound_reasons"),
+    ):
+        if not isinstance(source, list):
+            continue
+        reasons.extend(_txt(item) for item in source if _txt(item))
+    tier_text = tier if score == "--" else f"{tier} · {score}"
+    multiplier_text = "--" if multiplier == "--" else f"x{multiplier}"
+    return tier_text, multiplier_text, "；".join(reasons) if reasons else "--"
+
+
 def build_signal_summary_row(item: dict[str, Any], index: int, *, time_key: str, status_key: str) -> dict[str, Any]:
     signal_id = _txt(item.get("id"), str(index))
     profile = _safe_dict(item.get("strategy_profile"))
@@ -101,6 +125,7 @@ def build_signal_summary_row(item: dict[str, Any], index: int, *, time_key: str,
     volume_ratio = _first_non_empty(market, ["volume_ratio", "Volume_ratio", "量比"])
     if volume_ratio is None:
         volume_ratio = _extract_reason_number(explainability, "volume_ratio")
+    buy_tier_text, size_multiplier_text, guard_reason_text = _portfolio_guard_summary(profile)
 
     return {
         "id": signal_id,
@@ -110,6 +135,9 @@ def build_signal_summary_row(item: dict[str, Any], index: int, *, time_key: str,
             _txt(item.get("stock_code")),
             _txt(item.get("stock_name")),
             _txt(item.get("action"), "HOLD").upper(),
+            buy_tier_text,
+            size_multiplier_text,
+            guard_reason_text,
             _txt(item.get(status_key) or item.get("status") or item.get("execution_note"), "observed"),
             market_state,
             trend,

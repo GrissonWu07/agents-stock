@@ -341,6 +341,33 @@ const STOCK_EXECUTION_FEEDBACK_FIELDS: ProfitProtectionField[] = [
   { key: "execution_feedback_score_cap", label: { zh: "执行反馈分上限", en: "Execution feedback score cap" }, type: "number", path: ["execution_feedback_score_cap"], step: 0.01 },
 ];
 
+const PORTFOLIO_EXECUTION_GUARD_FIELDS: ProfitProtectionField[] = [
+  { key: "enabled", label: { zh: "启用组合防守", en: "Enable portfolio guard" }, type: "checkbox", path: ["enabled"] },
+  { key: "weak_multiplier", label: { zh: "弱 BUY 仓位倍率", en: "Weak BUY multiplier" }, type: "number", path: ["weak_multiplier"], step: 0.05 },
+  { key: "normal_multiplier", label: { zh: "普通 BUY 仓位倍率", en: "Normal BUY multiplier" }, type: "number", path: ["normal_multiplier"], step: 0.05 },
+  { key: "strong_multiplier", label: { zh: "强 BUY 仓位倍率", en: "Strong BUY multiplier" }, type: "number", path: ["strong_multiplier"], step: 0.05 },
+  { key: "weak_buy_max_score", label: { zh: "弱 BUY 最高分", en: "Weak BUY max score" }, type: "number", path: ["weak_buy_max_score"], step: 0.01 },
+  { key: "strong_buy_min_score", label: { zh: "强 BUY 最低分", en: "Strong BUY min score" }, type: "number", path: ["strong_buy_min_score"], step: 0.01 },
+  { key: "weak_edge_abs", label: { zh: "弱边际分差", en: "Weak edge gap" }, type: "number", path: ["weak_edge_abs"], step: 0.01 },
+  { key: "normal_edge_abs", label: { zh: "普通边际分差", en: "Normal edge gap" }, type: "number", path: ["normal_edge_abs"], step: 0.01 },
+  { key: "strong_edge_abs", label: { zh: "强边际分差", en: "Strong edge gap" }, type: "number", path: ["strong_edge_abs"], step: 0.01 },
+  { key: "confirm_checkpoints", label: { zh: "站稳 MA20 检查点", en: "MA20 confirm checkpoints" }, type: "number", path: ["confirm_checkpoints"], step: 1 },
+  { key: "normal_volume_ratio", label: { zh: "普通量比确认", en: "Normal volume ratio" }, type: "number", path: ["normal_volume_ratio"], step: 0.1 },
+  { key: "strong_volume_ratio", label: { zh: "强量比确认", en: "Strong volume ratio" }, type: "number", path: ["strong_volume_ratio"], step: 0.1 },
+  { key: "lookback_checkpoints", label: { zh: "组合回看检查点", en: "Portfolio lookback checkpoints" }, type: "number", path: ["lookback_checkpoints"], step: 1 },
+  { key: "lookback_days", label: { zh: "组合回看天数", en: "Portfolio lookback days" }, type: "number", path: ["lookback_days"], step: 1 },
+  { key: "cooldown_checkpoints", label: { zh: "防守冷却检查点", en: "Guard cooldown checkpoints" }, type: "number", path: ["cooldown_checkpoints"], step: 1 },
+  { key: "max_new_buys_per_checkpoint", label: { zh: "单检查点新开上限", en: "Max new buys per checkpoint" }, type: "number", path: ["max_new_buys_per_checkpoint"], step: 1 },
+  { key: "max_new_buys_per_day", label: { zh: "单日新开上限", en: "Max new buys per day" }, type: "number", path: ["max_new_buys_per_day"], step: 1 },
+  { key: "stop_loss_circuit_threshold", label: { zh: "止损熔断笔数", en: "Stop-loss circuit count" }, type: "number", path: ["stop_loss_circuit_threshold"], step: 1 },
+  { key: "consecutive_stop_loss_threshold", label: { zh: "连续止损阈值", en: "Consecutive stop-loss threshold" }, type: "number", path: ["consecutive_stop_loss_threshold"], step: 1 },
+  { key: "loss_budget_pct", label: { zh: "亏损预算(%)", en: "Loss budget (%)" }, type: "number", path: ["loss_budget_pct"], step: 0.5 },
+  { key: "drawdown_guard_pct", label: { zh: "权益回撤防守(%)", en: "Drawdown guard (%)" }, type: "number", path: ["drawdown_guard_pct"], step: 0.5 },
+  { key: "cooldown_size_multiplier", label: { zh: "组合冷却仓位倍率", en: "Cooldown size multiplier" }, type: "number", path: ["cooldown_size_multiplier"], step: 0.05 },
+  { key: "cold_start_weak_multiplier", label: { zh: "冷启动弱 BUY 倍率", en: "Cold-start weak multiplier" }, type: "number", path: ["cold_start_weak_multiplier"], step: 0.05 },
+  { key: "cold_start_normal_multiplier", label: { zh: "冷启动普通 BUY 倍率", en: "Cold-start normal multiplier" }, type: "number", path: ["cold_start_normal_multiplier"], step: 0.05 },
+];
+
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value ?? {})) as T;
 const pickText = (text: LocaleText, locale: string) => (locale === "zh-CN" ? text.zh : text.en);
@@ -500,6 +527,70 @@ const ensureStockExecutionFeedbackDefaults = (root: Record<string, unknown>, pat
   });
 };
 
+const ensurePortfolioExecutionGuardDefaults = (root: Record<string, unknown>, path: string[]) => {
+  const container = ensureObjectPath(root, path);
+  const defaults: Record<string, number | boolean> = {
+    enabled: true,
+    weak_multiplier: 0.25,
+    normal_multiplier: 0.5,
+    strong_multiplier: 1,
+    weight_edge: 0.32,
+    weight_trend_structure: 0.30,
+    weight_confirmation: 0.18,
+    weight_volume: 0.10,
+    weight_track_alignment: 0.10,
+    weak_buy_max_score: 0.50,
+    strong_buy_min_score: 0.82,
+    full_edge: 0.20,
+    weak_edge_abs: 0.04,
+    normal_edge_abs: 0.10,
+    strong_edge_abs: 0.16,
+    confirm_checkpoints: 3,
+    min_ma20_slope: 0,
+    normal_volume_ratio: 1.2,
+    strong_volume_ratio: 1.6,
+    retest_lookback_checkpoints: 5,
+    retest_tolerance_pct: 1.5,
+    max_risk_penalty: 0.50,
+    late_rebound_penalty: 0.20,
+    t1_risk_penalty: 0.15,
+    stock_failure_penalty: 0.20,
+    portfolio_cooldown_penalty: 0.25,
+    portfolio_drawdown_penalty: 0.18,
+    t1_confirm_checkpoints: 3,
+    lookback_checkpoints: 12,
+    lookback_days: 8,
+    cooldown_checkpoints: 4,
+    max_new_buys_per_checkpoint: 1,
+    max_new_buys_per_day: 3,
+    stop_loss_pnl_pct_threshold: -4,
+    stop_loss_circuit_threshold: 2,
+    consecutive_stop_loss_threshold: 2,
+    cooldown_days: 2,
+    loss_budget_pct: -2,
+    drawdown_guard_pct: 3,
+    stop_loss_density_threshold: 0.40,
+    cooldown_size_multiplier: 0.35,
+    cold_start_profit_sample_threshold: 1,
+    cold_start_weak_multiplier: 0.25,
+    cold_start_normal_multiplier: 0.5,
+    candidate_below_ma20_guard_ratio: 0.60,
+    position_below_ma20_guard_ratio: 0.60,
+  };
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!(key in container)) {
+      container[key] = value;
+      return;
+    }
+    if (typeof value === "boolean") {
+      container[key] = getBooleanAt(container, [key], value);
+      return;
+    }
+    const parsed = Number(container[key]);
+    container[key] = Number.isFinite(parsed) ? parsed : value;
+  });
+};
+
 const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Record<string, unknown> => {
   const next = deepClone(raw ?? {});
   ensureWeightMap(next, ["base", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
@@ -514,6 +605,7 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   ensureDualTrackDefaults(next, ["base", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["base", "veto", "profit_protection"]);
   ensureStockExecutionFeedbackDefaults(next, ["base", "context", "stock_execution_feedback_policy"]);
+  ensurePortfolioExecutionGuardDefaults(next, ["base", "context", "portfolio_execution_guard_policy"]);
 
   ensureWeightMap(next, ["profiles", "candidate", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "candidate", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
@@ -522,6 +614,7 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   ensureDualTrackDefaults(next, ["profiles", "candidate", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["profiles", "candidate", "veto", "profit_protection"]);
   ensureStockExecutionFeedbackDefaults(next, ["profiles", "candidate", "context", "stock_execution_feedback_policy"]);
+  ensurePortfolioExecutionGuardDefaults(next, ["profiles", "candidate", "context", "portfolio_execution_guard_policy"]);
 
   ensureWeightMap(next, ["profiles", "position", "technical", "group_weights"], TECHNICAL_GROUPS, 1);
   ensureWeightMap(next, ["profiles", "position", "technical", "dimension_weights"], TECHNICAL_DIMENSIONS, 1);
@@ -530,6 +623,7 @@ const normalizeStrategyConfig = (raw: Record<string, unknown> | undefined): Reco
   ensureDualTrackDefaults(next, ["profiles", "position", "dual_track"]);
   ensureProfitProtectionDefaults(next, ["profiles", "position", "veto", "profit_protection"]);
   ensureStockExecutionFeedbackDefaults(next, ["profiles", "position", "context", "stock_execution_feedback_policy"]);
+  ensurePortfolioExecutionGuardDefaults(next, ["profiles", "position", "context", "portfolio_execution_guard_policy"]);
   return next;
 };
 
@@ -1205,6 +1299,59 @@ export function StrategyConfigPage({ client }: StrategyConfigPageProps) {
                           setFocusedParam(`stock_execution_feedback.${field.key}`);
                         }}
                         onChange={(event) => updateNumberPath(fullPath, event.target.value, 4, `stock_execution_feedback.${field.key}`)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </WorkbenchCard>
+
+          <WorkbenchCard className="strategy-config-card">
+            <div className="strategy-config-card__header">
+              <div>
+                <h2 className="strategy-config-card__title">{locale === "zh-CN" ? "组合防守与 BUY 分层" : "Portfolio guard and BUY tiers"}</h2>
+                <div className="strategy-config-card__subtitle">
+                  {locale === "zh-CN"
+                    ? "把技术 BUY 分成弱、普通、强三档；组合连续止损、权益回撤或亏损预算触发时，自动降级、缩仓或暂停新开仓。"
+                    : "Classifies BUY signals into weak, normal, and strong tiers; recent stop losses, drawdown, or loss budget can downgrade, down-size, or pause new entries."}
+                </div>
+              </div>
+            </div>
+            <div className="strategy-config-dual-grid">
+              {PORTFOLIO_EXECUTION_GUARD_FIELDS.map((field) => {
+                const fullPath = ["base", "context", "portfolio_execution_guard_policy", ...field.path];
+                return (
+                  <div key={`portfolio-guard-${field.key}`} className="strategy-config-dual-item">
+                    <label>
+                      <span>{pickText(field.label, locale)}</span>
+                    </label>
+                    {field.type === "checkbox" ? (
+                      <label className="strategy-config-switch" aria-label={pickText(field.label, locale)}>
+                        <input
+                          type="checkbox"
+                          checked={getBooleanAt(editableConfig, fullPath, true)}
+                          onFocus={() => {
+                            setFocusedFormulaSection(4);
+                            setFocusedParam(`portfolio_execution_guard.${field.key}`);
+                          }}
+                          onChange={(event) => updateBooleanPath(fullPath, event.target.checked, 4, `portfolio_execution_guard.${field.key}`)}
+                        />
+                        <span className="strategy-config-switch__track">
+                          <span className="strategy-config-switch__thumb" />
+                        </span>
+                      </label>
+                    ) : (
+                      <input
+                        className="input"
+                        type="number"
+                        step={field.step ?? 0.01}
+                        value={getNumberAt(editableConfig, fullPath, 0)}
+                        onFocus={() => {
+                          setFocusedFormulaSection(4);
+                          setFocusedParam(`portfolio_execution_guard.${field.key}`);
+                        }}
+                        onChange={(event) => updateNumberPath(fullPath, event.target.value, 4, `portfolio_execution_guard.${field.key}`)}
                       />
                     )}
                   </div>

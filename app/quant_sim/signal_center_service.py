@@ -13,6 +13,10 @@ from app.quant_sim.stock_execution_feedback import (
     evaluate_stock_execution_feedback_gate,
     normalize_stock_execution_feedback_policy,
 )
+from app.quant_sim.portfolio_execution_guard import (
+    evaluate_portfolio_execution_guard,
+    normalize_portfolio_execution_guard_policy,
+)
 from app.smart_monitor_db import SmartMonitorDB, DEFAULT_DB_FILE as SMART_MONITOR_DB_FILE
 
 
@@ -45,6 +49,7 @@ class SignalCenterService:
         payload = self._apply_position_add_gate(candidate, payload)
         payload = self._apply_reentry_constraints(candidate, payload)
         payload = self._apply_stock_execution_feedback(candidate, payload)
+        payload = self._apply_portfolio_execution_guard(candidate, payload)
         payload = self._apply_transaction_cost_constraints(candidate, payload)
         action = str(payload.get("action", "HOLD")).upper()
         if action == "HOLD":
@@ -580,13 +585,99 @@ class SignalCenterService:
             return normalized
 
         original_size = self._safe_float(normalized.get("position_size_pct"), 0.0) or 0.0
-        multiplier = self._safe_float(gate.get("size_multiplier"), 1.0) or 1.0
+        raw_multiplier = self._safe_float(gate.get("size_multiplier"), 1.0)
+        multiplier = 1.0 if raw_multiplier is None else raw_multiplier
         normalized["decision_type"] = normalized.get("decision_type") or "stock_execution_feedback_downgraded_buy"
         normalized["reasoning"] = (
             f"{base_reasoning} 个股执行反馈降仓：{reasons}，"
             f"资金槽执行时将按 {multiplier:.2f} 倍缩放，信号仓位保持 {original_size:.2f}% 。"
         ).strip()
         return normalized
+
+    def _apply_portfolio_execution_guard(self, candidate: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        action = str(normalized.get("action") or "HOLD").upper()
+        if action != "BUY":
+            return normalized
+        if str(normalized.get("decision_type") or "").strip() == "position_add":
+            return normalized
+
+        strategy_profile = normalized.get("strategy_profile")
+        if not isinstance(strategy_profile, dict):
+            strategy_profile = {}
+        if str(strategy_profile.get("execution_intent") or "").strip() == "position_add":
+            return normalized
+        policy = self._portfolio_execution_guard_policy(strategy_profile)
+        if not bool(policy.get("enabled", True)):
+            return normalized
+
+        summary_provider = getattr(self.db, "get_portfolio_execution_guard_summary", None)
+        if callable(summary_provider):
+            try:
+                portfolio_summary = summary_provider(
+                    as_of=normalized.get("decision_time"),
+                    lookback_checkpoints=int(policy.get("lookback_checkpoints") or 0),
+                    lookback_days=int(policy.get("lookback_days") or 0),
+                )
+            except TypeError:
+                portfolio_summary = summary_provider()
+        else:
+            portfolio_summary = {}
+
+        signal_payload = {
+            **normalized,
+            "market": candidate.get("market") or normalized.get("market") or "A",
+            "timeframe": normalized.get("analysis_timeframe") or normalized.get("timeframe") or "30m",
+        }
+        gate = evaluate_portfolio_execution_guard(
+            signal=signal_payload,
+            policy=policy,
+            portfolio_summary=portfolio_summary if isinstance(portfolio_summary, dict) else {},
+        )
+
+        strategy_profile = dict(strategy_profile)
+        strategy_profile["portfolio_execution_guard_policy"] = policy
+        strategy_profile["portfolio_execution_guard"] = gate
+        thresholds = strategy_profile.get("effective_thresholds")
+        if not isinstance(thresholds, dict):
+            thresholds = {}
+        thresholds = dict(thresholds)
+        thresholds["portfolio_execution_guard_policy"] = policy
+        strategy_profile["effective_thresholds"] = thresholds
+        normalized["strategy_profile"] = strategy_profile
+
+        base_reasoning = str(normalized.get("reasoning") or "").strip()
+        reasons = "；".join(str(item) for item in gate.get("reasons") or [] if str(item))
+        if str(gate.get("status") or "") == "blocked":
+            normalized["action"] = "HOLD"
+            normalized["position_size_pct"] = 0.0
+            normalized["decision_type"] = "portfolio_execution_guard_blocked"
+            normalized["confidence"] = round(self._clamp((self._safe_float(normalized.get("confidence"), 0.0) or 0.0) * 0.65, 0.0, 100.0))
+            normalized["reasoning"] = f"{base_reasoning} 组合执行防守阻断：{reasons}，转为HOLD。".strip()
+            return normalized
+
+        if str(gate.get("status") or "") == "downgraded":
+            raw_multiplier = self._safe_float(gate.get("size_multiplier"), 1.0)
+            multiplier = 1.0 if raw_multiplier is None else raw_multiplier
+            normalized["decision_type"] = normalized.get("decision_type") or "portfolio_execution_guard_downgraded_buy"
+            normalized["reasoning"] = (
+                f"{base_reasoning} 组合执行防守分层：{gate.get('buy_tier_label')}，"
+                f"资金槽执行时将按 {multiplier:.2f} 倍缩放。"
+            ).strip()
+        return normalized
+
+    def _portfolio_execution_guard_policy(self, strategy_profile: dict[str, Any]) -> dict[str, Any]:
+        selected = strategy_profile.get("selected_strategy_profile") if isinstance(strategy_profile.get("selected_strategy_profile"), dict) else {}
+        profile_id = str(selected.get("id") or "").strip()
+        for candidate in (
+            strategy_profile.get("portfolio_execution_guard_policy"),
+            (strategy_profile.get("effective_thresholds") or {}).get("portfolio_execution_guard_policy")
+            if isinstance(strategy_profile.get("effective_thresholds"), dict)
+            else None,
+        ):
+            if isinstance(candidate, dict):
+                return normalize_portfolio_execution_guard_policy(candidate, profile_id=profile_id)
+        return normalize_portfolio_execution_guard_policy(None, profile_id=profile_id)
 
     def _stock_execution_feedback_policy(self, strategy_profile: dict[str, Any]) -> dict[str, Any]:
         selected = strategy_profile.get("selected_strategy_profile") if isinstance(strategy_profile.get("selected_strategy_profile"), dict) else {}

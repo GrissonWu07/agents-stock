@@ -177,6 +177,21 @@ type ExplainabilityPayload = {
 
 type StrategyProfileSnapshot = {
   explainability?: ExplainabilityPayload;
+  portfolio_execution_guard?: {
+    intent?: string;
+    status?: string;
+    buy_tier?: string;
+    buy_tier_label?: string;
+    buy_strength_score?: number | string;
+    size_multiplier?: number | string;
+    is_late_rebound?: boolean;
+    late_rebound_reasons?: string[];
+    reasons?: string[];
+    portfolio_guard?: {
+      status?: string;
+      reasons?: string[];
+    };
+  };
   position_add_gate?: {
     intent?: string;
     status?: string;
@@ -1283,6 +1298,7 @@ export function SignalDetailPage() {
   const positionMetricValue = String(decision.action || "").toUpperCase() === "HOLD" ? "不变" : decision.positionSizePct;
   const strategyExplainability = detail.strategyProfile?.explainability ?? {};
   const positionAddGate = detail.strategyProfile?.position_add_gate;
+  const portfolioExecutionGuard = detail.strategyProfile?.portfolio_execution_guard;
   const technicalBreakdown = strategyExplainability.technical_breakdown ?? {};
   const contextBreakdown = strategyExplainability.context_breakdown ?? {};
   const fusionBreakdown = strategyExplainability.fusion_breakdown ?? {};
@@ -1366,6 +1382,13 @@ export function SignalDetailPage() {
   const techGateReasons = weightedGateFailReasons.filter((item) => item.startsWith("tech_"));
   const contextGateReasons = weightedGateFailReasons.filter((item) => item.startsWith("context_"));
   const fusionConfidenceGateReasons = weightedGateFailReasons.filter((item) => item.includes("fusion_confidence"));
+  const portfolioGuardScore = _parseNumberish(portfolioExecutionGuard?.buy_strength_score);
+  const portfolioGuardMultiplier = _parseNumberish(portfolioExecutionGuard?.size_multiplier);
+  const portfolioGuardReasons = [
+    ...(Array.isArray(portfolioExecutionGuard?.reasons) ? portfolioExecutionGuard.reasons : []),
+    ...(Array.isArray(portfolioExecutionGuard?.portfolio_guard?.reasons) ? portfolioExecutionGuard.portfolio_guard.reasons : []),
+    ...(Array.isArray(portfolioExecutionGuard?.late_rebound_reasons) ? portfolioExecutionGuard.late_rebound_reasons : []),
+  ];
   const gateRows: GateChecklistRow[] = [
     {
       key: "veto",
@@ -1455,6 +1478,24 @@ export function SignalDetailPage() {
           ? contextGateReasons.map(_humanizeGateReason).join("；")
           : `当前环境轨方向 ${_localizeTrackBias(decision.contextSignal)}。`
     },
+    ...(portfolioExecutionGuard ? [{
+      key: "portfolio-execution-guard",
+      label: "组合防守 / BUY分层",
+      current: [
+        _localizeDynamicText(String(portfolioExecutionGuard.buy_tier_label || portfolioExecutionGuard.buy_tier || "--")),
+        portfolioGuardScore === null ? "" : `分数 ${portfolioGuardScore.toFixed(2)}`,
+        portfolioGuardMultiplier === null ? "" : `倍率 ${portfolioGuardMultiplier.toFixed(2)}`,
+      ].filter(Boolean).join(" · "),
+      threshold: _localizeDynamicText(String(portfolioExecutionGuard.status || "passed")),
+      status: String(portfolioExecutionGuard.status || "").toLowerCase() === "blocked"
+        ? false
+        : String(portfolioExecutionGuard.status || "").toLowerCase() === "downgraded"
+        ? null
+        : true,
+      note: portfolioGuardReasons.length > 0
+        ? portfolioGuardReasons.map((item) => _localizeDynamicText(String(item))).join("；")
+        : "组合防守未触发额外降级。"
+    }] : []),
   ];
   const normalizedFinalAction = String(finalActionForChain || decision.finalAction || decision.action || "").toUpperCase();
   const normalizedCoreRuleAction = String(coreRuleAction || "").toUpperCase();

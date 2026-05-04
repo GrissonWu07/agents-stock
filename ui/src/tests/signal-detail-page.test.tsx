@@ -489,4 +489,37 @@ describe("SignalDetailPage", () => {
     expect(screen.getByText("加仓门控")).toBeInTheDocument();
     expect(screen.getByText("加仓/增持")).toBeInTheDocument();
   });
+
+  it("shows portfolio guard buy tier and late rebound reasons", async () => {
+    const guardPayload = JSON.parse(JSON.stringify(mockPayload));
+    guardPayload.decision.action = "BUY";
+    guardPayload.decision.finalAction = "BUY";
+    guardPayload.strategyProfile.portfolio_execution_guard = {
+      intent: "portfolio_execution_guard",
+      status: "downgraded",
+      buy_tier: "weak_buy",
+      buy_tier_label: "弱 BUY",
+      buy_strength_score: 0.42,
+      size_multiplier: 0.25,
+      is_late_rebound: true,
+      reasons: ["边缘 BUY，先轻仓试错"],
+      portfolio_guard: {
+        status: "cooldown",
+        reasons: ["组合近期连续止损，BUY 自动降级"],
+      },
+      late_rebound_reasons: ["RSI 偏热且距离 MA20 过远，疑似反弹尾段"],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => guardPayload,
+    } as Response);
+
+    renderSignalDetailPage();
+
+    expect(await screen.findByText("组合防守 / BUY分层")).toBeInTheDocument();
+    expect(screen.getByText(/分数 0\.42 · 倍率 0\.25/)).toBeInTheDocument();
+    expect(screen.getByText(/组合近期连续止损/)).toBeInTheDocument();
+    expect(screen.getByText(/疑似反弹尾段/)).toBeInTheDocument();
+  });
 });

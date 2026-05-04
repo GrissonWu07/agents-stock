@@ -19,6 +19,7 @@ from app.quant_sim.capital_slots import (
     normalize_capital_slot_config,
 )
 from app.quant_sim.execution_constraints import trade_block_reason
+from app.quant_sim.portfolio_execution_guard import PORTFOLIO_EXECUTION_GUARD_PROFILE_DEFAULTS
 from app.quant_sim.stock_execution_feedback import STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS
 from app.quant_sim.time_utils import ensure_utc_datetime, format_utc_iso_z
 from app.runtime_paths import default_db_path
@@ -1430,6 +1431,119 @@ class QuantSimDB:
         fusion = explainability.get("fusion_breakdown") if isinstance(explainability, dict) and isinstance(explainability.get("fusion_breakdown"), dict) else {}
         veto_id = str(fusion.get("veto_id") or fusion.get("veto_trigger_type") or "").strip()
         return veto_id in {"stop_loss", "hard_stop_loss", "risk_stop"}
+
+    def get_portfolio_execution_guard_summary(
+        self,
+        *,
+        as_of: str | datetime | None = None,
+        lookback_checkpoints: int = 12,
+        lookback_days: int = 8,
+    ) -> dict[str, Any]:
+        days = max(1, int(lookback_days or 8))
+        checkpoint_limit = max(1, int(lookback_checkpoints or 12))
+        as_of_dt = self._ensure_datetime(as_of)
+        since_text = self._format_datetime(as_of_dt - timedelta(days=days))
+        as_of_text = self._format_datetime(as_of_dt)
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                t.*,
+                s.decision_type AS signal_decision_type,
+                s.strategy_profile_json AS signal_strategy_profile_json,
+                s.execution_note AS signal_execution_note
+            FROM sim_trades t
+            LEFT JOIN strategy_signals s ON s.id = t.signal_id
+            WHERE UPPER(t.action) = 'SELL'
+              AND t.executed_at >= ?
+              AND t.executed_at <= ?
+            ORDER BY t.executed_at DESC, t.id DESC
+            LIMIT ?
+            """,
+            (since_text, as_of_text, checkpoint_limit),
+        )
+        trades = [self._row_to_dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT *
+            FROM sim_account_snapshots
+            WHERE created_at >= ? AND created_at <= ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (since_text, as_of_text, checkpoint_limit),
+        )
+        snapshots = [self._row_to_dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT
+                SUM(CASE WHEN substr(executed_at, 1, 16) = substr(?, 1, 16) THEN 1 ELSE 0 END) AS checkpoint_buys,
+                SUM(CASE WHEN substr(executed_at, 1, 10) = substr(?, 1, 10) THEN 1 ELSE 0 END) AS day_buys
+            FROM sim_trades
+            WHERE UPPER(action) = 'BUY'
+              AND executed_at >= ?
+              AND executed_at <= ?
+            """,
+            (as_of_text, as_of_text, since_text, as_of_text),
+        )
+        buy_counts = self._row_to_dict(cursor.fetchone())
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS pending_buys
+            FROM strategy_signals
+            WHERE UPPER(action) = 'BUY'
+              AND LOWER(status) = 'pending'
+            """
+        )
+        pending_buy_count = int((self._row_to_dict(cursor.fetchone()).get("pending_buys")) or 0)
+        account = self._build_account_summary(cursor)
+        conn.close()
+
+        realized_pnl = sum(float(row.get("realized_pnl") or 0.0) for row in trades)
+        cost_basis = 0.0
+        stop_count = 0
+        consecutive_stop_count = 0
+        still_consecutive = True
+        for row in trades:
+            pnl = float(row.get("realized_pnl") or 0.0)
+            gross = float(row.get("gross_amount") or 0.0)
+            if gross <= 0:
+                gross = float(row.get("price") or 0.0) * float(row.get("quantity") or 0.0)
+            estimated_cost = gross - pnl
+            if estimated_cost > 0:
+                cost_basis += estimated_cost
+            is_stop = self._trade_row_is_stop_loss(row)
+            if is_stop:
+                stop_count += 1
+                if still_consecutive:
+                    consecutive_stop_count += 1
+            else:
+                still_consecutive = False
+        realized_pct = (realized_pnl / cost_basis * 100.0) if cost_basis > 0 else 0.0
+        latest_equity = float(account.get("total_equity") or 0.0)
+        if snapshots:
+            latest_equity = float(snapshots[-1].get("total_equity") or latest_equity)
+        peak_equity = max([float(item.get("total_equity") or 0.0) for item in snapshots] + [latest_equity])
+        drawdown_pct = ((peak_equity - latest_equity) / peak_equity * 100.0) if peak_equity > 0 else 0.0
+        reference_equity = float(account.get("initial_cash") or 0.0)
+        if reference_equity <= 0 and snapshots:
+            reference_equity = float(snapshots[0].get("total_equity") or 0.0)
+
+        return {
+            "lookback_days": days,
+            "lookback_checkpoints": checkpoint_limit,
+            "recent_sell_count": len(trades),
+            "recent_stop_loss_count": int(stop_count),
+            "consecutive_stop_loss_count": int(consecutive_stop_count),
+            "recent_realized_pnl": round(realized_pnl, 4),
+            "recent_realized_pnl_pct": round(realized_pct, 4),
+            "portfolio_drawdown_pct": round(drawdown_pct, 4),
+            "reference_equity": round(reference_equity, 4),
+            "pending_buy_count": pending_buy_count,
+            "current_checkpoint_buy_count": int(buy_counts.get("checkpoint_buys") or 0) + pending_buy_count,
+            "current_day_buy_count": int(buy_counts.get("day_buys") or 0) + pending_buy_count,
+        }
 
     def count_trade_history(
         self,
@@ -5027,6 +5141,9 @@ class QuantSimDB:
         aggressive_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
             STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["aggressive"]
         )
+        aggressive_config["base"]["context"]["portfolio_execution_guard_policy"] = self._deep_copy_json(
+            PORTFOLIO_EXECUTION_GUARD_PROFILE_DEFAULTS["aggressive"]
+        )
         aggressive_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.60,
             "momentum": 1.35,
@@ -5139,6 +5256,9 @@ class QuantSimDB:
         stable_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
             STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["stable"]
         )
+        stable_config["base"]["context"]["portfolio_execution_guard_policy"] = self._deep_copy_json(
+            PORTFOLIO_EXECUTION_GUARD_PROFILE_DEFAULTS["stable"]
+        )
         stable_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.30,
             "momentum": 1.15,
@@ -5247,6 +5367,9 @@ class QuantSimDB:
         conservative_config["base"]["veto"]["profit_protection"] = self._deep_copy_json(conservative_profit_protection)
         conservative_config["base"]["context"]["stock_execution_feedback_policy"] = self._deep_copy_json(
             STOCK_EXECUTION_FEEDBACK_PROFILE_DEFAULTS["conservative"]
+        )
+        conservative_config["base"]["context"]["portfolio_execution_guard_policy"] = self._deep_copy_json(
+            PORTFOLIO_EXECUTION_GUARD_PROFILE_DEFAULTS["conservative"]
         )
         conservative_config["profiles"]["candidate"]["technical"]["group_weights"] = {
             "trend": 1.05,

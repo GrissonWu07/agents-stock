@@ -28,6 +28,7 @@ from app.quant_sim.scheduler import get_quant_sim_scheduler
 from app.quant_sim.signal_center_service import SignalCenterService
 from app.quant_sim.stockpolicy_adapter import StockPolicyAdapter
 from app.quant_sim.time_utils import format_utc_iso_z, market_timezone, market_timezone_name
+from app.quant_kernel.models import Decision
 from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
 
 
@@ -938,6 +939,7 @@ class QuantSimReplayService:
                 strategy_mode=strategy_mode,
                 strategy_profile_binding=candidate_binding,
             )
+            decision = self._with_replay_decision_time(decision, checkpoint)
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:
                 engine.candidate_pool.db.update_candidate_latest_price(candidate["stock_code"], decision_price)
@@ -994,6 +996,7 @@ class QuantSimReplayService:
                 strategy_mode=strategy_mode,
                 strategy_profile_binding=position_binding,
             )
+            decision = self._with_replay_decision_time(decision, checkpoint)
             decision_price = engine._extract_decision_price(decision)
             if decision_price > 0:
                 portfolio.db.update_position_market_price(position["stock_code"], decision_price)
@@ -1037,6 +1040,18 @@ class QuantSimReplayService:
             "slot_summary": self._collect_slot_summary(portfolio.db),
             "signals": checkpoint_signals,
         }
+
+    def _with_replay_decision_time(self, decision: dict | Decision, checkpoint: datetime) -> dict | Decision:
+        if isinstance(decision, Decision):
+            decision.timestamp = checkpoint
+            return decision
+        if isinstance(decision, dict):
+            stamped = dict(decision)
+            stamped["timestamp"] = checkpoint
+            stamped["decision_time"] = checkpoint
+            stamped["checkpoint_at"] = self._format_datetime(checkpoint)
+            return stamped
+        return decision
 
     def _apply_due_corporate_actions(
         self,
