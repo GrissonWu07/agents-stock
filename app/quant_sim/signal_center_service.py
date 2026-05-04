@@ -668,7 +668,7 @@ class SignalCenterService:
         return (tech_signal == "BUY" and context_signal == "BUY") or resonance_type in {"strong_buy", "bullish_resonance", "heavy_resonance"}
 
     def _resolve_reentry_time(self, payload: dict[str, Any], metrics: dict[str, Any]) -> datetime | None:
-        for value in (payload.get("decision_time"), metrics.get("update_time")):
+        for value in (metrics.get("update_time"), payload.get("decision_time")):
             parsed = self._parse_datetime(value)
             if parsed is not None:
                 return parsed

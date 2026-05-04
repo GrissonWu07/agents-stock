@@ -207,6 +207,46 @@ def test_signal_center_records_downgrade_without_pre_scaling_position_size(tmp_p
     assert gate["size_multiplier"] == 0.5
 
 
+def test_signal_center_feedback_uses_market_snapshot_time_before_runtime_decision_time(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    portfolio = PortfolioService(db_file=db_file)
+    signals = SignalCenterService(db_file=db_file)
+    portfolio.configure_account(100000)
+    _seed_stop_loss_round(portfolio, signals, "300857", "2026-03-18 10:00:00", "2026-03-20 10:00:00")
+
+    downgraded = signals.create_signal(
+        {"stock_code": "300857", "stock_name": "Xiechuang Data", "source": "main_force"},
+        {
+            "action": "BUY",
+            "confidence": 88,
+            "position_size_pct": 50,
+            "reasoning": "replay retry",
+            "decision_time": "2026-05-04 15:55:00",
+            "strategy_profile": {
+                "stock_execution_feedback_policy": _policy(
+                    lookback_days=15,
+                    loss_amount_threshold=-1000,
+                    loss_reentry_size_multiplier=0.5,
+                ),
+                "market_snapshot": _snapshot(
+                    update_time="2026-03-25 10:00:00",
+                    current_price=12.0,
+                    ma5=11.5,
+                    ma10=11.0,
+                    ma20=10.5,
+                    ma20_slope=0.02,
+                ),
+            },
+        },
+        notify=False,
+    )
+
+    gate = downgraded["strategy_profile"]["stock_execution_feedback_gate"]
+    assert gate["status"] == "downgraded"
+    assert gate["size_multiplier"] == 0.5
+    assert gate["evaluated_at"] == "2026-03-25 10:00:00"
+
+
 def test_replay_temp_db_feedback_is_isolated_from_live_db(tmp_path):
     live_db = tmp_path / "live.db"
     replay_db = tmp_path / "replay.db"
