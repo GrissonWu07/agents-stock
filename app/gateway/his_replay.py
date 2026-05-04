@@ -348,7 +348,7 @@ def _build_his_replay_signal_table(db: QuantSimDB, run_id: int, table_query: dic
         )
     ):
         checkpoint_at = _txt(item.get("checkpoint_at") or item.get("created_at"), "--")
-        row = build_signal_summary_row(item, i, time_key="checkpoint_at", status_key="signal_status")
+        row = build_signal_summary_row(item, i, time_key="checkpoint_at", status_key="status")
         row["checkpointAt"] = checkpoint_at
         signal_rows.append(row)
     table = build_signal_summary_table(signal_rows)

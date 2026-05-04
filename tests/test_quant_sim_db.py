@@ -49,7 +49,7 @@ def test_quant_sim_db_does_not_create_historical_replay_tables(tmp_path):
     assert "sim_runs" not in tables
 
 
-def test_quant_sim_db_drops_legacy_historical_replay_tables(tmp_path):
+def test_quant_sim_db_does_not_clean_legacy_historical_replay_tables(tmp_path):
     db_file = tmp_path / "quant_sim.db"
     conn = sqlite3.connect(db_file)
     try:
@@ -63,9 +63,9 @@ def test_quant_sim_db_drops_legacy_historical_replay_tables(tmp_path):
     QuantSimDB(db_file)
 
     tables = _table_names(db_file)
-    assert "sim_runs" not in tables
-    assert "sim_run_signals" not in tables
-    assert "sim_run_signal_details" not in tables
+    assert "sim_runs" in tables
+    assert "sim_run_signals" in tables
+    assert "sim_run_signal_details" in tables
 
 
 def test_quant_replay_db_only_creates_replay_tables(tmp_path):
@@ -764,6 +764,8 @@ def test_replace_sim_run_results_persists_strategy_signals(tmp_path):
     assert len(signals) == 1
     assert signals[0]["stock_code"] == "300390"
     assert signals[0]["action"] == "BUY"
+    assert signals[0]["status"] == "observed"
+    assert signals[0]["updated_at"] == "2026-04-01 10:00:01"
     assert signals[0]["strategy_profile"] == {}
     assert signal_detail["strategy_profile"]["risk_style"]["label"] == "激进"
     assert signals[0]["checkpoint_at"] == "2026-04-01 10:00:00"
@@ -1208,6 +1210,8 @@ def test_upsert_sim_run_signals_updates_existing_checkpoint_signal(tmp_path):
     assert signals[0]["confidence"] == 88
     assert signals[0]["reasoning"] == "第二次刷新"
     assert signals[0]["position_size_pct"] == 55.0
+    assert signals[0]["status"] == "observed"
+    assert signals[0]["updated_at"] == "2026-04-01 10:00:02"
 
 
 def test_delete_sim_run_removes_all_replay_artifacts(tmp_path):

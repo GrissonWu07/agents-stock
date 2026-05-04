@@ -434,7 +434,6 @@ class QuantSimDB:
             """
         )
         if not self.include_replay_tables:
-            self._drop_replay_tables_from_live_db(cursor)
             self._ensure_column(cursor, "strategy_signals", "decision_type", "TEXT")
             self._ensure_column(cursor, "strategy_signals", "tech_score", "REAL DEFAULT 0")
             self._ensure_column(cursor, "strategy_signals", "context_score", "REAL DEFAULT 0")
@@ -608,9 +607,10 @@ class QuantSimDB:
                 decision_type TEXT,
                 tech_score REAL DEFAULT 0,
                 context_score REAL DEFAULT 0,
+                status TEXT DEFAULT 'observed',
                 checkpoint_at TEXT,
-                signal_status TEXT,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 FOREIGN KEY(run_id) REFERENCES sim_runs(id)
             )
             """
@@ -729,6 +729,8 @@ class QuantSimDB:
             self._ensure_column(cursor, "sim_run_trades", "signal_id", "INTEGER")
             self._ensure_column(cursor, "sim_run_signals", "stop_loss_pct", "REAL DEFAULT 0")
             self._ensure_column(cursor, "sim_run_signals", "take_profit_pct", "REAL DEFAULT 0")
+            self._ensure_column(cursor, "sim_run_signals", "status", "TEXT DEFAULT 'observed'")
+            self._ensure_column(cursor, "sim_run_signals", "updated_at", "TEXT")
             for table_name in ("sim_run_trades",):
                 self._ensure_column(cursor, table_name, "gross_amount", "REAL DEFAULT 0")
                 self._ensure_column(cursor, table_name, "commission_fee", "REAL DEFAULT 0")
@@ -746,19 +748,6 @@ class QuantSimDB:
 
         conn.commit()
         conn.close()
-
-    def _drop_replay_tables_from_live_db(self, cursor: sqlite3.Cursor) -> None:
-        for table_name in (
-            "sim_run_signal_details",
-            "sim_run_signals",
-            "sim_run_trades",
-            "sim_run_snapshots",
-            "sim_run_positions",
-            "sim_run_checkpoints",
-            "sim_run_events",
-            "sim_runs",
-        ):
-            cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
 
     def add_candidate(self, candidate: dict[str, Any]) -> int:
         payload = {
@@ -2746,6 +2735,8 @@ class QuantSimDB:
 
             checkpoint_at = signal.get("checkpoint_at") or signal.get("executed_at") or signal.get("updated_at") or signal.get("created_at")
             created_at = signal.get("created_at") or self._now()
+            updated_at = signal.get("updated_at") or created_at
+            status = signal.get("status") or "observed"
             payload = (
                 run_id,
                 source_signal_id,
@@ -2760,9 +2751,10 @@ class QuantSimDB:
                 signal.get("decision_type"),
                 float(signal.get("tech_score") or 0),
                 float(signal.get("context_score") or 0),
+                status,
                 checkpoint_at,
-                signal.get("status") or signal.get("signal_status") or "observed",
                 created_at,
+                updated_at,
             )
             strategy_profile_json = self._dumps_metadata(signal.get("strategy_profile"))
             explainability_json = self._dumps_metadata(
@@ -2793,9 +2785,9 @@ class QuantSimDB:
                     (
                         run_id, source_signal_id, stock_code, stock_name, action, confidence, reasoning,
                         position_size_pct, stop_loss_pct, take_profit_pct, decision_type, tech_score, context_score,
-                        checkpoint_at, signal_status, created_at
+                        status, checkpoint_at, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     payload,
                 )
@@ -2816,9 +2808,10 @@ class QuantSimDB:
                         decision_type = ?,
                         tech_score = ?,
                         context_score = ?,
+                        status = ?,
                         checkpoint_at = ?,
-                        signal_status = ?,
-                        created_at = ?
+                        created_at = ?,
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     payload[1:] + (existing_id,),

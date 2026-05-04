@@ -126,7 +126,7 @@ def _build_signal_detail_payload(
         "stockCode": _txt(signal.get("stock_code")),
         "stockName": _txt(signal.get("stock_name")),
         "action": final_action_value,
-        "status": _txt(signal.get("signal_status") or signal.get("status") or signal.get("execution_note"), "observed"),
+        "status": _txt(signal.get("status") or signal.get("execution_note"), "observed"),
         "decisionType": _txt(signal.get("decision_type") or fusion_breakdown.get("mode"), "auto"),
         "executionIntent": execution_intent_value,
         "confidence": confidence_value,
