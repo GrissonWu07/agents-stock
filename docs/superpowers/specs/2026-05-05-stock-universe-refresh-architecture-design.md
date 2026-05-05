@@ -58,7 +58,9 @@ Supersedes:
 
 1. 持仓诊断从股票池筛选 `registered_position`、`watched`、`live_position` 和必要的 `quant_enabled` 股票，形成诊断列表。
 2. 实时量化从股票池筛选 `quant_enabled=true` 的股票，称为“实时量化股票”。
-3. 历史回放从股票池筛选 `quant_enabled=true` 的股票，启动时冻结为该任务的“回放股票范围”。
+3. 历史回放默认从股票池筛选 `quant_enabled=true` 的股票，启动时冻结为该任务的“回放股票范围”。
+4. 历史回放允许在 `quant_enabled=true` 范围内做任务级 `include_symbols` / `exclude_symbols` 筛选；不得引入股票池外或 `quant_enabled=false` 的股票。
+5. 历史回放冻结时必须保存任务筛选条件和最终 symbol 列表，用于复现和排查。
 
 底层账户、仓位、成交、信号必须隔离：
 
@@ -146,7 +148,15 @@ Supersedes:
 3. 技术指标：MA、MACD、RSI、KDJ、BOLL、成交量均线、量比。
 4. 涨跌停状态和可交易约束所需行情字段。
 
-实时 TTL：2 分钟。
+子类型和缓存规则：
+
+1. `quote_realtime`：实时 quote，TTL 为 2 分钟。
+2. `kline_intraday`：分钟 K 线，按 bar 时间增量覆盖判断；当前交易日可按最新 bar 补缺口，不套用 2 分钟 TTL 到历史区间。
+3. `kline_daily` / `kline_range`：日线和历史区间 K 线，按 `symbol + timeframe + adjust + start + end` 覆盖判断。
+4. `indicator_series`：技术指标序列，按 `symbol + source + timeframe + formula_profile + indicator_version + start + end` 覆盖判断。
+5. `indicator_snapshot`：当前展示快照，可由最新 `quote_realtime` 和 `indicator_series` 派生；若依赖序列覆盖充分，不单独远程拉。
+
+实时行情刷新使用 `quote_realtime` 的 2 分钟 TTL。历史回放使用 `kline_range` 和 `indicator_series` 的区间覆盖判断，不使用实时 TTL。
 
 历史回放：
 
@@ -180,13 +190,17 @@ TTL：30 天，除非用户强制刷新。
 允许远程：
 
 1. 手动刷新基础信息。
-2. 股票首次进入股票池且基础信息缺失时，可以低并发补齐。
+2. 后台日级基础信息补全任务。
+3. 用户明确选择“入池后补全基础信息”时，可以创建低优先级 refresh job。
 
 不允许远程：
 
 1. 历史回放运行中。
 2. live-sim 每轮调度中。
 3. 页面打开时批量刷新。
+4. 股票首次进入股票池的成员关系写入流程中。
+
+股票首次进入股票池只写成员关系。若基础信息缺失，系统可以记录 `basic_info_missing=true` 或创建待处理 refresh job，但默认不立即远程执行。
 
 ### `flow_sentiment`
 
@@ -290,6 +304,7 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 4. `context`: `portfolio` / `live_sim` / `his_replay` / `workbench` / `scheduler`
 5. `as_of` 或历史区间
 6. `allow_remote`
+7. `bypass_cooldown`: 仅 admin/debug 可用，默认 `false`
 
 输出：
 
@@ -304,6 +319,8 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 2. 服务内部统一做并发去重。同一 domain、symbol、params 的远程请求同一时间只能有一个。
 3. 服务内部统一做失败冷却。远程失败后，在冷却期内不重复远程拉。
 4. 调用方不能绕过服务直接远程请求。
+5. `force_refresh` 只跳过 TTL 和覆盖 freshness 判断，不跳过并发去重。
+6. `force_refresh` 默认不跳过失败冷却；只有 admin/debug 且 `bypass_cooldown=true` 时才允许绕过冷却。
 
 ## 老刷新任务处理
 
@@ -330,7 +347,7 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 
 1. 页面打开自动全量远程刷新。
 2. 一个按钮同时刷新行情、基础信息、AI 分析。
-3. 每个 checkpoint 重新构造 240 根窗口并触发远程或重复指标计算。
+3. 每个 checkpoint 触发远程拉取或重复全量指标计算。准备阶段应预计算/缓存指标序列；checkpoint 阶段按时间索引 lookup。允许从已准备 DataFrame 取 as-of 窗口或 tail window，但不得触发远程或重新计算整段指标。
 4. 北交所或失败股票每轮都 TDX 超时再 Akshare fallback。
 5. 股票池成员变化自动触发全量行情刷新。
 
@@ -365,6 +382,14 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 3. 每只股票的历史 K 线和指标在任务内复用。
 4. checkpoint 执行阶段不得远程拉任何数据。
 5. replay 失败时要明确记录失败股票、数据域、cache status 和 provider。
+
+准备阶段失败处理：
+
+1. 历史 K 线完全缺失且远程失败：该股票从本次 run 的回放股票范围中剔除，记录 warning 事件和数据准备明细；如果全部股票都被剔除，任务失败。
+2. 历史 K 线存在本地数据但区间不完整：只补缺口；补缺口失败时，如果本地数据覆盖每个 checkpoint 所需的最小 lookback 窗口，则允许继续并记录 `partial_local_used`；否则剔除该股票。
+3. 指标序列缺失：如果 K 线覆盖充分，则本地计算并写入指标缓存；计算失败时剔除该股票并记录原因。
+4. 公司行为数据缺失或远程失败：不直接失败整个任务；记录 `corporate_actions_unavailable` warning，并在任务结果中标注公司行为口径可能不完整。
+5. 被剔除股票不得生成信号、成交或持仓；UI 必须展示剔除数量和明细。
 
 ## UI 要求
 
@@ -431,4 +456,3 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 6. 拆分 portfolio 的行情技术刷新和 AI 分析刷新。
 7. 改造 watchlist refresh，只保留快照写回，不直接远程拉。
 8. 接入失败冷却、并发去重和刷新状态 UI。
-
