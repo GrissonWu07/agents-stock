@@ -94,6 +94,16 @@ Supersedes:
 4. 新版本启动后只创建和使用统一股票池及其附属表。
 5. 需要保留的股票范围由用户重新导入、手工添加，或由发现/研究流程重新写入统一股票池。
 
+部署清库要求：
+
+1. 部署新版本前必须停止服务，避免旧进程继续写旧表。
+2. 删除或重置旧 `quant_sim.db` 中的股票范围相关表：`candidate_pool`、`candidate_sources`，以及任何只用于旧量化池成员关系的表。
+3. 删除或重置旧 `portfolio_stocks.db`，不再作为持仓池数据库使用。
+4. 删除或重置旧 `watchlist.db`，不再作为关注池/股票池数据库使用。
+5. 保留 live-sim 账户状态库和 replay 结果库的策略由部署任务显式决定；如果本次部署要求干净环境，则同步删除 `sim_positions`、`sim_trades`、`strategy_signals` 和 `quant_sim_replay.db`。
+6. 清库完成后启动新版本，由新版本初始化统一股票池主表和附属表。
+7. 清库步骤必须写入部署脚本或部署 runbook，不能依赖人工临时 SQL。
+
 ## 页面边界
 
 ### `/portfolio`
