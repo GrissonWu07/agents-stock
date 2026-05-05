@@ -438,6 +438,26 @@ def test_workbench_watchlist_page_size_is_capped_at_twenty(tmp_path):
     assert len(payload["watchlist"]["rows"]) == 20
 
 
+def test_workbench_stock_pool_includes_quant_only_symbols(tmp_path):
+    context = _make_context(tmp_path)
+    context.watchlist().add_manual_stock("600519")
+    context.candidate_pool().add_candidate(
+        stock_code="301217",
+        stock_name="和顺电气",
+        source="selector",
+    )
+
+    client = TestClient(create_app(context=context))
+    response = client.get("/api/v1/workbench")
+
+    assert response.status_code == 200
+    payload = response.json()
+    rows = {row["code"]: row for row in payload["watchlist"]["rows"]}
+    assert payload["watchlist"]["pagination"]["totalRows"] == 2
+    assert "600519" in rows
+    assert "实时量化股票" in rows["301217"]["workflowBadges"]
+
+
 def test_workbench_watchlist_uses_decision_table_columns(tmp_path):
     context = _make_context(tmp_path)
     context.watchlist().add_stock(

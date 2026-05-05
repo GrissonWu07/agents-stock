@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -37,15 +38,31 @@ class MainProjectHistoricalSnapshotProvider:
 
     DAILY_LOOKBACK_DAYS = 180
     INTRADAY_LOOKBACK_DAYS = 45
+    DEFAULT_STOCK_BATCH_SIZE = max(1, int(os.getenv("REPLAY_DATA_STOCK_BATCH_SIZE", "20")))
+    DEFAULT_DAILY_SEGMENT_DAYS = max(1, int(os.getenv("REPLAY_DATA_DAILY_SEGMENT_DAYS", "120")))
+    DEFAULT_INTRADAY_SEGMENT_DAYS = max(1, int(os.getenv("REPLAY_DATA_INTRADAY_SEGMENT_DAYS", "90")))
 
     def __init__(
         self,
         *,
         tdx_fetcher: Optional[SmartMonitorTDXDataFetcher] = None,
+        stock_batch_size: int | None = None,
+        daily_segment_days: int | None = None,
+        intraday_segment_days: int | None = None,
     ):
         self.tdx_fetcher = tdx_fetcher or SmartMonitorTDXDataFetcher()
         self.cache: dict[tuple[str, str], pd.DataFrame] = {}
         self.indicator_cache: dict[tuple[str, str], pd.DataFrame] = {}
+        self.stock_batch_size = max(1, int(stock_batch_size or self.DEFAULT_STOCK_BATCH_SIZE))
+        self.daily_segment_days = max(1, int(daily_segment_days or self.DEFAULT_DAILY_SEGMENT_DAYS))
+        self.intraday_segment_days = max(1, int(intraday_segment_days or self.DEFAULT_INTRADAY_SEGMENT_DAYS))
+        self.prepare_report: dict[str, object] = {
+            "stock_batches": [],
+            "segment_count": 0,
+            "prepared": 0,
+            "failed": 0,
+            "failures": [],
+        }
 
     def prepare(
         self,
@@ -55,17 +72,36 @@ class MainProjectHistoricalSnapshotProvider:
         timeframe: str,
     ) -> None:
         data_timeframe = self._normalize_data_timeframe(timeframe)
-        for stock_code in stock_codes:
-            history = self._load_history(
-                stock_code,
-                start_datetime=start_datetime,
-                end_datetime=end_datetime,
-                timeframe=data_timeframe,
-            )
-            self.cache[(stock_code, timeframe)] = history
-            indicators = self.tdx_fetcher.build_indicator_history(stock_code, history, timeframe=data_timeframe)
-            if indicators is not None and not indicators.empty:
-                self.indicator_cache[(stock_code, timeframe)] = indicators
+        segments = self._build_segments(start_datetime, end_datetime, timeframe=data_timeframe)
+        stock_batches = [stock_codes[index : index + self.stock_batch_size] for index in range(0, len(stock_codes), self.stock_batch_size)]
+        failures: list[dict[str, str]] = []
+        prepared = 0
+        for batch in stock_batches:
+            for stock_code in batch:
+                try:
+                    history = self._load_history_segments(
+                        stock_code,
+                        segments=segments,
+                        timeframe=data_timeframe,
+                    )
+                    self.cache[(stock_code, timeframe)] = history
+                    if history is None or history.empty:
+                        failures.append({"stock_code": stock_code, "reason": "empty_history"})
+                        continue
+                    indicators = self.tdx_fetcher.build_indicator_history(stock_code, history, timeframe=data_timeframe)
+                    if indicators is not None and not indicators.empty:
+                        self.indicator_cache[(stock_code, timeframe)] = indicators
+                    prepared += 1
+                except Exception as exc:
+                    failures.append({"stock_code": stock_code, "reason": f"{type(exc).__name__}: {exc}"})
+                    self.cache[(stock_code, timeframe)] = pd.DataFrame(columns=["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"])
+        self.prepare_report = {
+            "stock_batches": [list(batch) for batch in stock_batches],
+            "segment_count": len(segments),
+            "prepared": prepared,
+            "failed": len(failures),
+            "failures": failures,
+        }
 
     def get_snapshot(
         self,
@@ -109,10 +145,11 @@ class MainProjectHistoricalSnapshotProvider:
         start_datetime: datetime,
         end_datetime: datetime,
         timeframe: str,
+        include_lookback: bool = True,
     ) -> pd.DataFrame:
         normalized = self._normalize_data_timeframe(timeframe)
         if normalized in {"1d", "day", "daily"}:
-            start_date = (start_datetime - timedelta(days=self.DAILY_LOOKBACK_DAYS)).strftime("%Y%m%d")
+            start_date = (start_datetime - timedelta(days=self.DAILY_LOOKBACK_DAYS) if include_lookback else start_datetime).strftime("%Y%m%d")
             end_date = end_datetime.strftime("%Y%m%d")
             df = data_source_manager.get_stock_hist_data(stock_code, start_date=start_date, end_date=end_date, adjust="")
             return self._normalize_daily_history(df)
@@ -121,7 +158,7 @@ class MainProjectHistoricalSnapshotProvider:
             intraday_history = self.tdx_fetcher.get_kline_data_range(
                 stock_code,
                 kline_type="minute30",
-                start_datetime=start_datetime - timedelta(days=self.INTRADAY_LOOKBACK_DAYS),
+                start_datetime=start_datetime - timedelta(days=self.INTRADAY_LOOKBACK_DAYS) if include_lookback else start_datetime,
                 end_datetime=end_datetime,
                 max_bars=3200,
             )
@@ -135,6 +172,51 @@ class MainProjectHistoricalSnapshotProvider:
             return frame
 
         raise ValueError(f"Unsupported replay timeframe: {timeframe}")
+
+    def _load_history_segments(
+        self,
+        stock_code: str,
+        *,
+        segments: list[tuple[datetime, datetime]],
+        timeframe: str,
+    ) -> pd.DataFrame:
+        frames: list[pd.DataFrame] = []
+        for segment_start, segment_end in segments:
+            frame = self._load_history(
+                stock_code,
+                start_datetime=segment_start,
+                end_datetime=segment_end,
+                timeframe=timeframe,
+                include_lookback=False,
+            )
+            if isinstance(frame, pd.DataFrame) and not frame.empty:
+                frames.append(frame)
+        if not frames:
+            return pd.DataFrame(columns=["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"])
+        merged = pd.concat(frames, ignore_index=True)
+        if "日期" in merged.columns:
+            merged["日期"] = pd.to_datetime(merged["日期"])
+            merged = merged.drop_duplicates(subset=["日期"], keep="last").sort_values("日期").reset_index(drop=True)
+        return merged
+
+    def _build_segments(self, start_datetime: datetime, end_datetime: datetime, *, timeframe: str) -> list[tuple[datetime, datetime]]:
+        normalized = self._normalize_data_timeframe(timeframe)
+        if normalized in {"1d", "day", "daily"}:
+            range_start = start_datetime - timedelta(days=self.DAILY_LOOKBACK_DAYS)
+            segment_days = self.daily_segment_days
+        elif normalized in {"30m", "30min", "minute30"}:
+            range_start = start_datetime - timedelta(days=self.INTRADAY_LOOKBACK_DAYS)
+            segment_days = self.intraday_segment_days
+        else:
+            raise ValueError(f"Unsupported replay timeframe: {timeframe}")
+
+        segments: list[tuple[datetime, datetime]] = []
+        current = range_start
+        while current <= end_datetime:
+            segment_end = min(current + timedelta(days=segment_days), end_datetime)
+            segments.append((current, segment_end))
+            current = segment_end + timedelta(microseconds=1)
+        return segments
 
     @staticmethod
     def _normalize_data_timeframe(timeframe: str) -> str:
@@ -626,6 +708,21 @@ class QuantSimReplayService:
                 )
 
             self.snapshot_provider.prepare(stock_codes, start_dt, end_dt, timeframe)
+            prepare_report = getattr(self.snapshot_provider, "prepare_report", None)
+            if isinstance(prepare_report, dict):
+                self.db.append_sim_run_event(
+                    run_id,
+                    (
+                        "历史数据准备完成："
+                        f"股票批次 {len(prepare_report.get('stock_batches') or [])}，"
+                        f"时间分段 {int(prepare_report.get('segment_count') or 0)}，"
+                        f"成功 {int(prepare_report.get('prepared') or 0)}，"
+                        f"失败 {int(prepare_report.get('failed') or 0)}。"
+                    ),
+                    level="warning" if int(prepare_report.get("failed") or 0) > 0 else "info",
+                )
+                if int(prepare_report.get("prepared") or 0) <= 0 and stock_codes:
+                    raise ValueError("历史数据准备失败：所有股票都没有可用行情数据")
             self.db.append_sim_run_event(
                 run_id,
                 f"已准备 {len(stock_codes)} 只股票的历史数据，共 {len(checkpoints)} 个检查点。",

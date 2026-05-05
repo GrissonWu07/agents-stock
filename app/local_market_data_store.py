@@ -188,17 +188,20 @@ class LocalMarketDataStore:
             boundary_slice = self._filter_range(local, None, end, datetime_col=datetime_col)
             if boundary_slice is not None and not boundary_slice.empty:
                 return self._result(boundary_slice, "boundary_hit", f"local_{provider_name}", path)
+            return self._result(pd.DataFrame(), "boundary_hit", f"local_{provider_name}", path)
         if (local is None or local.empty) and self._recent_remote_empty(meta, start, end):
             return self._result(pd.DataFrame(), "negative_hit", f"local_{provider_name}", path)
 
         status = "miss" if local is None or local.empty else "partial"
         remote = remote_fetcher(start, end)
         if remote is None or remote.empty:
+            is_symbol_empty = local is None or local.empty
             self._write_range_meta(
                 path,
                 {
                     **meta,
                     "remote_empty_at": pd.Timestamp(datetime.now()).isoformat(),
+                    "remote_empty_all": bool(is_symbol_empty),
                     "remote_empty_start": _coerce_datetime(start).isoformat() if _coerce_datetime(start) is not None else None,
                     "remote_empty_end": _coerce_datetime(end).isoformat() if _coerce_datetime(end) is not None else None,
                 },
@@ -389,6 +392,8 @@ class LocalMarketDataStore:
             return False
         if (pd.Timestamp(datetime.now()) - empty_at).total_seconds() > RANGE_MISS_TTL_SECONDS:
             return False
+        if bool(meta.get("remote_empty_all")):
+            return True
         requested_start = _coerce_datetime(start)
         requested_end = _coerce_datetime(end)
         empty_start = _coerce_datetime(meta.get("remote_empty_start"))

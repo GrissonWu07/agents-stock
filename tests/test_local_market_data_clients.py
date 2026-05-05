@@ -225,6 +225,69 @@ def test_tdx_kline_range_remote_empty_is_negative_cached(tmp_path):
     assert second is None
 
 
+def test_tdx_kline_range_boundary_empty_segment_avoids_repeated_remote(tmp_path):
+    store = LocalMarketDataStore(tmp_path)
+    client = TdxLocalClient(store=store)
+    calls = []
+
+    def remote_fetcher():
+        calls.append("remote")
+        return pd.DataFrame(
+            [
+                {"日期": "2025-04-17 10:00:00", "开盘": 10, "最高": 11, "最低": 9, "收盘": 10.5, "成交量": 1000, "成交额": 10000},
+                {"日期": "2026-04-10 15:00:00", "开盘": 11, "最高": 12, "最低": 10, "收盘": 11.5, "成交量": 1100, "成交额": 11000},
+            ]
+        )
+
+    first = client.get_kline_data_range(
+        "301662",
+        kline_type="minute30",
+        start_datetime="2024-11-17 09:30:00",
+        end_datetime="2024-11-24 15:00:00",
+        remote_fetcher=remote_fetcher,
+    )
+    second = client.get_kline_data_range(
+        "301662",
+        kline_type="minute30",
+        start_datetime="2024-11-24 09:30:00",
+        end_datetime="2024-12-01 15:00:00",
+        remote_fetcher=remote_fetcher,
+    )
+
+    assert calls == ["remote"]
+    assert first is None
+    assert second is None
+
+
+def test_tdx_kline_range_symbol_wide_remote_empty_cache_covers_other_segments(tmp_path):
+    store = LocalMarketDataStore(tmp_path)
+    client = TdxLocalClient(store=store)
+    calls = []
+
+    def remote_fetcher():
+        calls.append("remote")
+        return pd.DataFrame()
+
+    first = client.get_kline_data_range(
+        "920414",
+        kline_type="minute30",
+        start_datetime="2025-01-01 09:30:00",
+        end_datetime="2025-01-08 15:00:00",
+        remote_fetcher=remote_fetcher,
+    )
+    second = client.get_kline_data_range(
+        "920414",
+        kline_type="minute30",
+        start_datetime="2025-03-01 09:30:00",
+        end_datetime="2025-03-08 15:00:00",
+        remote_fetcher=remote_fetcher,
+    )
+
+    assert calls == ["remote"]
+    assert first is None
+    assert second is None
+
+
 def test_tdx_quote_ttl_hit_avoids_remote(tmp_path):
     store = LocalMarketDataStore(tmp_path)
     client = TdxLocalClient(store=store)

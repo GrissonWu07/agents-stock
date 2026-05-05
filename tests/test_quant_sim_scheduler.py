@@ -126,7 +126,7 @@ def test_scheduler_supports_background_start_stop_and_persists_run_metadata(tmp_
     status_before = scheduler.get_status()
     assert status_before["running"] is False
     assert status_before["enabled"] is False
-    assert status_before["interval_minutes"] == 15
+    assert status_before["interval_minutes"] == 10
     assert status_before["analysis_timeframe"] == "30m"
     assert status_before["start_date"] == date.today().isoformat()
 

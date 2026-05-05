@@ -17,9 +17,11 @@ from app.watchlist_selector_integration import normalize_stock_code
 
 
 RUNTIME_SNAPSHOT_KEY = "stock_runtime_snapshot"
-REFRESH_INTERVAL_MINUTES = 5
+REFRESH_INTERVAL_MINUTES = 2
 DEFAULT_POLL_SECONDS = 20.0
 MAX_FETCH_WORKERS = max(1, int(os.getenv("UNIFIED_STOCK_REFRESH_WORKERS", "6")))
+QUOTE_REALTIME_TTL_SECONDS = 120
+REMOTE_FAILURE_COOLDOWN_SECONDS = 600
 _SCHEDULER_INSTANCE: "UnifiedStockRefreshScheduler | None" = None
 
 
@@ -131,6 +133,9 @@ def save_stock_runtime_entries(
             "data_source": _txt(item.get("data_source")),
             "updated_at": _txt(item.get("updated_at"), updated_at or _now()),
         }
+        for key in ("refresh_status", "failure_at", "failure_reason", "failure_count"):
+            if item.get(key) not in (None, ""):
+                normalized[code][key] = item.get(key)
     save_latest_result(
         RUNTIME_SNAPSHOT_KEY,
         {
@@ -143,6 +148,20 @@ def save_stock_runtime_entries(
 
 def _now() -> str:
     return format_utc_iso_z()
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    text = _txt(value)
+    if not text:
+        return None
+    try:
+        normalized = text.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 class UnifiedStockRefreshScheduler:
@@ -249,6 +268,9 @@ class UnifiedStockRefreshScheduler:
         next_entries = dict(existing_entries)
         failures: list[str] = []
         fetched: dict[str, dict[str, Any]] = {}
+        remote_fetched = 0
+        cache_hits = 0
+        cooldown_skipped = 0
         if self.stop_event.is_set():
             return {
                 "reason": run_reason,
@@ -270,10 +292,20 @@ class UnifiedStockRefreshScheduler:
             for code in codes:
                 if self.stop_event.is_set():
                     break
+                existing_entry = existing_entries.get(code)
+                if self._is_failure_cooldown_active(existing_entry):
+                    if isinstance(existing_entry, dict):
+                        next_entries[code] = {**existing_entry, "cache_status": "negative_hit"}
+                    cooldown_skipped += 1
+                    continue
+                if self._is_runtime_entry_fresh(existing_entry):
+                    fetched[code] = {**existing_entry, "cache_status": "hit"}
+                    cache_hits += 1
+                    continue
                 future = pool.submit(
                     self._fetch_runtime_entry,
                     stock_code=code,
-                    existing=existing_entries.get(code),
+                    existing=existing_entry,
                     prefer_last_trading_snapshot=prefer_last_trading_snapshot,
                     stop_event=self.stop_event,
                 )
@@ -292,20 +324,34 @@ class UnifiedStockRefreshScheduler:
                         entry = future.result()
                     except Exception as exc:
                         failures.append(f"{code}: {exc}")
+                        previous = existing_entries.get(code) if isinstance(existing_entries.get(code), dict) else {}
+                        failure_count = int(previous.get("failure_count") or 0) + 1 if isinstance(previous, dict) else 1
+                        next_entries[code] = {
+                            **previous,
+                            "stock_code": code,
+                            "stock_name": _valid_name(previous.get("stock_name")) or code,
+                            "data_source": _txt(previous.get("data_source"), "remote_failed"),
+                            "refresh_status": "remote_failed",
+                            "failure_at": _now(),
+                            "failure_reason": str(exc),
+                            "failure_count": failure_count,
+                            "updated_at": _txt(previous.get("updated_at"), _now()),
+                        }
                         continue
                     if not isinstance(entry, dict):
                         continue
                     fetched[code] = entry
+                    remote_fetched += 1
         finally:
             with self._executor_lock:
                 if self._active_executor is pool:
                     self._active_executor = None
             pool.shutdown(wait=not self.stop_event.is_set(), cancel_futures=True)
 
-        updated = 0
+        applied = 0
         for code, entry in fetched.items():
             next_entries[code] = entry
-            updated += 1
+            applied += 1
 
             latest_price = _price(entry.get("latest_price"))
             resolved_name = _valid_name(entry.get("stock_name"))
@@ -360,7 +406,11 @@ class UnifiedStockRefreshScheduler:
 
         summary = {
             "reason": run_reason,
-            "updated": updated,
+            "updated": remote_fetched,
+            "applied": applied,
+            "cacheHit": cache_hits,
+            "remoteFetched": remote_fetched,
+            "cooldownSkipped": cooldown_skipped,
             "failed": len(failures),
             "totalCodes": len(codes),
             "market": market,
@@ -395,6 +445,34 @@ class UnifiedStockRefreshScheduler:
         if context is None:
             return
         self.run_once(context=context, run_reason="scheduled")
+
+    @staticmethod
+    def _is_runtime_entry_fresh(entry: dict[str, Any] | None, *, now_utc: datetime | None = None) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        if _price(entry.get("latest_price")) is None:
+            return False
+        updated_at = _parse_utc_timestamp(entry.get("updated_at"))
+        if updated_at is None:
+            return False
+        base = now_utc or datetime.now(timezone.utc)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        return (base.astimezone(timezone.utc) - updated_at).total_seconds() < QUOTE_REALTIME_TTL_SECONDS
+
+    @staticmethod
+    def _is_failure_cooldown_active(entry: dict[str, Any] | None, *, now_utc: datetime | None = None) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        if _txt(entry.get("refresh_status")) != "remote_failed":
+            return False
+        failure_at = _parse_utc_timestamp(entry.get("failure_at"))
+        if failure_at is None:
+            return False
+        base = now_utc or datetime.now(timezone.utc)
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        return (base.astimezone(timezone.utc) - failure_at).total_seconds() < REMOTE_FAILURE_COOLDOWN_SECONDS
 
     @staticmethod
     def _resolve_market(context: Any) -> str:

@@ -2,7 +2,7 @@ import threading
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.stock_refresh_scheduler import UnifiedStockRefreshScheduler, load_stock_runtime_entries
+from app.stock_refresh_scheduler import UnifiedStockRefreshScheduler, load_stock_runtime_entries, save_stock_runtime_entries
 
 
 def test_stock_refresh_scheduler_trading_time_uses_market_timezone():
@@ -285,3 +285,125 @@ def test_run_once_repairs_quant_candidate_name_when_refresh_resolves_it(monkeypa
         "stock_name": "和顺电气",
         "metadata": {"industry": "电力设备", "sector": "电力设备"},
     } in candidate_updates
+
+
+def test_run_once_uses_fresh_runtime_cache_without_remote_fetch(monkeypatch, tmp_path):
+    quote_calls: list[str] = []
+    updates: list[dict[str, object]] = []
+    save_stock_runtime_entries(
+        {
+            "000001": {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "latest_price": 12.34,
+                "sector": "银行",
+                "price_as_of": "2026-05-05T01:00:00Z",
+                "data_source": "tdx_realtime",
+            }
+        },
+        base_dir=tmp_path,
+    )
+
+    class FakeWatchlistService:
+        def list_watches(self):
+            return [{"stock_code": "000001"}]
+
+        def update_watch_snapshot(self, code, *, latest_price=None, stock_name=None, metadata=None):
+            updates.append({"code": code, "latest_price": latest_price, "stock_name": stock_name, "metadata": metadata})
+
+    class FakeQuantDB:
+        def get_candidates(self, status=None):
+            return []
+
+        def get_positions(self):
+            return []
+
+        def update_candidate_snapshot(self, *args, **kwargs):
+            return None
+
+        def update_position_market_price(self, *args, **kwargs):
+            return None
+
+    class FakePortfolioManager:
+        def get_all_stocks(self):
+            return []
+
+    context = SimpleNamespace(
+        selector_result_dir=tmp_path,
+        research_result_key="research",
+        watchlist=lambda: FakeWatchlistService(),
+        portfolio_manager=lambda: FakePortfolioManager(),
+        quant_db=lambda: FakeQuantDB(),
+        scheduler=lambda: SimpleNamespace(get_status=lambda: {"market": "CN"}),
+    )
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_is_trading_time", staticmethod(lambda market: True))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: quote_calls.append(code) or {"current_price": 99.9}))
+
+    summary = UnifiedStockRefreshScheduler(lambda: context).run_once(context=context, run_reason="scheduled")
+
+    assert quote_calls == []
+    assert summary["cacheHit"] == 1
+    assert summary["remoteFetched"] == 0
+    assert updates[0]["latest_price"] == 12.34
+
+
+def test_run_once_respects_failure_cooldown_without_remote_retry(monkeypatch, tmp_path):
+    quote_calls: list[str] = []
+    now_text = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    save_stock_runtime_entries(
+        {
+            "000001": {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "latest_price": 12.34,
+                "sector": "银行",
+                "price_as_of": now_text,
+                "data_source": "remote_failed",
+                "refresh_status": "remote_failed",
+                "failure_at": now_text,
+                "failure_count": 1,
+            }
+        },
+        base_dir=tmp_path,
+        updated_at=now_text,
+    )
+
+    class FakeWatchlistService:
+        def list_watches(self):
+            return [{"stock_code": "000001"}]
+
+        def update_watch_snapshot(self, *args, **kwargs):
+            return None
+
+    class FakeQuantDB:
+        def get_candidates(self, status=None):
+            return []
+
+        def get_positions(self):
+            return []
+
+        def update_candidate_snapshot(self, *args, **kwargs):
+            return None
+
+        def update_position_market_price(self, *args, **kwargs):
+            return None
+
+    class FakePortfolioManager:
+        def get_all_stocks(self):
+            return []
+
+    context = SimpleNamespace(
+        selector_result_dir=tmp_path,
+        research_result_key="research",
+        watchlist=lambda: FakeWatchlistService(),
+        portfolio_manager=lambda: FakePortfolioManager(),
+        quant_db=lambda: FakeQuantDB(),
+        scheduler=lambda: SimpleNamespace(get_status=lambda: {"market": "CN"}),
+    )
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_is_trading_time", staticmethod(lambda market: True))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: quote_calls.append(code) or {"current_price": 99.9}))
+
+    summary = UnifiedStockRefreshScheduler(lambda: context).run_once(context=context, run_reason="scheduled")
+
+    assert quote_calls == []
+    assert summary["cooldownSkipped"] == 1

@@ -313,7 +313,7 @@ class QuantSimDB:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 enabled INTEGER DEFAULT 0,
                 auto_execute INTEGER DEFAULT 0,
-                interval_minutes INTEGER DEFAULT 15,
+                interval_minutes INTEGER DEFAULT 10,
                 trading_hours_only INTEGER DEFAULT 1,
                 analysis_timeframe TEXT DEFAULT '30m',
                 strategy_mode TEXT DEFAULT 'auto',
@@ -3701,6 +3701,7 @@ class QuantSimDB:
             "notes": notes,
             "metadata": metadata or {},
         }
+        basic_info_missing = 1 if bool(payload["metadata"].get("basic_info_missing")) else 0
         if not payload["stock_code"]:
             raise ValueError("stock_code is required")
         conn = self._connect()
@@ -3720,6 +3721,7 @@ class QuantSimDB:
                     latest_price = ?,
                     notes = ?,
                     metadata_json = ?,
+                    basic_info_missing = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -3729,6 +3731,7 @@ class QuantSimDB:
                     payload["latest_price"] if payload["latest_price"] > 0 else float(existing["latest_price"] or 0),
                     payload["notes"] if payload["notes"] is not None else existing["notes"],
                     json.dumps(next_metadata, ensure_ascii=False),
+                    1 if basic_info_missing else int(existing["basic_info_missing"] or 0),
                     now_text,
                     int(existing["id"]),
                 ),
@@ -3738,8 +3741,8 @@ class QuantSimDB:
             cursor.execute(
                 """
                 INSERT INTO stock_universe
-                (stock_code, stock_name, source, latest_price, notes, metadata_json, watched, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                (stock_code, stock_name, source, latest_price, notes, metadata_json, basic_info_missing, watched, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     payload["stock_code"],
@@ -3748,6 +3751,7 @@ class QuantSimDB:
                     payload["latest_price"],
                     payload["notes"],
                     json.dumps(payload["metadata"], ensure_ascii=False),
+                    basic_info_missing,
                     now_text,
                     now_text,
                 ),
@@ -3791,6 +3795,32 @@ class QuantSimDB:
         conn = self._connect()
         cursor = conn.cursor()
         where_sql, params = self._build_watch_filters(search=search, in_quant_pool=in_quant_pool)
+        cursor.execute(f"SELECT COUNT(*) AS total FROM stock_universe {where_sql}", tuple(params))
+        row = cursor.fetchone()
+        conn.close()
+        return int(row["total"] or 0) if row else 0
+
+    def list_stock_universe_page(self, search: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        where_sql, params = self._build_stock_universe_filters(search=search)
+        cursor.execute(
+            f"""
+            SELECT * FROM stock_universe
+            {where_sql}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, max(0, int(limit)), max(0, int(offset))),
+        )
+        rows = [self._watch_row_to_dict(cursor, row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def count_stock_universe(self, search: str | None = None) -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        where_sql, params = self._build_stock_universe_filters(search=search)
         cursor.execute(f"SELECT COUNT(*) AS total FROM stock_universe {where_sql}", tuple(params))
         row = cursor.fetchone()
         conn.close()
@@ -5016,7 +5046,7 @@ class QuantSimDB:
                     capital_sell_cash_reuse_policy,
                     last_run_at, updated_at
                 )
-                VALUES (1, 0, 0, 15, 1, ?, ?, ?, ?, ?, ?, ?, 'CN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                VALUES (1, 0, 0, 10, 1, ?, ?, ?, ?, ?, ?, ?, 'CN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     DEFAULT_ANALYSIS_TIMEFRAME,
@@ -5910,8 +5940,30 @@ class QuantSimDB:
             params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
         return f"WHERE {' AND '.join(clauses)}", params
 
+    def _build_stock_universe_filters(self, *, search: str | None = None) -> tuple[str, list[Any]]:
+        clauses = ["(watched = 1 OR quant_enabled = 1 OR registered_position_enabled = 1)"]
+        params: list[Any] = []
+        keyword = str(search or "").strip()
+        if keyword:
+            like_keyword = f"%{keyword}%"
+            clauses.append(
+                """
+                (stock_code LIKE ?
+                 OR stock_name LIKE ?
+                 OR source LIKE ?
+                 OR notes LIKE ?
+                 OR metadata_json LIKE ?)
+                """
+            )
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
+        return f"WHERE {' AND '.join(clauses)}", params
+
     def _watch_row_to_dict(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict[str, Any]:
         payload = self._candidate_row_to_dict(cursor, row)
+        payload["watched"] = bool(payload.get("watched"))
+        payload["quant_enabled"] = bool(payload.get("quant_enabled"))
+        payload["registered_position_enabled"] = bool(payload.get("registered_position_enabled"))
+        payload["basic_info_missing"] = bool(payload.get("basic_info_missing"))
         payload["in_quant_pool"] = bool(payload.get("quant_enabled"))
         payload["source_summary"] = payload.get("source") or ", ".join(payload.get("sources") or [])
         return payload

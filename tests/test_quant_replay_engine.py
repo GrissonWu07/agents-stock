@@ -139,6 +139,24 @@ class SplitSnapshotProvider:
         }
 
 
+class EmptyReplaySnapshotProvider:
+    def __init__(self):
+        self.prepare_report = {}
+
+    def prepare(self, stock_codes, start_datetime, end_datetime, timeframe):
+        self.prepare_report = {
+            "stock_batches": [list(stock_codes)],
+            "segment_count": 1,
+            "prepared": 0,
+            "failed": len(stock_codes),
+            "failures": [{"stock_code": code, "reason": "empty_history"} for code in stock_codes],
+        }
+
+    def get_snapshot(self, stock_code, checkpoint, timeframe, stock_name=None):
+        del stock_code, checkpoint, timeframe, stock_name
+        return None
+
+
 class SplitThenSellAdapter:
     def analyze_candidate(self, candidate, market_snapshot=None, analysis_timeframe="1d", strategy_mode="auto"):
         price = float((market_snapshot or {}).get("current_price") or 0)
@@ -209,6 +227,60 @@ class FakeTdxFetcher:
         )
 
 
+class SegmentRecordingReplayFetcher:
+    def __init__(self):
+        self.range_calls = []
+        self.indicator_calls = []
+        self.snapshot_calls = []
+
+    def get_kline_data_range(self, stock_code, *, kline_type, start_datetime, end_datetime, max_bars):
+        self.range_calls.append(
+            {
+                "stock_code": stock_code,
+                "kline_type": kline_type,
+                "start_datetime": start_datetime,
+                "end_datetime": end_datetime,
+                "max_bars": max_bars,
+            }
+        )
+        return pd.DataFrame(
+            [
+                {
+                    "日期": pd.Timestamp(start_datetime),
+                    "开盘": 10.0,
+                    "收盘": 10.2,
+                    "最高": 10.3,
+                    "最低": 9.9,
+                    "成交量": 1200,
+                    "成交额": 12000,
+                },
+                {
+                    "日期": pd.Timestamp(end_datetime),
+                    "开盘": 10.2,
+                    "收盘": 10.4,
+                    "最高": 10.5,
+                    "最低": 10.1,
+                    "成交量": 1300,
+                    "成交额": 13000,
+                },
+            ]
+        )
+
+    def build_indicator_history(self, stock_code, history, timeframe):
+        self.indicator_calls.append({"stock_code": stock_code, "rows": len(history), "timeframe": timeframe})
+        return history.assign(ma20=history["收盘"])
+
+    def build_snapshot_from_history(self, stock_code, snapshot_window, stock_name=None, indicator_frame=None):
+        self.snapshot_calls.append({"stock_code": stock_code, "rows": len(snapshot_window), "indicator_rows": 0 if indicator_frame is None else len(indicator_frame)})
+        return {
+            "code": stock_code,
+            "name": stock_name or stock_code,
+            "current_price": float(snapshot_window.iloc[-1]["收盘"]),
+            "latest_price": float(snapshot_window.iloc[-1]["收盘"]),
+            "ma20": float(snapshot_window.iloc[-1]["收盘"]),
+        }
+
+
 class NoLookupReplayFetcher:
     def build_snapshot_from_history(self, stock_code, snapshot_window, stock_name=None):
         assert stock_name == stock_code
@@ -233,6 +305,63 @@ def test_snapshot_provider_accepts_intraday_dataframe_without_truthiness_error()
     assert isinstance(history, pd.DataFrame)
     assert list(history.columns) == ["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]
     assert len(history) == 1
+
+
+def test_snapshot_provider_prepares_intraday_data_in_stock_batches_and_time_segments():
+    fetcher = SegmentRecordingReplayFetcher()
+    provider = MainProjectHistoricalSnapshotProvider(
+        tdx_fetcher=fetcher,
+        stock_batch_size=2,
+        intraday_segment_days=2,
+    )
+
+    provider.prepare(
+        ["300001", "300002", "300003"],
+        datetime(2026, 1, 10, 9, 30),
+        datetime(2026, 1, 16, 15, 0),
+        "30m",
+    )
+
+    assert provider.prepare_report["stock_batches"] == [["300001", "300002"], ["300003"]]
+    assert provider.prepare_report["segment_count"] > 1
+    assert {call["stock_code"] for call in fetcher.range_calls} == {"300001", "300002", "300003"}
+    assert len(fetcher.range_calls) == 3 * provider.prepare_report["segment_count"]
+    assert len(fetcher.indicator_calls) == 3
+    assert all(call["rows"] > 0 for call in fetcher.indicator_calls)
+
+
+def test_snapshot_provider_default_intraday_segments_are_not_overly_granular():
+    provider = MainProjectHistoricalSnapshotProvider()
+
+    segments = provider._build_segments(  # noqa: SLF001 - verifies replay preparation batching contract
+        datetime(2025, 1, 1),
+        datetime(2026, 1, 1),
+        timeframe="30m",
+    )
+
+    assert 1 < len(segments) <= 6
+
+
+def test_snapshot_provider_get_snapshot_uses_prepared_cache_without_fetching_more_data():
+    fetcher = SegmentRecordingReplayFetcher()
+    provider = MainProjectHistoricalSnapshotProvider(
+        tdx_fetcher=fetcher,
+        stock_batch_size=2,
+        intraday_segment_days=2,
+    )
+    provider.prepare(
+        ["300001"],
+        datetime(2026, 1, 10, 9, 30),
+        datetime(2026, 1, 16, 15, 0),
+        "30m",
+    )
+    range_call_count = len(fetcher.range_calls)
+
+    snapshot = provider.get_snapshot("300001", datetime(2026, 1, 12, 10, 0), "30m", stock_name="测试股票")
+
+    assert snapshot["name"] == "测试股票"
+    assert len(fetcher.range_calls) == range_call_count
+    assert fetcher.snapshot_calls
 
 
 def test_snapshot_provider_falls_back_to_stock_code_when_name_missing():
@@ -410,6 +539,38 @@ def test_historical_replay_does_not_send_live_signal_notifications(tmp_path, mon
 
     assert summary["status"] == "completed"
     assert sent_notifications == []
+
+
+def test_historical_replay_fails_when_all_replay_market_data_is_missing(tmp_path):
+    db_file = tmp_path / "app.quant_sim.db"
+    CandidatePoolService(db_file=db_file).add_candidate(
+        stock_code="300390",
+        stock_name="天华新能",
+        source="main_force",
+        latest_price=10.0,
+    )
+    replay_service = QuantSimReplayService(
+        db_file=db_file,
+        snapshot_provider=EmptyReplaySnapshotProvider(),
+        adapter=FakeAdapter(),
+    )
+
+    try:
+        replay_service.run_historical_range(
+            start_datetime=datetime(2026, 1, 5, 0, 0),
+            end_datetime=datetime(2026, 1, 6, 23, 59),
+            timeframe="30m",
+            market="CN",
+        )
+    except ValueError as exc:
+        assert "所有股票都没有可用行情数据" in str(exc)
+    else:
+        raise AssertionError("expected replay to fail when all market data is missing")
+    run = replay_service.db.get_sim_runs(limit=1)[0]
+    events = replay_service.db.get_sim_run_events(run["id"], limit=10)
+
+    assert run["status"] == "failed"
+    assert any("历史数据准备完成" in event["message"] for event in events)
 
 
 def test_historical_replay_allows_open_ended_end_datetime(tmp_path):

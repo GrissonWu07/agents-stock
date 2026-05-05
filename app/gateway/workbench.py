@@ -308,7 +308,7 @@ def watchlist_rows_from_items(
 
 
 def watchlist_rows(context: Any) -> list[dict[str, Any]]:
-    return watchlist_rows_from_items(context.watchlist().list_watches())
+    return watchlist_rows_from_items(context.watchlist().list_stock_universe_page(limit=100000, offset=0))
 
 
 def build_workbench_snapshot(
@@ -321,10 +321,10 @@ def build_workbench_snapshot(
 ) -> dict[str, Any]:
     summary = context.portfolio().get_account_summary()
     search, requested_page, page_size = _table_page_query(table_query)
-    total_watchlist = context.watchlist().count_watches()
-    filtered_total = context.watchlist().count_watches(search=search)
+    total_watchlist = context.watchlist().count_stock_universe()
+    filtered_total = context.watchlist().count_stock_universe(search=search)
     watchlist_pagination = _pagination(requested_page, page_size, filtered_total)
-    page_items = context.watchlist().list_watches_page(
+    page_items = context.watchlist().list_stock_universe_page(
         search=search,
         limit=page_size,
         offset=(watchlist_pagination["page"] - 1) * page_size,
@@ -345,7 +345,7 @@ def build_workbench_snapshot(
         latest_analysis_by_code=latest_analysis_by_code,
         position_codes=position_codes,
     )
-    quant_count = context.watchlist().count_watches(in_quant_pool=True)
+    quant_count = context.candidate_pool().count_candidates(status="active")
 
     def _analysis_from_record(latest_record: dict[str, Any], fallback_symbol: str = "") -> dict[str, Any]:
         resolved_symbol = normalize_stock_code(_txt(latest_record.get("symbol"), fallback_symbol))
@@ -584,7 +584,7 @@ def action_workbench_batch_portfolio(context: Any, payload: dict[str, Any]) -> d
         input_quantity = 100
 
     watch_map: dict[str, dict[str, Any]] = {}
-    for item in context.watchlist().list_watches():
+    for item in context.watchlist().list_stock_universe_page(limit=100000, offset=0):
         watch_code = normalize_stock_code(item.get("stock_code"))
         if watch_code:
             watch_map[watch_code] = item
