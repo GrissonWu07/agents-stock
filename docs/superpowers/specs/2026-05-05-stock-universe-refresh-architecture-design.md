@@ -20,7 +20,7 @@ Supersedes:
 2. 股票成员关系和数据刷新分离。加入股票池、加入量化、登记持仓不应自动触发全量远程刷新。
 3. 实时数据刷新统一编排，按数据域区分行情技术、基础信息、资金流情绪、财务基本面、AI 分析、公司行为和交易规则。
 4. 所有远程数据访问必须遵守 local-first：先查本地缓存，缓存满足覆盖范围或 TTL 时直接返回；只有缺口、过期或显式强制刷新时才远程。
-5. 历史回放获取历史检查点数据使用独立流程，但仍必须走 local-first 和 remote fallback，不能直接拉实时行情、基础信息或 AI 分析。
+5. 历史回放获取历史检查点数据使用独立流程，但仍必须走 local-first 和按缺口远程补齐，不能直接拉实时行情、基础信息或 AI 分析。
 6. 清理老刷新任务和旁路调用。页面、scheduler、回放、实时模拟不得直接调用 Akshare、TDX、Tushare。
 
 ## 非目标
@@ -28,35 +28,42 @@ Supersedes:
 1. 不合并持仓诊断、实时量化、历史回放三个页面。
 2. 不重写已完成的买入分层、组合防守、个股执行反馈、止盈保护、资金槽算法。
 3. 不删除历史 spec；已完成 spec 继续作为历史设计记录。
-4. 不要求立即物理合并所有数据库表为单表，但 API 和服务层必须按统一股票池语义工作。
+4. 不保留新的独立量化池数据库或持仓池数据库；目标物理模型必须统一到股票池。
 
 ## 核心概念
 
 ### 股票池
 
-股票池是系统唯一的标的主集合，按股票代码去重。短期实现可以继续聚合现有数据源：
+股票池是系统唯一的标的主集合，按股票代码去重。目标物理模型必须提供统一股票池主表，暂称 `stock_universe`，并以股票代码作为唯一主键。
 
-1. `watchlist.db.watchlist`
-2. `quant_sim.db.candidate_pool`
-3. `portfolio_stocks.db.portfolio_stocks`
-4. `quant_sim.db.sim_positions`
-5. `quant_sim_replay.db.sim_run_positions`
+不再允许新代码读取或写入以下表作为股票主数据、量化范围或登记持仓来源：
 
-目标上应提供统一的股票池服务，输出每只股票的基础字段和用途标签。
+1. `quant_sim.db.candidate_pool`
+2. `portfolio_stocks.db.portfolio_stocks`
+3. 独立的“量化池”数据库或“持仓池”数据库
+
+这些旧表不属于目标架构。实现本 spec 时不写兼容层、不做 fallback、不做双写。部署采用重置式切换：创建统一股票池后，实时量化、历史回放、持仓诊断都只从统一股票池读取股票范围。
+
+统一股票池主表必须保存：
+
+1. 股票代码、名称、市场、交易所、行业、板块等基础字段。
+2. 用途标签，例如 `watched`、`quant_enabled`、`registered_position_enabled`。
+3. 登记持仓所需的用户持仓字段，或通过 `stock_universe_position_profile` 这类统一股票池附属表保存。
+4. 最近缓存状态摘要，例如行情技术更新时间、AI 分析更新时间、基础信息更新时间。
 
 ### 用途标签
 
 每只股票可以有多个用途标签：
 
-1. `watched`：关注池股票，表示用户持续跟踪。
+1. `watched`：关注股票，表示用户持续跟踪。
 2. `quant_enabled`：量化股票，允许被实时量化和历史回放扫描。
-3. `registered_position`：登记持仓股票，用于持仓诊断。
-4. `live_position`：实时模拟账户当前持仓。
-5. `replay_position`：某个历史回放任务内的持仓快照，只在指定 run 上下文有效。
+3. `registered_position_enabled`：登记持仓股票，用于持仓诊断。
+4. `live_position`：实时模拟账户当前持仓，只作为 live-sim 账户状态派生标签，不作为股票主数据。
+5. `replay_position`：某个历史回放任务内的持仓快照，只在指定 run 上下文有效，不作为股票主数据。
 
 ### 三个业务面
 
-1. 持仓诊断从股票池筛选 `registered_position`、`watched`、`live_position` 和必要的 `quant_enabled` 股票，形成诊断列表。
+1. 持仓诊断从股票池筛选 `registered_position_enabled`、`watched`、`live_position` 和必要的 `quant_enabled` 股票，形成诊断列表。
 2. 实时量化从股票池筛选 `quant_enabled=true` 的股票，称为“实时量化股票”。
 3. 历史回放默认从股票池筛选 `quant_enabled=true` 的股票，启动时冻结为该任务的“回放股票范围”。
 4. 历史回放允许在 `quant_enabled=true` 范围内做任务级 `include_symbols` / `exclude_symbols` 筛选；不得引入股票池外或 `quant_enabled=false` 的股票。
@@ -68,6 +75,24 @@ Supersedes:
 2. live-sim 不写 replay 表。
 3. his-replay 不写 live-sim 状态表。
 4. replay 的股票范围在任务开始时冻结，任务运行中股票池变化不影响当前 run。
+
+## 数据库边界
+
+目标数据库边界：
+
+1. 股票主数据只存在于统一股票池。
+2. 量化股票不再有独立候选池表；`quant_enabled=true` 就是量化股票范围。
+3. 登记持仓不再有独立持仓池主表；登记持仓是统一股票池上的用途标签和持仓档案。
+4. live-sim 继续保留独立账户状态表，例如 `sim_positions`、`sim_trades`、`sim_account`、`strategy_signals`，但这些表不能定义股票池范围。
+5. his-replay 继续保留独立任务结果表，例如 `sim_run_positions`、`sim_run_trades`、`sim_run_signals`，但这些表只保存 run 结果，不能定义股票池范围。
+
+部署重置要求：
+
+1. 不迁移旧 `candidate_pool`、`portfolio_stocks`、`watchlist` 数据。
+2. 不保留兼容读、兼容写、fallback 或双写逻辑。
+3. 部署时删除旧量化池和旧持仓池主表。
+4. 新版本启动后只创建和使用统一股票池及其附属表。
+5. 需要保留的股票范围由用户重新导入、手工添加，或由发现/研究流程重新写入统一股票池。
 
 ## 页面边界
 
@@ -326,8 +351,8 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 
 ### 必须删除或改造的旁路
 
-1. `WatchlistService.refresh_quotes()` 不再直接远程拉行情和基础信息。它可以保留 watchlist 快照写回，但数据来源必须是统一刷新服务返回结果。
-2. `portfolio refresh-indicators` 不再混合刷新 watchlist、行情技术、AI 分析。它拆为：
+1. 删除 `WatchlistService.refresh_quotes()` 这类旧 watchlist 刷新入口；统一股票池快照写回由新刷新服务负责。
+2. `portfolio refresh-indicators` 不再混合刷新旧 watchlist、行情技术、AI 分析。它拆为：
    - `refresh-market-technical`
    - `refresh-ai-analysis`
 3. `stock_analysis_service` 不再默认远程拉行情技术。AI 分析使用刷新服务提供的缓存快照；只有显式 force 且调用方允许远程时才补数据。
@@ -340,7 +365,7 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 2. `AkshareLocalClient`、`TdxLocalClient`、`TushareLocalClient` 作为 provider adapter。
 3. `TechnicalIndicatorEngine`。
 4. `stock_refresh_scheduler` 的调度线程、交易时间判断、批量节流框架。
-5. watchlist 快照写回逻辑。
+5. 快照写回逻辑可以复用实现思路，但目标写入表必须是统一股票池，不得写旧 watchlist。
 6. 现有 replay 历史数据准备阶段，但需要收敛到统一 local-first contract。
 
 ### 需要废弃的行为
@@ -454,5 +479,5 @@ TTL：默认 1 天，可按页面提供“强制重新分析”。
 4. 改造实时量化调度为 10 分钟周期，并通过统一服务刷新行情技术。
 5. 改造历史回放准备阶段为 local-first 历史数据获取，checkpoint 只读准备结果。
 6. 拆分 portfolio 的行情技术刷新和 AI 分析刷新。
-7. 改造 watchlist refresh，只保留快照写回，不直接远程拉。
+7. 删除旧 watchlist refresh 入口，将快照写回收敛到统一股票池刷新服务。
 8. 接入失败冷却、并发去重和刷新状态 UI。
