@@ -121,15 +121,15 @@ def test_auto_execute_skips_sell_when_stock_is_limit_down(tmp_path):
 
 
 def test_scheduler_auto_executes_buy_signal_from_watchlist_candidate_and_syncs_watchlist(tmp_path, monkeypatch):
-    watch_db = tmp_path / "watchlist.db"
     quant_db = tmp_path / "app.quant_sim.db"
+    watch_db = quant_db
 
     watchlist = WatchlistService(db_file=watch_db)
     quant_pool = CandidatePoolService(db_file=quant_db)
     watchlist.add_stock("300390", "天华新能", "main_force", 62.0, None, {})
     add_watchlist_rows_to_quant_pool(["300390"], watchlist, quant_pool)
 
-    scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
+    scheduler = QuantSimScheduler(db_file=quant_db)
     scheduler.update_config(enabled=True, auto_execute=True)
     monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 

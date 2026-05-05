@@ -416,67 +416,6 @@ def _run_ai_scanner_strategy(context: Any, payload: dict[str, Any], *, top_n: in
     if not rows:
         raise RuntimeError(t("Stockpolicy scanner returned no selected stocks"))
 
-    watchlist_service = None
-    try:
-        watchlist_service = context.watchlist()
-    except Exception:
-        watchlist_service = None
-
-    if watchlist_service:
-        for row in rows:
-            code = _discover_code(row.get("股票代码"))
-            if not code:
-                continue
-            quote: dict[str, Any] = {}
-            basic_info: dict[str, Any] = {}
-            try:
-                fetched_quote = watchlist_service.quote_fetcher(code, _txt(row.get("股票简称")) or None)
-                if isinstance(fetched_quote, dict):
-                    quote = fetched_quote
-            except Exception:
-                quote = {}
-            try:
-                fetched_info = watchlist_service.basic_info_fetcher(code)
-                if isinstance(fetched_info, dict):
-                    basic_info = fetched_info
-            except Exception:
-                basic_info = {}
-
-            if _first_non_empty(row, ["最新价"]) in (None, "", "nan", "NaN"):
-                row["最新价"] = _first_non_empty(
-                    quote,
-                    ["current_price", "price", "latest_price", "最新价"],
-                ) or _first_non_empty(
-                    basic_info,
-                    ["current_price", "latest_price", "最新价"],
-                )
-            if _first_non_empty(row, ["总市值"]) in (None, "", "nan", "NaN"):
-                row["总市值"] = _first_non_empty(
-                    basic_info,
-                    ["market_cap", "total_market_cap", "circulating_market_cap", "总市值", "市值"],
-                )
-            if _first_non_empty(row, ["市盈率"]) in (None, "", "nan", "NaN"):
-                row["市盈率"] = _first_non_empty(
-                    basic_info,
-                    ["pe_ratio", "pe", "市盈率", "PE"],
-                )
-            if _first_non_empty(row, ["市净率"]) in (None, "", "nan", "NaN"):
-                row["市净率"] = _first_non_empty(
-                    basic_info,
-                    ["pb_ratio", "pb", "市净率", "PB"],
-                )
-            if (not _txt(row.get("股票简称")) or _txt(row.get("股票简称")) == code):
-                row["股票简称"] = _txt(
-                    _first_non_empty(quote, ["name", "股票简称", "名称"])
-                    or _first_non_empty(basic_info, ["name", "股票简称", "名称"]),
-                    row.get("股票简称") or code,
-                )
-            if not _txt(row.get("所属行业")):
-                row["所属行业"] = _txt(
-                    _first_non_empty(basic_info, ["industry", "sector", "所属行业", "板块"])
-                    or _first_non_empty(quote, ["industry", "sector", "所属行业", "板块"])
-                )
-
     return pd.DataFrame(rows)
 
 
@@ -599,7 +538,7 @@ def _add_discover_row_to_watchlist(context: Any, row: dict[str, Any]) -> None:
         latest_price=_optional_float(row.get("latestPrice")),
         notes=row.get("reason"),
         metadata={"industry": row.get("industry")},
-        db_file=context.watchlist_db_file,
+        db_file=context.quant_sim_db_file,
     )
 
 

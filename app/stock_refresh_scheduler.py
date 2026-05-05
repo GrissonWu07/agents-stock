@@ -13,7 +13,6 @@ import schedule
 from app.quant_sim.scheduler import TRADING_DAYS, TRADING_HOURS
 from app.quant_sim.time_utils import format_utc_iso_z, market_timezone
 from app.selector_result_store import DEFAULT_SELECTOR_RESULT_DIR, load_latest_result, save_latest_result
-from app.selector_ui_state import load_main_force_state, load_simple_selector_state
 from app.watchlist_selector_integration import normalize_stock_code
 
 
@@ -273,7 +272,6 @@ class UnifiedStockRefreshScheduler:
                     break
                 future = pool.submit(
                     self._fetch_runtime_entry,
-                    watchlist_service=watchlist_service,
                     stock_code=code,
                     existing=existing_entries.get(code),
                     prefer_last_trading_snapshot=prefer_last_trading_snapshot,
@@ -431,7 +429,6 @@ class UnifiedStockRefreshScheduler:
     @staticmethod
     def _fetch_runtime_entry(
         *,
-        watchlist_service: Any,
         stock_code: str,
         existing: dict[str, Any] | None,
         prefer_last_trading_snapshot: bool = False,
@@ -454,22 +451,12 @@ class UnifiedStockRefreshScheduler:
 
         quote: dict[str, Any] = {}
         if not (stop_event and stop_event.is_set()):
-            try:
-                fetched = watchlist_service.quote_fetcher(stock_code, existing_name or None)
-                if isinstance(fetched, dict):
-                    quote = fetched
-            except Exception:
-                quote = {}
+            quote = UnifiedStockRefreshScheduler._fetch_realtime_quote(stock_code, existing_name or None)
 
         need_basic_info = not existing_sector or not existing_name
         basic_info: dict[str, Any] = {}
         if need_basic_info and not (stop_event and stop_event.is_set()):
-            try:
-                fetched = watchlist_service.basic_info_fetcher(stock_code)
-                if isinstance(fetched, dict):
-                    basic_info = fetched
-            except Exception:
-                basic_info = {}
+            basic_info = UnifiedStockRefreshScheduler._fetch_basic_info(stock_code)
 
         quote_name = _valid_name(quote.get("name"))
         if quote_name.upper() == stock_code.upper():
@@ -522,6 +509,38 @@ class UnifiedStockRefreshScheduler:
             "data_source": data_source,
             "updated_at": _now(),
         }
+
+    @staticmethod
+    def _fetch_realtime_quote(stock_code: str, preferred_name: str | None = None) -> dict[str, Any]:
+        try:
+            from app.smart_monitor_tdx_data import SmartMonitorTDXDataFetcher
+
+            quote = SmartMonitorTDXDataFetcher().get_realtime_quote(stock_code, preferred_name=preferred_name)
+            if isinstance(quote, dict) and quote:
+                return quote
+        except Exception:
+            pass
+        try:
+            from app.data_source_manager import data_source_manager
+
+            quote = data_source_manager.get_realtime_quotes(stock_code)
+            if isinstance(quote, dict) and quote:
+                if preferred_name and not quote.get("name"):
+                    quote["name"] = preferred_name
+                return quote
+        except Exception:
+            pass
+        return {}
+
+    @staticmethod
+    def _fetch_basic_info(stock_code: str) -> dict[str, Any]:
+        try:
+            from app.data_source_manager import data_source_manager
+
+            info = data_source_manager.get_stock_basic_info(stock_code)
+            return info if isinstance(info, dict) else {}
+        except Exception:
+            return {}
 
     @staticmethod
     def _latest_trading_snapshot(stock_code: str, preferred_name: str | None = None) -> dict[str, Any]:
@@ -601,50 +620,6 @@ class UnifiedStockRefreshScheduler:
                     codes.add(code)
             for item in db.get_positions():
                 code = normalize_stock_code(item.get("stock_code"))
-                if code:
-                    codes.add(code)
-        except Exception:
-            pass
-
-        try:
-            main_result, _, _ = load_main_force_state(base_dir=context.selector_result_dir)
-            recommendations = main_result.get("final_recommendations", []) if isinstance(main_result, dict) else []
-            for item in recommendations:
-                if not isinstance(item, dict):
-                    continue
-                stock_data = item.get("stock_data") if isinstance(item.get("stock_data"), dict) else {}
-                code = normalize_stock_code(
-                    stock_data.get("股票代码")
-                    or item.get("code")
-                    or item.get("stock_code")
-                    or item.get("symbol")
-                )
-                if code:
-                    codes.add(code)
-        except Exception:
-            pass
-
-        try:
-            for strategy_key in ["low_price_bull", "small_cap", "profit_growth", "value_stock", "ai_scanner"]:
-                stocks_df, _ = load_simple_selector_state(strategy_key, base_dir=context.selector_result_dir)
-                if stocks_df is None or getattr(stocks_df, "empty", False):
-                    continue
-                for row in stocks_df.to_dict(orient="records"):
-                    if not isinstance(row, dict):
-                        continue
-                    code = _code_from_mapping(row)
-                    if code:
-                        codes.add(code)
-        except Exception:
-            pass
-
-        try:
-            research_payload = load_latest_result(context.research_result_key, base_dir=context.selector_result_dir) or {}
-            table_rows = ((research_payload.get("outputTable") or {}).get("rows") or []) if isinstance(research_payload, dict) else []
-            for row in table_rows:
-                if not isinstance(row, dict):
-                    continue
-                code = normalize_stock_code(row.get("code") or row.get("stock_code") or row.get("id"))
                 if code:
                     codes.add(code)
         except Exception:

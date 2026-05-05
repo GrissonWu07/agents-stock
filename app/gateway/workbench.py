@@ -672,12 +672,7 @@ def action_workbench_add_watchlist(context: Any, payload: dict[str, Any]) -> dic
 
 
 def action_workbench_refresh(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    body = _payload_dict(payload)
-    explicit_codes = isinstance(body, dict) and "codes" in body
-    codes = _normalize_codes(body.get("codes")) if explicit_codes else _normalize_codes(body)
-    full_refresh = bool(body.get("fullRefresh")) if isinstance(body, dict) else False
-    context.watchlist().refresh_quotes(codes if explicit_codes else (codes or None), full_refresh=full_refresh)
-    return snapshot_workbench(context)
+    raise HTTPException(status_code=400, detail="旧关注池行情刷新已停用，请使用统一数据刷新任务。")
 
 
 def action_workbench_delete(context: Any, payload: dict[str, Any]) -> dict[str, Any]:

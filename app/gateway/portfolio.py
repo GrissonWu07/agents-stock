@@ -702,19 +702,6 @@ def _action_portfolio_refresh_indicators(context: UIApiContext, payload: Any) ->
             ][:50]
     overrides: dict[str, dict[str, Any]] = {}
     manager = context.portfolio_manager()
-    watchlist_refresh_summary: dict[str, Any] | None = None
-    if symbols:
-        try:
-            watchlist_refresh_summary = context.watchlist().refresh_quotes(
-                symbols,
-                full_refresh=len(symbols) <= 5,
-            )
-        except Exception as exc:
-            watchlist_refresh_summary = {
-                "attempted": len(symbols),
-                "success_count": 0,
-                "failures": [str(exc)],
-            }
     for symbol in symbols:
         overrides[symbol] = _portfolio_technical_snapshot(symbol, cycle=_txt(body.get("cycle"), "1y"), force_refresh=True)
         _persist_watchlist_snapshot_from_technical(context, symbol, overrides[symbol])
@@ -732,7 +719,7 @@ def _action_portfolio_refresh_indicators(context: UIApiContext, payload: Any) ->
         "updatedAt": _now(),
         "scope": "indicators_only",
         "symbols": symbols,
-        "watchlistRefresh": watchlist_refresh_summary,
+        "watchlistRefresh": None,
     }
     return snapshot
 

@@ -144,34 +144,52 @@ class QuantSimDB:
         self._configure_journal_mode(conn)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS candidate_pool (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                stock_code TEXT NOT NULL UNIQUE,
-                stock_name TEXT,
-                source TEXT NOT NULL,
-                latest_price REAL DEFAULT 0,
-                notes TEXT,
-                metadata_json TEXT,
-                status TEXT DEFAULT 'active',
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        if not self.include_replay_tables:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stock_universe (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT NOT NULL UNIQUE,
+                    stock_name TEXT,
+                    market TEXT DEFAULT 'CN',
+                    exchange TEXT,
+                    industry TEXT,
+                    sector TEXT,
+                    watched INTEGER DEFAULT 0,
+                    quant_enabled INTEGER DEFAULT 0,
+                    registered_position_enabled INTEGER DEFAULT 0,
+                    registered_quantity INTEGER,
+                    registered_cost_price REAL,
+                    registered_take_profit REAL,
+                    registered_stop_loss REAL,
+                    registered_auto_monitor INTEGER DEFAULT 1,
+                    source TEXT DEFAULT 'manual',
+                    latest_price REAL DEFAULT 0,
+                    latest_signal TEXT,
+                    notes TEXT,
+                    metadata_json TEXT,
+                    status TEXT DEFAULT 'active',
+                    basic_info_missing INTEGER DEFAULT 0,
+                    market_technical_updated_at TEXT,
+                    ai_analysis_updated_at TEXT,
+                    basic_info_updated_at TEXT,
+                    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                )
+                """
             )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS candidate_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                candidate_id INTEGER NOT NULL,
-                source TEXT NOT NULL,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                UNIQUE(candidate_id, source),
-                FOREIGN KEY(candidate_id) REFERENCES candidate_pool(id)
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stock_universe_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_universe_id INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                    UNIQUE(stock_universe_id, source),
+                    FOREIGN KEY(stock_universe_id) REFERENCES stock_universe(id)
+                )
+                """
             )
-            """
-        )
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS strategy_signals (
@@ -195,7 +213,7 @@ class QuantSimDB:
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 executed_at TEXT,
-                FOREIGN KEY(candidate_id) REFERENCES candidate_pool(id)
+                FOREIGN KEY(candidate_id) REFERENCES stock_universe(id)
             )
             """
         )
@@ -443,7 +461,7 @@ class QuantSimDB:
             self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl", "REAL DEFAULT 0")
             self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl_pct", "REAL DEFAULT 0")
             self._ensure_column(cursor, "sim_positions", "peak_at", "TEXT")
-            self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT")
+            self._ensure_column(cursor, "stock_universe_sources", "created_at", "TEXT")
             self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
             self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
             self._ensure_column(cursor, "sim_position_lots", "closed_at", "TEXT")
@@ -680,7 +698,13 @@ class QuantSimDB:
         self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl", "REAL DEFAULT 0")
         self._ensure_column(cursor, "sim_positions", "peak_unrealized_pnl_pct", "REAL DEFAULT 0")
         self._ensure_column(cursor, "sim_positions", "peak_at", "TEXT")
-        self._ensure_column(cursor, "candidate_sources", "created_at", "TEXT")
+        if not self.include_replay_tables:
+            self._ensure_column(cursor, "stock_universe", "registered_quantity", "INTEGER")
+            self._ensure_column(cursor, "stock_universe", "registered_cost_price", "REAL")
+            self._ensure_column(cursor, "stock_universe", "registered_take_profit", "REAL")
+            self._ensure_column(cursor, "stock_universe", "registered_stop_loss", "REAL")
+            self._ensure_column(cursor, "stock_universe", "registered_auto_monitor", "INTEGER DEFAULT 1")
+            self._ensure_column(cursor, "stock_universe_sources", "created_at", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "lot_id", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "entry_date", "TEXT")
         self._ensure_column(cursor, "sim_position_lots", "closed_at", "TEXT")
@@ -763,7 +787,7 @@ class QuantSimDB:
 
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM candidate_pool WHERE stock_code = ?", (payload["stock_code"],))
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ?", (payload["stock_code"],))
         existing = cursor.fetchone()
 
         if existing:
@@ -773,8 +797,9 @@ class QuantSimDB:
             next_price = payload["latest_price"] if payload["latest_price"] > 0 else float(existing["latest_price"] or 0)
             cursor.execute(
                 """
-                UPDATE candidate_pool
-                SET stock_name = ?, latest_price = ?, notes = ?, metadata_json = ?, status = ?, updated_at = ?
+                UPDATE stock_universe
+                SET stock_name = ?, latest_price = ?, notes = ?, metadata_json = ?, status = ?,
+                    quant_enabled = 1, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -792,9 +817,9 @@ class QuantSimDB:
             now_text = self._now()
             cursor.execute(
                 """
-                INSERT INTO candidate_pool
-                (stock_code, stock_name, source, latest_price, notes, metadata_json, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO stock_universe
+                (stock_code, stock_name, source, latest_price, notes, metadata_json, status, quant_enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     payload["stock_code"],
@@ -827,6 +852,7 @@ class QuantSimDB:
         if status:
             clauses.append("status = ?")
             params.append(status)
+        clauses.append("quant_enabled = 1")
         keyword = str(search or "").strip()
         if keyword:
             like_keyword = f"%{keyword}%"
@@ -855,7 +881,7 @@ class QuantSimDB:
         cursor = conn.cursor()
         where_sql, params = self._build_candidate_filters(status=status, search=search)
         sql = f"""
-            SELECT * FROM candidate_pool
+            SELECT * FROM stock_universe
             {where_sql}
             ORDER BY updated_at DESC, id DESC
         """
@@ -872,7 +898,7 @@ class QuantSimDB:
         conn = self._connect()
         cursor = conn.cursor()
         where_sql, params = self._build_candidate_filters(status=status, search=search)
-        cursor.execute(f"SELECT COUNT(*) AS total FROM candidate_pool {where_sql}", tuple(params))
+        cursor.execute(f"SELECT COUNT(*) AS total FROM stock_universe {where_sql}", tuple(params))
         row = cursor.fetchone()
         conn.close()
         return int(row["total"] or 0) if row else 0
@@ -880,7 +906,7 @@ class QuantSimDB:
     def get_candidate(self, stock_code: str) -> Optional[dict[str, Any]]:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM candidate_pool WHERE stock_code = ?", (stock_code,))
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ? AND quant_enabled = 1", (stock_code,))
         row = cursor.fetchone()
         if row is None:
             conn.close()
@@ -892,14 +918,20 @@ class QuantSimDB:
     def delete_candidate(self, stock_code: str) -> None:
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM candidate_pool WHERE stock_code = ?", (stock_code,))
+        cursor.execute("SELECT id FROM stock_universe WHERE stock_code = ? AND quant_enabled = 1", (stock_code,))
         row = cursor.fetchone()
         if row is None:
             conn.close()
             return
         candidate_id = int(row["id"])
-        cursor.execute("DELETE FROM candidate_sources WHERE candidate_id = ?", (candidate_id,))
-        cursor.execute("DELETE FROM candidate_pool WHERE id = ?", (candidate_id,))
+        cursor.execute(
+            """
+            UPDATE stock_universe
+            SET quant_enabled = 0, updated_at = ?
+            WHERE id = ?
+            """,
+            (self._now(), candidate_id),
+        )
         conn.commit()
         conn.close()
 
@@ -1031,7 +1063,7 @@ class QuantSimDB:
             )
             cursor.execute(
                 """
-                UPDATE candidate_pool
+                UPDATE stock_universe
                 SET status = 'active', updated_at = ?
                 WHERE stock_code = ? AND status <> 'active'
                 """,
@@ -3650,6 +3682,192 @@ class QuantSimDB:
             self._set_available_cash(cursor, self._get_available_cash(cursor) + round(total_cash_dividend, 4))
         conn.commit()
         conn.close()
+
+    def add_watch(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str,
+        source: str,
+        latest_price: float | None = None,
+        notes: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        payload = {
+            "stock_code": str(stock_code or "").strip().upper(),
+            "stock_name": str(stock_name or "").strip(),
+            "source": str(source or "manual").strip() or "manual",
+            "latest_price": float(latest_price or 0),
+            "notes": notes,
+            "metadata": metadata or {},
+        }
+        if not payload["stock_code"]:
+            raise ValueError("stock_code is required")
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ?", (payload["stock_code"],))
+        existing = cursor.fetchone()
+        now_text = self._now()
+        if existing:
+            next_metadata = self._loads_metadata(existing["metadata_json"])
+            next_metadata.update(payload["metadata"])
+            cursor.execute(
+                """
+                UPDATE stock_universe
+                SET watched = 1,
+                    stock_name = ?,
+                    source = ?,
+                    latest_price = ?,
+                    notes = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    payload["stock_name"] or existing["stock_name"] or payload["stock_code"],
+                    payload["source"] or existing["source"] or "manual",
+                    payload["latest_price"] if payload["latest_price"] > 0 else float(existing["latest_price"] or 0),
+                    payload["notes"] if payload["notes"] is not None else existing["notes"],
+                    json.dumps(next_metadata, ensure_ascii=False),
+                    now_text,
+                    int(existing["id"]),
+                ),
+            )
+            row_id = int(existing["id"])
+        else:
+            cursor.execute(
+                """
+                INSERT INTO stock_universe
+                (stock_code, stock_name, source, latest_price, notes, metadata_json, watched, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    payload["stock_code"],
+                    payload["stock_name"] or payload["stock_code"],
+                    payload["source"],
+                    payload["latest_price"],
+                    payload["notes"],
+                    json.dumps(payload["metadata"], ensure_ascii=False),
+                    now_text,
+                    now_text,
+                ),
+            )
+            row_id = int(cursor.lastrowid)
+        self._attach_candidate_source(cursor, row_id, payload["source"])
+        conn.commit()
+        conn.close()
+        return row_id
+
+    def get_watch(self, stock_code: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ? AND watched = 1", (str(stock_code or "").strip().upper(),))
+        row = cursor.fetchone()
+        payload = self._watch_row_to_dict(cursor, row) if row else None
+        conn.close()
+        return payload
+
+    def list_watches(self) -> list[dict[str, Any]]:
+        return self.list_watches_page(limit=100000, offset=0)
+
+    def list_watches_page(self, search: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        conn = self._connect()
+        cursor = conn.cursor()
+        where_sql, params = self._build_watch_filters(search=search)
+        cursor.execute(
+            f"""
+            SELECT * FROM stock_universe
+            {where_sql}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, max(0, int(limit)), max(0, int(offset))),
+        )
+        rows = [self._watch_row_to_dict(cursor, row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
+
+    def count_watches(self, search: str | None = None, *, in_quant_pool: bool | None = None) -> int:
+        conn = self._connect()
+        cursor = conn.cursor()
+        where_sql, params = self._build_watch_filters(search=search, in_quant_pool=in_quant_pool)
+        cursor.execute(f"SELECT COUNT(*) AS total FROM stock_universe {where_sql}", tuple(params))
+        row = cursor.fetchone()
+        conn.close()
+        return int(row["total"] or 0) if row else 0
+
+    def update_quant_membership(self, stock_code: str, in_quant_pool: bool) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE stock_universe
+            SET quant_enabled = ?, updated_at = ?
+            WHERE stock_code = ?
+            """,
+            (1 if in_quant_pool else 0, self._now(), str(stock_code or "").strip().upper()),
+        )
+        conn.commit()
+        conn.close()
+
+    def update_watch_snapshot(
+        self,
+        stock_code: str,
+        *,
+        latest_signal: str | None = None,
+        latest_price: float | None = None,
+        stock_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        normalized_code = str(stock_code or "").strip().upper()
+        if not normalized_code:
+            return
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ?", (normalized_code,))
+        row = cursor.fetchone()
+        if row is None:
+            conn.close()
+            return
+        next_metadata = self._loads_metadata(row["metadata_json"])
+        if isinstance(metadata, dict):
+            next_metadata.update({key: value for key, value in metadata.items() if value not in (None, "")})
+        cursor.execute(
+            """
+            UPDATE stock_universe
+            SET latest_signal = COALESCE(?, latest_signal),
+                latest_price = CASE WHEN ? > 0 THEN ? ELSE latest_price END,
+                stock_name = COALESCE(NULLIF(?, ''), stock_name),
+                metadata_json = ?,
+                updated_at = ?
+            WHERE stock_code = ?
+            """,
+            (
+                latest_signal,
+                float(latest_price or 0),
+                float(latest_price or 0),
+                str(stock_name or "").strip(),
+                json.dumps(next_metadata, ensure_ascii=False),
+                self._now(),
+                normalized_code,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def delete_watch(self, stock_code: str) -> None:
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE stock_universe
+            SET watched = 0, updated_at = ?
+            WHERE stock_code = ?
+            """,
+            (self._now(), str(stock_code or "").strip().upper()),
+        )
+        conn.commit()
+        conn.close()
         return True
 
     def get_position_lots(
@@ -3691,7 +3909,7 @@ class QuantSimDB:
         cursor.execute("DELETE FROM sim_account_snapshots")
         cursor.execute(
             """
-            UPDATE candidate_pool
+            UPDATE stock_universe
             SET status = 'active', updated_at = ?
             WHERE status <> 'active'
             """,
@@ -3777,7 +3995,7 @@ class QuantSimDB:
             position_ids[stock_code] = position_id
             cursor.execute(
                 """
-                UPDATE candidate_pool
+                UPDATE stock_universe
                 SET status = 'holding', latest_price = ?, updated_at = ?
                 WHERE stock_code = ?
                 """,
@@ -3919,7 +4137,7 @@ class QuantSimDB:
         cursor = conn.cursor()
         cursor.execute(
             """
-            UPDATE candidate_pool
+            UPDATE stock_universe
             SET latest_price = ?, updated_at = ?
             WHERE stock_code = ?
             """,
@@ -3952,7 +4170,7 @@ class QuantSimDB:
 
         conn = self._connect()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM candidate_pool WHERE stock_code = ?", (normalized_code,))
+        cursor.execute("SELECT * FROM stock_universe WHERE stock_code = ?", (normalized_code,))
         existing = cursor.fetchone()
         if existing is None:
             conn.close()
@@ -3964,7 +4182,7 @@ class QuantSimDB:
 
         cursor.execute(
             """
-            UPDATE candidate_pool
+            UPDATE stock_universe
             SET stock_name = ?,
                 latest_price = ?,
                 metadata_json = ?,
@@ -5666,6 +5884,38 @@ class QuantSimDB:
         payload["sources"] = self._get_candidate_sources(cursor, int(row["id"]))
         return payload
 
+    def _build_watch_filters(
+        self,
+        *,
+        search: str | None = None,
+        in_quant_pool: bool | None = None,
+    ) -> tuple[str, list[Any]]:
+        clauses = ["watched = 1"]
+        params: list[Any] = []
+        if in_quant_pool is not None:
+            clauses.append("quant_enabled = ?")
+            params.append(1 if in_quant_pool else 0)
+        keyword = str(search or "").strip()
+        if keyword:
+            like_keyword = f"%{keyword}%"
+            clauses.append(
+                """
+                (stock_code LIKE ?
+                 OR stock_name LIKE ?
+                 OR source LIKE ?
+                 OR notes LIKE ?
+                 OR metadata_json LIKE ?)
+                """
+            )
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
+        return f"WHERE {' AND '.join(clauses)}", params
+
+    def _watch_row_to_dict(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict[str, Any]:
+        payload = self._candidate_row_to_dict(cursor, row)
+        payload["in_quant_pool"] = bool(payload.get("quant_enabled"))
+        payload["source_summary"] = payload.get("source") or ", ".join(payload.get("sources") or [])
+        return payload
+
     def _signal_row_to_dict(self, row: sqlite3.Row, *, include_strategy_profile: bool = True) -> dict[str, Any]:
         payload = self._row_to_dict(row)
         if "metadata_json" in payload:
@@ -5685,8 +5935,8 @@ class QuantSimDB:
     def _get_candidate_sources(self, cursor: sqlite3.Cursor, candidate_id: int) -> list[str]:
         cursor.execute(
             """
-            SELECT source FROM candidate_sources
-            WHERE candidate_id = ?
+            SELECT source FROM stock_universe_sources
+            WHERE stock_universe_id = ?
             ORDER BY id ASC
             """,
             (candidate_id,),
@@ -5699,25 +5949,18 @@ class QuantSimDB:
         try:
             cursor.execute(
                 """
-                INSERT OR IGNORE INTO candidate_sources (candidate_id, source, created_at)
+                INSERT OR IGNORE INTO stock_universe_sources (stock_universe_id, source, created_at)
                 VALUES (?, ?, ?)
                 """,
                 (candidate_id, source, self._now()),
             )
         except sqlite3.OperationalError:
-            # 兼容历史库: candidate_sources 可能没有 created_at 字段
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO candidate_sources (candidate_id, source)
-                VALUES (?, ?)
-                """,
-                (candidate_id, source),
-            )
+            raise
 
     def _set_candidate_status(self, cursor: sqlite3.Cursor, stock_code: str, status: str) -> None:
         cursor.execute(
             """
-            UPDATE candidate_pool
+            UPDATE stock_universe
             SET status = ?, updated_at = ?
             WHERE stock_code = ?
             """,
@@ -5853,7 +6096,10 @@ class QuantSimDB:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
     def _backfill_candidate_sources(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute("SELECT id, source FROM candidate_pool")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stock_universe'")
+        if cursor.fetchone() is None:
+            return
+        cursor.execute("SELECT id, source FROM stock_universe WHERE quant_enabled = 1")
         for row in cursor.fetchall():
             self._attach_candidate_source(cursor, int(row["id"]), row["source"])
 

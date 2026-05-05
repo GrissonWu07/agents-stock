@@ -28,7 +28,6 @@ TRADING_HOURS = {
 }
 TRADING_DAYS = {1, 2, 3, 4, 5}
 _SCHEDULER_INSTANCES: dict[str, "QuantSimScheduler"] = {}
-DEFAULT_WATCHLIST_DB_FILE = str(default_db_path("watchlist.db"))
 DEFAULT_STOCK_ANALYSIS_DB_FILE = str(default_db_path("stock_analysis.db"))
 logger = logging.getLogger(__name__)
 
@@ -40,16 +39,13 @@ class QuantSimScheduler:
         self,
         db_file: str | Path = DEFAULT_DB_FILE,
         poll_seconds: float = 30.0,
-        watchlist_db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
         stock_analysis_db_file: str | Path = DEFAULT_STOCK_ANALYSIS_DB_FILE,
     ):
         self.db_file = str(db_file)
-        self.watchlist_db_file = str(watchlist_db_file)
         self.stock_analysis_db_file = str(stock_analysis_db_file)
         self.db = QuantSimDB(db_file)
         self.engine = QuantSimEngine(
             db_file=db_file,
-            watchlist_db_file=watchlist_db_file,
             stock_analysis_db_file=stock_analysis_db_file,
         )
         self.portfolio = PortfolioService(db_file=db_file)
@@ -337,15 +333,13 @@ class QuantSimScheduler:
 
 def get_quant_sim_scheduler(
     db_file: str | Path = DEFAULT_DB_FILE,
-    watchlist_db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
     stock_analysis_db_file: str | Path = DEFAULT_STOCK_ANALYSIS_DB_FILE,
 ) -> QuantSimScheduler:
-    key = f"{db_file}::{watchlist_db_file}::{stock_analysis_db_file}"
+    key = f"{db_file}::{stock_analysis_db_file}"
     scheduler = _SCHEDULER_INSTANCES.get(key)
     if scheduler is None:
         scheduler = QuantSimScheduler(
             db_file=db_file,
-            watchlist_db_file=watchlist_db_file,
             stock_analysis_db_file=stock_analysis_db_file,
         )
         _SCHEDULER_INSTANCES[key] = scheduler

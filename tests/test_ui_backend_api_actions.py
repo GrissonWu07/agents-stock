@@ -23,20 +23,12 @@ def _make_context(tmp_path: Path) -> UIApiContext:
     return UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=selector_dir,
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
         quant_sim_replay_db_file=tmp_path / "quant_sim_replay.db",
-        portfolio_db_file=tmp_path / "portfolio.db",
         monitor_db_file=tmp_path / "monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
         stock_analysis_db_file=tmp_path / "analysis.db",
         main_force_batch_db_file=tmp_path / "main_force_batch.db",
-        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
-        quote_fetcher=lambda code, market=None: {
-            "stock_code": code,
-            "stock_name": {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
-            "latest_price": {"600519": 1453.96, "000001": 10.12, "300750": 198.35}.get(code, 1.0),
-        },
     )
 
 
@@ -481,10 +473,10 @@ def test_workbench_watchlist_uses_decision_table_columns(tmp_path):
     assert "今日已分析" in row["cells"][4]
     assert "买入" in row["cells"][4]
     assert row["cells"][5] == "BUY"
-    assert "量化池" in row["cells"][6]
+    assert "实时量化股票" in row["cells"][6]
     assert row["analysisStatus"] == row["cells"][4]
     assert row["signalStatus"] == "BUY"
-    assert "量化池" in row["workflowBadges"]
+    assert "实时量化股票" in row["workflowBadges"]
     assert row["actions"] == []
 
 
@@ -1151,18 +1143,11 @@ def test_portfolio_position_detail_uses_cached_watchlist_metadata_without_blocki
     context = UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=selector_dir,
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
-        portfolio_db_file=tmp_path / "portfolio.db",
         monitor_db_file=tmp_path / "monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
         stock_analysis_db_file=tmp_path / "analysis.db",
         main_force_batch_db_file=tmp_path / "main_force_batch.db",
-        stock_name_resolver=lambda code: code,
-        quote_fetcher=lambda code, preferred_name=None: quote_calls.append(code)
-        or {"stock_code": code, "name": "欧普泰", "current_price": 18.88},
-        basic_info_fetcher=lambda code: basic_info_calls.append(code)
-        or {"name": "欧普泰", "industry": "半导体"},
     )
     context.watchlist().add_stock(
         "920414",
@@ -1196,17 +1181,11 @@ def test_portfolio_refresh_indicators_fetches_and_persists_watchlist_snapshot(tm
     context = UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=tmp_path / "selector_results",
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
-        portfolio_db_file=tmp_path / "portfolio.db",
         monitor_db_file=tmp_path / "monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
         stock_analysis_db_file=tmp_path / "analysis.db",
         main_force_batch_db_file=tmp_path / "main_force_batch.db",
-        quote_fetcher=lambda code, preferred_name=None: quote_calls.append((code, preferred_name))
-        or {"stock_code": code, "name": "欧普泰", "current_price": 18.88},
-        basic_info_fetcher=lambda code: basic_info_calls.append(code)
-        or {"name": "欧普泰", "industry": "半导体"},
     )
     context.selector_result_dir.mkdir(parents=True, exist_ok=True)
     context.watchlist().add_stock("920414", "920414", "AI选股", latest_price=None, metadata={"industry": "半导体"})
@@ -1231,8 +1210,8 @@ def test_portfolio_refresh_indicators_fetches_and_persists_watchlist_snapshot(tm
     assert response.status_code == 200
     detail = response.json()["detail"]
     watch = context.watchlist().get_watch("920414")
-    assert quote_calls == [("920414", None)]
-    assert basic_info_calls == ["920414"]
+    assert quote_calls == []
+    assert basic_info_calls == []
     assert watch is not None
     assert watch["stock_name"] == "欧普泰"
     assert watch["latest_price"] == 18.88
@@ -2792,6 +2771,50 @@ def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_fa
     assert "最终成交汇总未落库" in task["stage"]
     assert task["finalEquity"] == "51000"
     assert task["tradeCount"] == "0"
+
+
+def test_his_replay_snapshot_marks_incomplete_stale_worker_as_failed(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.replay_db()
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2025-04-01 09:30:00",
+        end_datetime="2025-12-31 15:00:00",
+        initial_cash=50000,
+        status="running",
+        metadata={"selected_strategy_mode": "auto"},
+    )
+    db.set_sim_run_worker_pid(run_id, 99999999)
+    db.update_sim_run_progress(
+        run_id,
+        progress_current=12,
+        progress_total=30,
+        latest_checkpoint_at="2025-04-03 15:00:00",
+        status_message="正在执行第 13/30 个检查点：2025-04-03 15:00:00",
+    )
+    db.add_sim_run_checkpoint(
+        run_id,
+        checkpoint_at="2025-04-03 14:30:00",
+        candidates_scanned=2,
+        positions_checked=1,
+        signals_created=2,
+        auto_executed=0,
+        available_cash=49000,
+        market_value=1000,
+        total_equity=50000,
+    )
+
+    client = TestClient(create_app(context=context))
+    payload = client.get("/api/v1/quant/his-replay/progress", params={"runId": run_id}).json()
+
+    task = payload["tasks"][0]
+    assert task["runId"] == str(run_id)
+    assert task["status"] == "failed"
+    assert "worker 已退出" in task["stage"]
+    stored_run = db.get_sim_run(run_id)
+    assert stored_run["worker_pid"] is None
 
 
 def test_his_replay_start_returns_400_when_active_replay_exists(tmp_path):

@@ -7,11 +7,11 @@ from typing import Optional
 
 import pandas as pd
 
-from app.runtime_paths import default_db_path
+from app.quant_sim.db import DEFAULT_DB_FILE
 from app.watchlist_service import WatchlistService
 
 
-DEFAULT_WATCHLIST_DB_FILE = str(default_db_path("watchlist.db"))
+DEFAULT_STOCK_UNIVERSE_DB_FILE = DEFAULT_DB_FILE
 
 
 def normalize_stock_code(stock_code: str) -> str:
@@ -33,7 +33,7 @@ def add_stock_to_watchlist(
     latest_price: Optional[float] = None,
     notes: Optional[str] = None,
     metadata: Optional[dict[str, object]] = None,
-    db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
+    db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE,
 ) -> tuple[bool, str, int]:
     """Add one selector result into the shared watchlist."""
 
@@ -114,7 +114,7 @@ def sync_selector_dataframe_to_watchlist(
     stocks_df: pd.DataFrame,
     source: str,
     note_prefix: Optional[str] = None,
-    db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
+    db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE,
 ) -> dict[str, object]:
     """Sync a selector dataframe into the shared watchlist."""
 

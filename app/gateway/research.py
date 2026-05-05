@@ -747,7 +747,7 @@ def _action_research_item(context: Any, payload: dict[str, Any]) -> dict[str, An
     row = next((item for item in _research_rows(context) if item["code"] == code), None)
     if not row:
         raise HTTPException(status_code=404, detail=f"Research row not found: {code}")
-    add_research_stock_to_watchlist(row, source=row.get("source") or t("Research"), db_file=context.watchlist_db_file)
+    add_research_stock_to_watchlist(row, source=row.get("source") or t("Research"), db_file=context.quant_sim_db_file)
     return _snapshot_research(context)
 
 
@@ -755,7 +755,7 @@ def _action_research_batch(context: Any, payload: dict[str, Any]) -> dict[str, A
     selected_codes = _normalize_codes(payload)
     rows = [item for item in _research_rows(context) if item["code"] in selected_codes or not selected_codes]
     if rows:
-        add_research_stocks_to_watchlist(rows, source=t("Research"), db_file=context.watchlist_db_file)
+        add_research_stocks_to_watchlist(rows, source=t("Research"), db_file=context.quant_sim_db_file)
     return _snapshot_research(context)
 
 

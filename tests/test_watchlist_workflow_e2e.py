@@ -11,8 +11,8 @@ from app.watchlist_service import WatchlistService
 
 
 def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_path, monkeypatch):
-    watch_db = tmp_path / "watchlist.db"
     quant_db = tmp_path / "app.quant_sim.db"
+    watch_db = quant_db
 
     sync_selector_dataframe_to_watchlist(
         pd.DataFrame([{"股票代码": "002824.SZ", "股票简称": "和胜股份", "最新价": 22.97}]),
@@ -24,7 +24,7 @@ def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_p
     quant_pool = CandidatePoolService(db_file=quant_db)
     add_watchlist_rows_to_quant_pool(["002824"], watchlist, quant_pool)
 
-    scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
+    scheduler = QuantSimScheduler(db_file=quant_db)
     scheduler.update_config(enabled=True, auto_execute=False, analysis_timeframe="30m", strategy_mode="auto")
     monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 
@@ -54,8 +54,8 @@ def test_discovery_rows_flow_into_watchlist_quant_pool_and_pending_signals(tmp_p
 
 
 def test_research_outputs_flow_into_watchlist_quant_and_holdings(tmp_path, monkeypatch):
-    watch_db = tmp_path / "watchlist.db"
     quant_db = tmp_path / "app.quant_sim.db"
+    watch_db = quant_db
 
     add_research_stocks_to_watchlist(
         [
@@ -75,7 +75,7 @@ def test_research_outputs_flow_into_watchlist_quant_and_holdings(tmp_path, monke
     quant_pool = CandidatePoolService(db_file=quant_db)
     add_watchlist_rows_to_quant_pool(["301291"], watchlist, quant_pool)
 
-    scheduler = QuantSimScheduler(db_file=quant_db, watchlist_db_file=watch_db)
+    scheduler = QuantSimScheduler(db_file=quant_db)
     scheduler.update_config(enabled=True, auto_execute=True, analysis_timeframe="30m", strategy_mode="auto")
     monkeypatch.setattr(scheduler, "_is_trading_time", lambda market: True)
 

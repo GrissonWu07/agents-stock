@@ -328,7 +328,6 @@ def _action_live_sim_analyze_candidate(context: UIApiContext, payload: Any) -> d
         raise HTTPException(status_code=404, detail=f"Candidate not found: {code}")
     engine = QuantSimEngine(
         db_file=context.quant_sim_db_file,
-        watchlist_db_file=context.watchlist_db_file,
         watchlist_service=context.watchlist(),
         stock_analysis_db_file=context.stock_analysis_db_file,
     )

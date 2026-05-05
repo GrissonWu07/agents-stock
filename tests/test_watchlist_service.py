@@ -1,8 +1,9 @@
 from app.watchlist_service import WatchlistService
+from app.quant_sim.candidate_pool_service import CandidatePoolService
 
 
 def test_watchlist_service_add_from_selector_row(tmp_path):
-    service = WatchlistService(db_file=tmp_path / "watchlist.db")
+    service = WatchlistService(db_file=tmp_path / "quant_sim.db")
 
     summary = service.add_stock(
         stock_code="002824",
@@ -19,7 +20,7 @@ def test_watchlist_service_add_from_selector_row(tmp_path):
 
 
 def test_watchlist_service_batch_add_returns_attempt_summary(tmp_path):
-    service = WatchlistService(db_file=tmp_path / "watchlist.db")
+    service = WatchlistService(db_file=tmp_path / "quant_sim.db")
 
     result = service.add_many(
         [
@@ -33,12 +34,8 @@ def test_watchlist_service_batch_add_returns_attempt_summary(tmp_path):
     assert result["failures"] == []
 
 
-def test_watchlist_service_add_manual_stock_skips_slow_name_resolution(tmp_path):
-    resolver_calls = []
-    service = WatchlistService(
-        db_file=tmp_path / "watchlist.db",
-        stock_name_resolver=lambda code: resolver_calls.append(code) or "天华新能",
-    )
+def test_watchlist_service_add_manual_stock_marks_basic_info_missing(tmp_path):
+    service = WatchlistService(db_file=tmp_path / "quant_sim.db")
 
     summary = service.add_manual_stock("300390")
     watch = service.get_watch("300390")
@@ -48,93 +45,28 @@ def test_watchlist_service_add_manual_stock_skips_slow_name_resolution(tmp_path)
     assert summary["stock_name"] == "300390"
     assert watch["stock_name"] == "300390"
     assert watch["source_summary"] == "manual"
-    assert resolver_calls == []
+    assert watch["metadata"]["basic_info_missing"] is True
 
 
-def test_watchlist_service_refresh_quotes_updates_latest_price_and_name(tmp_path):
-    quote_calls = []
-    service = WatchlistService(
-        db_file=tmp_path / "watchlist.db",
-        quote_fetcher=lambda code, preferred_name=None: quote_calls.append((code, preferred_name)) or {
-            "current_price": 62.35,
-            "name": "天华新能",
-        },
-    )
+def test_watchlist_service_quant_membership_uses_stock_universe(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    service = WatchlistService(db_file=db_file)
 
     service.add_manual_stock("300390")
-    summary = service.refresh_quotes()
+    service.mark_in_quant_pool("300390", True)
     watch = service.get_watch("300390")
 
-    assert summary["attempted"] == 1
-    assert summary["success_count"] == 1
-    assert summary["failures"] == []
-    assert quote_calls == [("300390", None)]
-    assert watch["latest_price"] == 62.35
-    assert watch["stock_name"] == "天华新能"
+    assert watch["in_quant_pool"] is True
+    assert CandidatePoolService(db_file=db_file).count_candidates(status="active") == 1
 
 
-def test_watchlist_service_refresh_quotes_ignores_placeholder_name_when_fetching_quote(tmp_path):
-    quote_calls = []
-    service = WatchlistService(
-        db_file=tmp_path / "watchlist.db",
-        quote_fetcher=lambda code, preferred_name=None: quote_calls.append((code, preferred_name)) or {
-            "current_price": 1453.96,
-            "name": "贵州茅台",
-        },
-    )
+def test_watchlist_service_delete_only_clears_watch_tag(tmp_path):
+    db_file = tmp_path / "quant_sim.db"
+    service = WatchlistService(db_file=db_file)
 
-    service.add_stock(stock_code="600519", stock_name="N/A", source="manual")
-    summary = service.refresh_quotes()
-    watch = service.get_watch("600519")
+    service.add_stock(stock_code="600519", stock_name="贵州茅台", source="manual")
+    service.mark_in_quant_pool("600519", True)
+    service.delete_stock("600519")
 
-    assert summary["success_count"] == 1
-    assert quote_calls == [("600519", None)]
-    assert watch["stock_name"] == "贵州茅台"
-
-
-def test_watchlist_service_refresh_quotes_fetches_required_basic_info_even_if_legacy_env_disabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("WATCHLIST_BASIC_INFO_ENABLED", "false")
-    basic_info_calls: list[str] = []
-    service = WatchlistService(
-        db_file=tmp_path / "watchlist.db",
-        quote_fetcher=lambda code, preferred_name=None: {
-            "current_price": 21.35,
-            "name": code,
-        },
-        basic_info_fetcher=lambda code: basic_info_calls.append(code) or {"name": "慢接口", "industry": "半导体"},
-    )
-
-    service.add_manual_stock("301550")
-    summary = service.refresh_quotes()
-    watch = service.get_watch("301550")
-
-    assert summary["attempted"] == 1
-    assert summary["success_count"] == 1
-    assert basic_info_calls == ["301550"]
-    assert watch["latest_price"] == 21.35
-    assert watch["stock_name"] == "慢接口"
-    assert watch["metadata"]["industry"] == "半导体"
-
-
-def test_watchlist_service_default_quote_fetcher_falls_back_to_data_source_manager(monkeypatch):
-    calls: list[str] = []
-
-    class FakeTDX:
-        def get_realtime_quote(self, stock_code, preferred_name=None):
-            calls.append(f"tdx:{stock_code}:{preferred_name}")
-            return None
-
-    class FakeDataSourceManager:
-        def get_realtime_quotes(self, stock_code):
-            calls.append(f"manager:{stock_code}")
-            return {"symbol": stock_code, "name": "欧普泰", "current_price": 18.88}
-
-    monkeypatch.setattr("app.smart_monitor_tdx_data.SmartMonitorTDXDataFetcher", lambda: FakeTDX())
-    monkeypatch.setattr("app.data_source_manager.data_source_manager", FakeDataSourceManager())
-
-    quote = WatchlistService._fetch_realtime_quote("920414", preferred_name="欧普泰")
-
-    assert calls == ["tdx:920414:欧普泰", "manager:920414"]
-    assert quote is not None
-    assert quote["current_price"] == 18.88
-    assert quote["name"] == "欧普泰"
+    assert service.get_watch("600519") is None
+    assert CandidatePoolService(db_file=db_file).count_candidates(status="active") == 1

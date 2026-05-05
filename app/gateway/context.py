@@ -6,19 +6,14 @@ from app.gateway.deps import *
 class UIApiContext:
     data_dir: Path | str = DATA_DIR
     selector_result_dir: Path | str = DEFAULT_SELECTOR_RESULT_DIR
-    watchlist_db_file: Path | str = field(default_factory=lambda: default_db_path("watchlist.db"))
     quant_sim_db_file: Path | str = field(default_factory=lambda: default_db_path("quant_sim.db"))
     quant_sim_replay_db_file: Path | str = field(default_factory=lambda: default_db_path("quant_sim_replay.db"))
-    portfolio_db_file: Path | str = field(default_factory=lambda: default_db_path("portfolio_stocks.db"))
     monitor_db_file: Path | str = field(default_factory=lambda: default_db_path("stock_monitor.db"))
     smart_monitor_db_file: Path | str = field(default_factory=lambda: default_db_path("smart_monitor.db"))
     stock_analysis_db_file: Path | str = field(default_factory=lambda: default_db_path("stock_analysis.db"))
     main_force_batch_db_file: Path | str = field(default_factory=lambda: default_db_path("main_force_batch.db"))
     logs_dir: Path | str = LOGS_DIR
     config_manager: ConfigManager = config_manager
-    stock_name_resolver: Callable[[str], str] | None = None
-    quote_fetcher: Callable[[str, str | None], dict[str, Any] | None] | None = None
-    basic_info_fetcher: Callable[[str], dict[str, Any] | None] | None = None
     discover_result_key: str = "main_force"
     research_result_key: str = "research"
     workbench_analysis_cache: dict[str, Any] | None = None
@@ -27,10 +22,8 @@ class UIApiContext:
     def __post_init__(self) -> None:
         self.data_dir = _p(self.data_dir)
         self.selector_result_dir = _p(self.selector_result_dir)
-        self.watchlist_db_file = _p(self.watchlist_db_file)
         self.quant_sim_db_file = _p(self.quant_sim_db_file)
         self.quant_sim_replay_db_file = _p(self.quant_sim_replay_db_file)
-        self.portfolio_db_file = _p(self.portfolio_db_file)
         self.monitor_db_file = _p(self.monitor_db_file)
         self.smart_monitor_db_file = _p(self.smart_monitor_db_file)
         self.stock_analysis_db_file = _p(self.stock_analysis_db_file)
@@ -38,12 +31,7 @@ class UIApiContext:
         self.logs_dir = _p(self.logs_dir)
 
     def watchlist(self) -> WatchlistService:
-        return WatchlistService(
-            self.watchlist_db_file,
-            stock_name_resolver=self.stock_name_resolver,
-            quote_fetcher=self.quote_fetcher,
-            basic_info_fetcher=self.basic_info_fetcher,
-        )
+        return WatchlistService(self.quant_sim_db_file)
 
     def candidate_pool(self) -> CandidatePoolService:
         return CandidatePoolService(self.quant_sim_db_file)
@@ -62,7 +50,6 @@ class UIApiContext:
     def scheduler(self):
         return get_quant_sim_scheduler(
             db_file=self.quant_sim_db_file,
-            watchlist_db_file=self.watchlist_db_file,
             stock_analysis_db_file=self.stock_analysis_db_file,
         )
 
@@ -75,7 +62,7 @@ class UIApiContext:
     def portfolio_manager(self):
         from app.portfolio_manager import PortfolioManager
 
-        portfolio_db.db_path = str(self.portfolio_db_file)
+        portfolio_db.db_path = str(self.quant_sim_db_file)
         try:
             portfolio_db._init_database()
         except Exception:
@@ -85,7 +72,7 @@ class UIApiContext:
     def portfolio_scheduler(self):
         from app.portfolio_scheduler import portfolio_scheduler
 
-        portfolio_db.db_path = str(self.portfolio_db_file)
+        portfolio_db.db_path = str(self.quant_sim_db_file)
         try:
             portfolio_db._init_database()
         except Exception:

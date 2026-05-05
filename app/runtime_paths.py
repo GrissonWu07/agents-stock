@@ -16,14 +16,12 @@ KNOWN_DB_FILENAMES = (
     "low_price_bull_monitor.db",
     "main_force_batch.db",
     "news_flow.db",
-    "portfolio_stocks.db",
     "profit_growth_monitor.db",
     "quant_sim.db",
     "sector_strategy.db",
     "smart_monitor.db",
     "stock_analysis.db",
     "stock_monitor.db",
-    "watchlist.db",
     "watchlist_perf.db",
 )
 

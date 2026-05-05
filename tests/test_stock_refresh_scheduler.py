@@ -19,17 +19,14 @@ def test_stock_refresh_scheduler_trading_time_uses_market_timezone():
 def test_runtime_entry_fetches_required_basic_info_even_if_legacy_env_disabled(monkeypatch):
     monkeypatch.setenv("UNIFIED_STOCK_REFRESH_BASIC_INFO_ENABLED", "false")
     basic_info_calls: list[str] = []
-
-    class FakeWatchlistService:
-        def quote_fetcher(self, code, preferred_name=None):
-            return {"current_price": 18.8, "name": code}
-
-        def basic_info_fetcher(self, code):
-            basic_info_calls.append(code)
-            return {"name": "慢接口", "industry": "半导体"}
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: {"current_price": 18.8, "name": code}))
+    monkeypatch.setattr(
+        UnifiedStockRefreshScheduler,
+        "_fetch_basic_info",
+        staticmethod(lambda code: basic_info_calls.append(code) or {"name": "慢接口", "industry": "半导体"}),
+    )
 
     entry = UnifiedStockRefreshScheduler._fetch_runtime_entry(
-        watchlist_service=FakeWatchlistService(),
         stock_code="301560",
         existing=None,
     )
@@ -44,18 +41,18 @@ def test_runtime_entry_fetches_required_basic_info_even_if_legacy_env_disabled(m
 def test_runtime_entry_stops_before_basic_info_after_shutdown_signal(monkeypatch):
     stop_event = threading.Event()
     basic_info_calls: list[str] = []
-
-    class FakeWatchlistService:
-        def quote_fetcher(self, code, preferred_name=None):
-            stop_event.set()
-            return {"current_price": 18.8, "name": code}
-
-        def basic_info_fetcher(self, code):
-            basic_info_calls.append(code)
-            return {"name": "不应继续取", "industry": "半导体"}
+    monkeypatch.setattr(
+        UnifiedStockRefreshScheduler,
+        "_fetch_realtime_quote",
+        staticmethod(lambda code, preferred_name=None: stop_event.set() or {"current_price": 18.8, "name": code}),
+    )
+    monkeypatch.setattr(
+        UnifiedStockRefreshScheduler,
+        "_fetch_basic_info",
+        staticmethod(lambda code: basic_info_calls.append(code) or {"name": "不应继续取", "industry": "半导体"}),
+    )
 
     entry = UnifiedStockRefreshScheduler._fetch_runtime_entry(
-        watchlist_service=FakeWatchlistService(),
         stock_code="301560",
         existing=None,
         stop_event=stop_event,
@@ -112,13 +109,8 @@ def test_run_once_skips_remote_fetches_after_stop_requested(tmp_path):
 
 
 def test_runtime_entry_prefers_latest_trading_snapshot_outside_trading(monkeypatch):
-    class FakeWatchlistService:
-        def quote_fetcher(self, code, preferred_name=None):
-            return {"current_price": 99.9, "name": "实时旧价", "update_time": "2026-04-25 10:00:00"}
-
-        def basic_info_fetcher(self, code):
-            return {"name": "平安银行", "industry": "银行"}
-
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: {"current_price": 99.9, "name": "实时旧价", "update_time": "2026-04-25 10:00:00"}))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_basic_info", staticmethod(lambda code: {"name": "平安银行", "industry": "银行"}))
     monkeypatch.setattr(
         UnifiedStockRefreshScheduler,
         "_latest_trading_snapshot",
@@ -133,7 +125,6 @@ def test_runtime_entry_prefers_latest_trading_snapshot_outside_trading(monkeypat
     )
 
     entry = UnifiedStockRefreshScheduler._fetch_runtime_entry(
-        watchlist_service=FakeWatchlistService(),
         stock_code="000001",
         existing=None,
         prefer_last_trading_snapshot=True,
@@ -171,12 +162,6 @@ def test_run_once_uses_last_trading_snapshot_when_market_closed(monkeypatch, tmp
     class FakeWatchlistService:
         def list_watches(self):
             return [{"stock_code": "000001"}]
-
-        def quote_fetcher(self, code, preferred_name=None):
-            return {"current_price": 99.9, "name": code, "update_time": "2026-04-25 10:00:00"}
-
-        def basic_info_fetcher(self, code):
-            return {"name": "平安银行", "industry": "银行"}
 
         def update_watch_snapshot(self, code, *, latest_price=None, stock_name=None, metadata=None):
             updates.append(
@@ -217,6 +202,8 @@ def test_run_once_uses_last_trading_snapshot_when_market_closed(monkeypatch, tmp
         scheduler=lambda: SimpleNamespace(get_status=lambda: {"market": "CN"}),
     )
     monkeypatch.setattr(UnifiedStockRefreshScheduler, "_is_trading_time", staticmethod(lambda market: False))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: {"current_price": 99.9, "name": code, "update_time": "2026-04-25 10:00:00"}))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_basic_info", staticmethod(lambda code: {"name": "平安银行", "industry": "银行"}))
     monkeypatch.setattr(
         UnifiedStockRefreshScheduler,
         "_latest_trading_snapshot",
@@ -246,12 +233,6 @@ def test_run_once_repairs_quant_candidate_name_when_refresh_resolves_it(monkeypa
     class FakeWatchlistService:
         def list_watches(self):
             return []
-
-        def quote_fetcher(self, code, preferred_name=None):
-            return {"current_price": 70.98, "name": "和顺电气"}
-
-        def basic_info_fetcher(self, code):
-            return {"industry": "电力设备"}
 
     class FakeQuantDB:
         def get_candidates(self, status=None):
@@ -292,6 +273,8 @@ def test_run_once_repairs_quant_candidate_name_when_refresh_resolves_it(monkeypa
         scheduler=lambda: SimpleNamespace(get_status=lambda: {"market": "CN"}),
     )
     monkeypatch.setattr(UnifiedStockRefreshScheduler, "_is_trading_time", staticmethod(lambda market: True))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_realtime_quote", staticmethod(lambda code, preferred_name=None: {"current_price": 70.98, "name": "和顺电气"}))
+    monkeypatch.setattr(UnifiedStockRefreshScheduler, "_fetch_basic_info", staticmethod(lambda code: {"industry": "电力设备"}))
 
     UnifiedStockRefreshScheduler(lambda: context).run_once(context=context, run_reason="scheduled")
 

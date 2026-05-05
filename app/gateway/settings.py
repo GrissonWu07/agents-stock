@@ -66,9 +66,7 @@ def _snapshot_settings(context: UIApiContext) -> dict[str, Any]:
         "strategyProfiles": strategy_profiles,
         "selectedStrategyProfileId": _txt(scheduler_cfg.get("strategy_profile_id")),
         "paths": [
-            str(context.data_dir / "watchlist.db"),
             str(context.quant_sim_db_file),
-            str(context.portfolio_db_file),
             str(context.monitor_db_file),
             str(context.smart_monitor_db_file),
             str(context.stock_analysis_db_file),

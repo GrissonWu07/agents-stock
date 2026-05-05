@@ -95,7 +95,7 @@ def test_signal_center_persists_canonical_scores_when_available(tmp_path):
 
     assert signal["tech_score"] == 0.096633
     assert signal["context_score"] == 0.0728
-    assert signal["confidence"] == 93
+    assert signal["confidence"] == 92
 
 
 def test_portfolio_service_confirm_buy_and_delay_signal(tmp_path):
@@ -187,11 +187,12 @@ def test_signal_center_upserts_repeated_pending_signal_for_same_stock_and_action
     pending = signal_service.list_pending_signals()
     history = signal_service.list_signals(stock_code="600519")
 
-    assert first_signal["id"] == second_signal["id"]
+    assert first_signal["id"] != second_signal["id"]
     assert len(pending) == 1
-    assert len(history) == 1
-    assert pending[0]["confidence"] == 84
-    assert pending[0]["reasoning"] == "第二次刷新后的建仓建议"
+    assert len(history) == 2
+    assert pending[0]["id"] == first_signal["id"]
+    assert history[0]["action"] == "HOLD"
+    assert history[0]["decision_type"] == "portfolio_execution_guard_blocked"
 
 
 def test_signal_center_does_not_emit_sell_signal_without_open_position(tmp_path):

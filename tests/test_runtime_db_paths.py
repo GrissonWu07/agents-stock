@@ -32,8 +32,6 @@ def _load_package(name: str, package_dir: str):
 _load_package("app", "app")
 runtime_paths = _load_module("app/runtime_paths.py", "app.runtime_paths")
 database = _load_module("app/database.py", "app.database")
-watchlist_db = _load_module("app/watchlist_db.py", "app.watchlist_db")
-quant_db = _load_module("app/quant_sim/db.py", "app.quant_sim.db")
 
 default_log_path = runtime_paths.default_log_path
 managed_db_path = runtime_paths.managed_db_path
@@ -42,20 +40,20 @@ migrate_known_root_logs = runtime_paths.migrate_known_root_logs
 
 def test_managed_db_path_uses_data_directory(tmp_path):
     path = managed_db_path(
-        "watchlist.db",
+        "quant_sim.db",
         project_root=tmp_path,
         data_dir=tmp_path / "data",
     )
 
-    assert path == tmp_path / "data" / "watchlist.db"
+    assert path == tmp_path / "data" / "quant_sim.db"
 
 
 def test_managed_db_path_moves_legacy_root_db_into_data(tmp_path):
-    legacy_db = tmp_path / "watchlist.db"
+    legacy_db = tmp_path / "quant_sim.db"
     legacy_db.write_text("legacy", encoding="utf-8")
 
     path = managed_db_path(
-        "watchlist.db",
+        "quant_sim.db",
         project_root=tmp_path,
         data_dir=tmp_path / "data",
     )
@@ -68,18 +66,18 @@ def test_managed_db_path_moves_legacy_root_db_into_data(tmp_path):
 def test_managed_db_path_replaces_existing_data_db_with_backup(tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    existing_db = data_dir / "watchlist.db"
+    existing_db = data_dir / "quant_sim.db"
     existing_db.write_text("existing", encoding="utf-8")
-    legacy_db = tmp_path / "watchlist.db"
+    legacy_db = tmp_path / "quant_sim.db"
     legacy_db.write_text("legacy", encoding="utf-8")
 
     path = managed_db_path(
-        "watchlist.db",
+        "quant_sim.db",
         project_root=tmp_path,
         data_dir=data_dir,
     )
 
-    backups = list(data_dir.glob("watchlist.db.bak-*"))
+    backups = list(data_dir.glob("quant_sim.db.bak-*"))
     assert path.read_text(encoding="utf-8") == "legacy"
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "existing"
@@ -87,8 +85,7 @@ def test_managed_db_path_replaces_existing_data_db_with_backup(tmp_path):
 
 def test_default_runtime_db_constants_point_into_data_dir():
     assert Path(database.DEFAULT_DB_PATH).parent.name == "data"
-    assert Path(watchlist_db.DEFAULT_DB_FILE).parent.name == "data"
-    assert Path(quant_db.DEFAULT_DB_FILE).parent.name == "data"
+    assert runtime_paths.default_db_path("quant_sim.db").parent.name == "data"
 
 
 def test_default_log_path_uses_logs_directory(tmp_path):

@@ -25,9 +25,6 @@ from app.runtime_paths import default_db_path
 from app.watchlist_service import WatchlistService
 
 
-DEFAULT_WATCHLIST_DB_FILE = str(default_db_path("watchlist.db"))
-
-
 class QuantSimEngine:
     """Analyze candidates and persist normalized signals."""
 
@@ -35,7 +32,6 @@ class QuantSimEngine:
         self,
         db_file: str | Path = DEFAULT_DB_FILE,
         adapter: Optional[StockPolicyAdapter] = None,
-        watchlist_db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
         watchlist_service: WatchlistService | None = None,
         stock_analysis_db_file: str | Path | None = None,
         stock_analysis_context_enabled: bool = True,
@@ -47,7 +43,7 @@ class QuantSimEngine:
         self.signal_center = SignalCenterService(db_file=db_file)
         self.portfolio = PortfolioService(db_file=db_file)
         self.adapter = adapter or StockPolicyAdapter()
-        self.watchlist = watchlist_service or WatchlistService(db_file=watchlist_db_file)
+        self.watchlist = watchlist_service or WatchlistService(db_file=db_file)
         self.dynamic_strategy = DynamicStrategyController(db_file=db_file)
         self.stock_analysis_context_enabled = bool(stock_analysis_context_enabled)
         self.stock_analysis_refresh_enabled = refresh_enabled_by_env() if stock_analysis_refresh_enabled is None else bool(stock_analysis_refresh_enabled)

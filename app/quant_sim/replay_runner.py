@@ -118,6 +118,15 @@ def _is_pid_running(pid: int) -> bool:
         ctypes.windll.kernel32.CloseHandle(process_handle)
         return True
 
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.exists():
+        try:
+            stat_parts = proc_stat.read_text(encoding="utf-8", errors="replace").split()
+            if len(stat_parts) >= 3 and stat_parts[2] == "Z":
+                return False
+        except OSError:
+            return False
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -185,6 +194,19 @@ class QuantSimReplayRunner:
             return
         process.join(timeout=0)
         self._processes.pop(run_id, None)
+        run = self.db.get_sim_run(run_id)
+        if run is None or str(run.get("status") or "").lower() not in {"queued", "running"}:
+            return
+        exitcode = process.exitcode
+        if exitcode in (0, None):
+            _mark_run_failed_from_worker_exit(self.db, run_id, exc=None, silent_exit=True)
+            return
+        _mark_run_failed_from_worker_exit(
+            self.db,
+            run_id,
+            exc=RuntimeError(f"background replay worker exited with code {exitcode}"),
+            silent_exit=False,
+        )
 
     def _db_run_has_live_worker(self, run_id: int) -> bool:
         run = self.db.get_sim_run(run_id)

@@ -762,11 +762,11 @@ export function LiveSimPage({ client }: LiveSimPageProps) {
           </WorkbenchCard>
 
           <QuantTableSectionCard
-            title="量化候选池"
-            description="实时模拟和历史回放共用同一批量化候选池，因此这里看到的股票就是后续扫描对象。"
+            title="实时量化股票"
+            description="来自统一股票池中已启用实时量化的股票，实时模拟会按这批标的扫描。"
             table={candidatePoolTable}
-            emptyTitle={candidatePoolTable.emptyLabel ?? "候选池暂无数据"}
-            emptyDescription={candidatePoolTable.emptyMessage ?? "先从我的关注或发现 / 研究页补入候选，再启动实时模拟。"}
+            emptyTitle={candidatePoolTable.emptyLabel ?? "暂无实时量化股票"}
+            emptyDescription={candidatePoolTable.emptyMessage ?? "先在股票池中批量启用实时量化，再启动实时模拟。"}
             meta={[`表内 ${candidatePoolTable.rows.length} 只`, `待量化 ${candidateCount}`]}
             actionsHead="操作"
             actionsColumnSize="icon"

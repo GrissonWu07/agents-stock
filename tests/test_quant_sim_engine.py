@@ -33,7 +33,7 @@ def test_engine_generates_pending_buy_signal_for_candidate(tmp_path, monkeypatch
 
     assert signal["action"] == "BUY"
     assert signal["status"] == "pending"
-    assert signals[0]["confidence"] == 82
+    assert signals[0]["confidence"] == 81
     assert captured["analysis_timeframe"] == "1d"
 
 

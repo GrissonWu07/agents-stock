@@ -715,7 +715,7 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
       <PageHeader
         eyebrow="Replay"
         title="历史回放"
-        description="围绕同一批量化候选池回放历史区间，核对任务、成交、费用和信号落库结果。"
+        description="围绕统一股票池中启用量化的股票回放历史区间，核对任务、成交、费用和信号落库结果。"
         actions={
           <div className="chip-row">
             <span className="badge badge--neutral">快照 {snapshot.updatedAt}</span>
@@ -919,11 +919,11 @@ export function HisReplayPage({ client }: HisReplayPageProps) {
           </WorkbenchCard>
 
           <QuantTableSectionCard
-            title="量化候选池"
-            description="历史回放和实时模拟共用同一批量化候选池，因此这里看到的股票就是后续对照对象。"
+            title="回放股票范围"
+            description="历史回放从统一股票池中已启用量化的股票冻结范围，任务内只对这批股票执行检查点。"
             table={snapshot.candidatePool}
-            emptyTitle={snapshot.candidatePool.emptyLabel ?? "候选池暂无数据"}
-            emptyDescription={snapshot.candidatePool.emptyMessage ?? "先从我的关注或发现 / 研究页补入候选，再重新发起回放。"}
+            emptyTitle={snapshot.candidatePool.emptyLabel ?? "暂无回放股票"}
+            emptyDescription={snapshot.candidatePool.emptyMessage ?? "先在股票池中批量启用量化，再重新发起回放。"}
             meta={[`表内 ${snapshot.candidatePool.rows.length} 只`, `区间 ${snapshot.config.range}`]}
           />
 

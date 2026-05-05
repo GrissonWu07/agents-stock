@@ -874,7 +874,7 @@ def test_run_checkpoint_excludes_held_codes_from_candidate_scan(tmp_path):
     )
     conn = QuantSimDB(db_file)._connect()  # noqa: SLF001 - force inconsistent active+holding state
     try:
-        conn.execute("UPDATE candidate_pool SET status = 'active' WHERE stock_code = '300390'")
+        conn.execute("UPDATE stock_universe SET status = 'active' WHERE stock_code = '300390'")
         conn.commit()
     finally:
         conn.close()

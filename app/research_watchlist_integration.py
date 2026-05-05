@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from app.runtime_paths import default_db_path
+from app.quant_sim.db import DEFAULT_DB_FILE
 from app.watchlist_selector_integration import add_stock_to_watchlist, normalize_stock_code
 
 
-DEFAULT_WATCHLIST_DB_FILE = str(default_db_path("watchlist.db"))
+DEFAULT_STOCK_UNIVERSE_DB_FILE = DEFAULT_DB_FILE
 
 
 def _pick_text(stock: dict[str, Any], *keys: str) -> str:
@@ -59,7 +59,7 @@ def _build_metadata(stock: dict[str, Any]) -> dict[str, Any]:
 def add_research_stock_to_watchlist(
     stock: dict[str, Any],
     source: str,
-    db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
+    db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE,
 ) -> tuple[bool, str, int]:
     """Promote one research output row into the watchlist."""
 
@@ -82,7 +82,7 @@ def add_research_stock_to_watchlist(
 def add_research_stocks_to_watchlist(
     stocks: list[dict[str, Any]],
     source: str,
-    db_file: str | Path = DEFAULT_WATCHLIST_DB_FILE,
+    db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE,
 ) -> dict[str, Any]:
     """Promote multiple research output rows into the watchlist."""
 

@@ -86,7 +86,7 @@ def _seed_research_result(base_dir: Path) -> None:
         },
         "summary": {
             "title": "研究结论：关注龙头与情绪共振",
-            "body": "研究模块输出股票后，可以直接加入我的关注，再进入量化候选池。",
+            "body": "研究模块输出股票后，可以直接加入股票池，再启用实时量化。",
         },
         "updatedAt": "2026-04-13 10:00:00",
     }
@@ -108,18 +108,10 @@ def _make_context(tmp_path: Path):
     return gateway_api.UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=tmp_path / "selector_results",
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
         quant_sim_replay_db_file=tmp_path / "quant_sim_replay.db",
-        portfolio_db_file=tmp_path / "portfolio_stocks.db",
         monitor_db_file=tmp_path / "stock_monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
-        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
-        quote_fetcher=lambda code, market=None: {
-            "stock_code": code,
-            "stock_name": {"600519": "贵州茅台", "000001": "平安银行", "300750": "宁德时代"}.get(code, code),
-            "latest_price": {"600519": 1453.96, "000001": 10.12, "300750": 198.35}.get(code, 1.0),
-        },
     )
 
 
@@ -314,17 +306,9 @@ def test_backend_api_dataflow_from_discover_and_research_to_watchlist_and_quant_
     context = module.UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=selector_dir,
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
-        portfolio_db_file=tmp_path / "portfolio_stocks.db",
         monitor_db_file=tmp_path / "stock_monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
-        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
-        quote_fetcher=lambda code, market=None: {
-            "stock_code": code,
-            "stock_name": {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
-            "latest_price": {"600519": 1453.96, "000001": 10.12}.get(code, 1.0),
-        },
     )
     app = module.create_app(context=context)
     client = TestClient(app)
@@ -373,17 +357,9 @@ def test_workbench_watchlist_updates_immediately_after_discover_and_research_wat
     context = module.UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=selector_dir,
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
-        portfolio_db_file=tmp_path / "portfolio_stocks.db",
         monitor_db_file=tmp_path / "stock_monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
-        stock_name_resolver=lambda code: {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
-        quote_fetcher=lambda code, market=None: {
-            "stock_code": code,
-            "stock_name": {"600519": "贵州茅台", "000001": "平安银行"}.get(code, code),
-            "latest_price": {"600519": 1453.96, "000001": 10.12}.get(code, 1.0),
-        },
     )
     app = module.create_app(context=context)
     client = TestClient(app)
@@ -776,12 +752,9 @@ def test_backend_api_research_run_module_persists_real_snapshot(tmp_path, monkey
     context = module.UIApiContext(
         data_dir=tmp_path,
         selector_result_dir=selector_dir,
-        watchlist_db_file=tmp_path / "watchlist.db",
         quant_sim_db_file=tmp_path / "quant_sim.db",
-        portfolio_db_file=tmp_path / "portfolio_stocks.db",
         monitor_db_file=tmp_path / "stock_monitor.db",
         smart_monitor_db_file=tmp_path / "smart_monitor.db",
-        stock_name_resolver=lambda code: {"002463": "沪电股份", "600519": "贵州茅台", "300750": "宁德时代"}.get(code, code),
     )
     app = module.create_app(context=context)
     client = TestClient(app)
