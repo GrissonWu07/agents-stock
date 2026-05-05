@@ -1,7 +1,9 @@
 # 持仓诊断与实时模拟边界设计
 
 Date: 2026-05-04
-Status: Draft for review
+Status: Superseded
+
+Current source of truth: `docs/superpowers/specs/2026-05-05-stock-universe-refresh-architecture-design.md`
 
 ## 背景
 
