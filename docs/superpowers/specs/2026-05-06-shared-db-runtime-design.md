@@ -142,13 +142,15 @@ Target files:
 1. `app/db/repositories/settings_repo.py`
 2. `app/db/repositories/stock_universe_repo.py`
 3. `app/db/repositories/live_sim_repo.py`
-4. `app/db/repositories/replay_repo.py`
-5. `app/db/repositories/portfolio_repo.py`
-6. `app/db/repositories/monitor_repo.py`
-7. `app/db/repositories/smart_monitor_repo.py`
-8. `app/db/repositories/research_repo.py`
-9. `app/db/repositories/analysis_repo.py`
-10. `app/db/repositories/ui_cache_repo.py`
+4. `app/db/repositories/strategy_profile_repo.py`
+5. `app/db/repositories/replay_repo.py`
+6. `app/db/repositories/portfolio_repo.py`
+7. `app/db/repositories/monitor_repo.py`
+8. `app/db/repositories/smart_monitor_repo.py`
+9. `app/db/repositories/research_repo.py`
+10. `app/db/repositories/selector_repo.py`
+11. `app/db/repositories/analysis_repo.py`
+12. `app/db/repositories/ui_cache_repo.py`
 
 ## Store Model
 
@@ -201,6 +203,13 @@ The runtime may allow explicit URL overrides, but the logical store names remain
 
 The runtime must be configured by environment variables or equivalent settings, with a single backend switch.
 
+Configuration invariant:
+
+1. `APP_DB_BACKEND` selects one backend family for the entire process
+2. explicit store URL overrides are allowed only if both URLs belong to that same backend family
+3. mixed backend operation such as `primary=mysql` and `replay=sqlite` is not supported
+4. invalid mixed configuration must fail at startup before any migration or request handling begins
+
 ### Required top-level switch
 
 1. `APP_DB_BACKEND=sqlite|mysql`
@@ -233,6 +242,12 @@ Default URL derivation:
 
 1. `mysql+pymysql://user:pass@host:port/xuanwu?charset=utf8mb4`
 2. `mysql+pymysql://user:pass@host:port/xuanwu_replay?charset=utf8mb4`
+
+Schema bootstrap rule:
+
+1. bootstrap attempts `CREATE DATABASE IF NOT EXISTS <primary_db>` and `CREATE DATABASE IF NOT EXISTS <replay_db>` using the configured MySQL credentials before running Alembic migrations
+2. if the configured credentials do not have permission to create schemas, startup must fail with a clear error naming the missing schemas
+3. no manual pre-creation step is required in the happy path
 
 ### Runtime tuning
 
@@ -449,12 +464,12 @@ Every relational domain gets an explicit repository surface. The runtime only so
 | `app/data/analysis_context/repository.py` | `analysis_repo.py` | `primary` |
 | `app/monitor_db.py` | `monitor_repo.py` | `primary` |
 | `app/smart_monitor_db.py` | `smart_monitor_repo.py` | `primary` |
-| `app/main_force_batch_db.py` | `research_repo.py` | `primary` |
+| `app/main_force_batch_db.py` | `selector_repo.py` | `primary` |
 | `app/longhubang_db.py` | `research_repo.py` | `primary` |
 | `app/news_flow_db.py` | `research_repo.py` | `primary` |
 | `app/sector_strategy_db.py` | `research_repo.py` | `primary` |
-| `app/low_price_bull_monitor.py` | `research_repo.py` or `selector_runtime_repo.py` | `primary` |
-| `app/profit_growth_monitor.py` | `research_repo.py` or `selector_runtime_repo.py` | `primary` |
+| `app/low_price_bull_monitor.py` | `selector_repo.py` | `primary` |
+| `app/profit_growth_monitor.py` | `selector_repo.py` | `primary` |
 | `app/portfolio_db.py` | `portfolio_repo.py` | `primary` |
 | `app/config_manager.py` | `settings_repo.py` | `primary` |
 | `app/config.py` | `settings_repo.py` | `primary` |
