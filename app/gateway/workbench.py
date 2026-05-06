@@ -487,7 +487,6 @@ def build_workbench_snapshot(
         "analysisJob": analysis_task_manager.job_view(latest_task, txt=_txt, int_fn=_int),
         "nextSteps": [
             {"label": t("Portfolio"), "hint": t("View holdings, attribution, and position actions"), "href": "/portfolio"},
-            {"label": t("Real-time monitor"), "hint": t("Check price rules, triggers, and notifications"), "href": "/real-monitor"},
             {"label": t("Discover"), "hint": t("Enter stock discovery and pick new watch targets"), "href": "/discover"},
             {"label": t("Research"), "hint": t("Aggregate sectors, dragon-tiger list, news, and macro"), "href": "/research"},
             {"label": t("Quant simulation"), "hint": t("Run live simulation based on quant candidate pool"), "href": "/live-sim"},

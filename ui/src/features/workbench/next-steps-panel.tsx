@@ -12,7 +12,7 @@ export function NextStepsPanel({ steps }: NextStepsPanelProps) {
     <WorkbenchCard className="next-steps-panel">
       <h2 className="section-card__title">{t("Next step")}</h2>
       <p className="section-card__description">
-        {t("Continue from watchlist into monitor, discover, research, or quant validation without switching around.")}
+        {t("Continue from watchlist into discover, research, portfolio, or quant validation without switching around.")}
       </p>
       <div className="next-steps">
         {steps.map((step) => (

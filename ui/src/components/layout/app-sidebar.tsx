@@ -3,11 +3,12 @@ import { APP_ROUTE_ITEMS } from "../../routes/manifest";
 import { t } from "../../lib/i18n";
 
 export function AppSidebar() {
-  const groupKeys = Array.from(new Set(APP_ROUTE_ITEMS.map((item) => item.groupKey)));
+  const visibleRouteItems = APP_ROUTE_ITEMS.filter((item) => !item.hidden);
+  const groupKeys = Array.from(new Set(visibleRouteItems.map((item) => item.groupKey)));
   const groups = groupKeys.map((groupKey) => ({
     key: groupKey,
     title: t(groupKey),
-    items: APP_ROUTE_ITEMS.filter((item) => item.groupKey === groupKey).map((item) => ({
+    items: visibleRouteItems.filter((item) => item.groupKey === groupKey).map((item) => ({
       to: item.path,
       label: t(item.labelKey),
     })),

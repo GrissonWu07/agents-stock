@@ -1,107 +1,104 @@
-#  玄武AI智能体股票团队分析系统
+# 玄武AI智能量化系统
 
-一个围绕 A 股研究、选股、关注、量化模拟的超级股票工作台。
+一个围绕 A 股研究、统一股票池、持仓诊断、实时量化与历史回放的股票工作台。
 
-当前版本已经从“分散的单页工具集合”收敛成一条更清晰的主线：
+当前主线已经不是旧的“关注池 + 独立量化候选池 + 回放接续实时账户”模式。  
+当前真实主线是：
 
-**发现股票 / 研究情报 -> 我的关注 -> 量化候选池 -> 量化模拟 / 历史回放**
-
----
-
-## 当前产品主线
-
-### 1. 工作台
-
-首页已经调整为工作台视角，核心区域是 **我的关注**：
-
-- 手工输入股票代码加入关注
-- 查看实时价格、来源、状态
-- 从“我的关注”把股票推进到量化候选池
-- 在同一页继续做股票分析
-- 从右侧入口进入持仓分析、实时监控、AI盯盘、发现股票、研究情报、量化模拟和历史回放
-
-### 2. 发现股票
-
-`发现股票` 是统一的选股聚合页，当前包含：
-
-- 主力选股
-- 低价擒牛
-- 小市值
-- 净利增长
-- 低估值
-
-这些页面的职责已经收窄成“发现股票并加入我的关注”，不再承担后续的主流程。
-
-### 3. 研究情报
-
-`研究情报` 是统一的研究聚合页，当前包含：
-
-- 智策板块
-- 智瞰龙虎
-- 新闻流量
-- 宏观分析
-- 宏观周期
-
-这类模块默认输出研究结论；只有在模块里明确产出股票时，才支持加入我的关注。
-
-### 4. 量化模拟
-
-`量化模拟` 围绕 **量化候选池** 运行。量化候选池不是自动生成的，而是你从“我的关注”里手工单选或多选加入。
-
-当前量化模拟支持：
-
-- 定时任务配置
-- 实时扫描量化候选池
-- 自动执行模拟交易或手工确认执行
-- 候选池、执行中心、账户结果一体化查看
-- 策略说明、量化证据、执行提示
-
-### 5. 历史回放
-
-`历史回放` 和 `量化模拟` 共用同一个量化候选池。
-
-当前历史回放支持：
-
-- 指定时间范围回放
-- 从过去接续到当前的连续模拟
-- 回放任务持久化
-- 回放结果、持仓、权益曲线、成交明细、信号执行记录
+`发现股票 / 研究情报 / 手工录入 -> 统一股票池(stock_universe) -> 按标签筛选 -> 持仓诊断 / 实时量化 / 历史回放`
 
 ---
 
-## 核心功能
+## 当前模块
 
-### 股票分析
+### 工作台
 
-- 单股分析 / 批量分析
-- 多分析师协同输出
-- 团队讨论与最终决策
-- 更偏“给人看的结论”，不是只堆技术指标
+- 统一股票池视图
+- 合并展示 `watched / quant_enabled / registered_position_enabled`
+- 支持手工加股、批量加入实时量化、批量登记持仓
 
 ### 发现股票
 
-- 主力选股
-- 低价擒牛
-- 小市值
-- 净利增长
-- 低估值
+- 聚合多种选股策略
+- 输出候选结果
+- 可批量写入统一股票池
 
 ### 研究情报
 
-- 板块轮动和热点方向
-- 龙虎榜分析
-- 新闻流量跟踪
-- 宏观总量分析
-- 宏观周期判断
+- 聚合板块、龙虎榜、新闻流量、宏观分析、宏观周期
+- 当模块输出明确股票时，可推进到统一股票池
 
-### 投资管理
+### 持仓分析
 
-- 我的关注
-- 持仓分析
-- 实时监控
-- AI盯盘
-- 量化模拟
-- 历史回放
+- 面向 `registered_position_enabled=1` 的登记持仓诊断
+- 组合诊断、个股详情、分析师观点、建议汇总
+
+### 实时模拟
+
+- 面向 `quant_enabled=1` 的实时量化股票
+- 独立 live-sim 账户、成交、持仓、信号
+- 默认 10 分钟调度，行情 quote TTL 为 2 分钟
+
+### 历史回放
+
+- 启动时冻结 `quant_enabled=1` 范围
+- 结果写入 `quant_sim_replay.db`
+- 不再接续到实时模拟账户
+
+### 策略配置
+
+- 量化内核权重、阈值、BUY 分层、个股反馈、组合防守参数配置
+
+### 环境配置
+
+- 模型、数据源、运行参数统一配置
+
+---
+
+## 系统截图
+
+以下截图来自当前部署环境，仅保留页面内容，不包含地址栏信息。
+
+<table>
+  <tr>
+    <td width="33%">
+      <strong>工作台</strong><br/>
+      <img src="docs/assets/screenshots/workbench-main.png" alt="工作台截图" width="100%"/>
+    </td>
+    <td width="33%">
+      <strong>发现股票</strong><br/>
+      <img src="docs/assets/screenshots/discover.png" alt="发现股票截图" width="100%"/>
+    </td>
+    <td width="33%">
+      <strong>研究情报</strong><br/>
+      <img src="docs/assets/screenshots/research.png" alt="研究情报截图" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%">
+      <strong>持仓分析</strong><br/>
+      <img src="docs/assets/screenshots/portfolio.png" alt="持仓分析截图" width="100%"/>
+    </td>
+    <td width="33%">
+      <strong>实时模拟</strong><br/>
+      <img src="docs/assets/screenshots/live-sim.png" alt="实时模拟截图" width="100%"/>
+    </td>
+    <td width="33%">
+      <strong>历史回放</strong><br/>
+      <img src="docs/assets/screenshots/his-replay.png" alt="历史回放截图" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <strong>策略配置</strong><br/>
+      <img src="docs/assets/screenshots/strategy-config.png" alt="策略配置截图" width="100%"/>
+    </td>
+    <td width="50%">
+      <strong>环境配置</strong><br/>
+      <img src="docs/assets/screenshots/settings.png" alt="环境配置截图" width="100%"/>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -113,193 +110,91 @@
 pip install -r requirements.txt
 ```
 
-### 2. 准备环境变量
-
-复制一份模板：
+### 2. 配置 `.env`
 
 ```bash
 copy .env.example .env
 ```
 
-至少建议配置：
+最低建议配置：
 
 ```env
 DEEPSEEK_API_KEY=your_api_key
 TDX_ENABLED=true
 ```
 
-说明：
-
-- `DEEPSEEK_API_KEY`：必填，用于调用 OpenAI 兼容模型接口
-- `TDX_ENABLED`：建议开启，用于 A 股行情和量化候选池刷新
-
-更多配置请看：
-
-- [docs/QUICK_START.md](docs/QUICK_START.md)
-- [docs/环境配置快速指南.md](docs/环境配置快速指南.md)
-
-### 3. 启动网关
+### 3. 启动后端
 
 ```bash
 python app.py
 ```
 
-`python app.py` 会启动当前的 Python gateway（网关）与 API：
+默认后端地址：
 
-- 工作台主页面建议通过前端服务访问（见下）
-- 健康检查：[http://127.0.0.1:8501/api/health](http://127.0.0.1:8501/api/health)
+- `http://127.0.0.1:8501/api/health`
 
-### 当前前端壳
-
-新的单页面前端工程位于 [ui](/C:/Projects/githubs/aiagents-stock/ui)，产品名统一为 **玄武AI智能体股票团队分析系统**。
-
-它是一个独立的 SPA 工作台，由当前 Python gateway 提供 API 支撑，顶部路由清晰，当前主入口包括：
-
-- `/main` 工作台
-- `/discover` 发现股票
-- `/research` 研究情报
-- `/portfolio` 持仓分析
-- `/live-sim` 量化模拟
-- `/his-replay` 历史回放
-- `/ai-monitor` AI盯盘
-- `/real-monitor` 实时监控
-
-本地联调方式（开发推荐）：
-
-1. 在仓库根目录启动网关服务：`python app.py`
-2. 进入 [ui](/C:/Projects/githubs/aiagents-stock/ui) 后执行：
+### 4. 启动前端开发环境
 
 ```bash
+cd ui
 npm install
 npm run dev
 ```
 
-前端默认地址：
+前端开发地址：
 
-[http://127.0.0.1:4173](http://127.0.0.1:4173)
-
-> 提示：网关保持在 8501，前端会通过代理访问网关 API。该方式与容器部署（nginx + 独立 backend）一致。
-
-Docker 部署则通过 [build/docker-compose.yml](/C:/Projects/githubs/aiagents-stock/build/docker-compose.yml) 以 `nginx` 前端 + Python API 分离方式运行。前端静态站点由 [build/Dockerfile.ui](/C:/Projects/githubs/aiagents-stock/build/Dockerfile.ui) 构建并由 [build/nginx.conf](/C:/Projects/githubs/aiagents-stock/build/nginx.conf) 提供 SPA 历史路由回退和 `/api/` 代理。后端健康检查路径统一为 `/api/health`，容器内后端监听端口为 `8501`。
-
-Docker 前端访问地址：
-
-[http://localhost:12080](http://localhost:12080)
+- `http://127.0.0.1:4173`
 
 ---
 
-## 推荐使用方式
+## 当前数据边界
 
-### 路径 A：先研究，再关注，再验证
+### 统一股票池
 
-1. 进入 **工作台**
-2. 在 **我的关注** 中查看已有股票和实时价格
-3. 需要找新机会时进入 **发现股票**
-4. 把筛出来的股票加入 **我的关注**
-5. 回到工作台，对关注股票做分析
-6. 把适合做验证的股票加入 **量化候选池**
-7. 进入 **量化模拟** 或 **历史回放**
+- 主库：`data/quant_sim.db`
+- 主表：`stock_universe`
 
-### 路径 B：从研究情报反推标的
+关键标签：
 
-1. 进入 **研究情报**
-2. 先看板块、龙虎榜、新闻、宏观结论
-3. 模块里若有明确股票输出，再加入 **我的关注**
-4. 在工作台继续分析和量化验证
+- `watched`
+- `quant_enabled`
+- `registered_position_enabled`
 
----
+### 实时量化
 
-## 关于自动执行模拟交易
+- 写入 `quant_sim.db` 的 live 状态表
+- 典型表：`strategy_signals / sim_positions / sim_trades / sim_account`
 
-量化模拟里的“自动执行模拟交易”是 **模拟账户自动成交**，不是实盘下单。
+### 历史回放
 
-它会遵守当前规则：
+- 写入 `data/quant_sim_replay.db`
+- 典型表：`sim_runs / sim_run_signals / sim_run_trades / sim_run_positions`
 
-- A 股一手为 `100` 股
-- 如果建议仓位不足买入一手，会自动跳过
-- 页面会明确提示：
-  - `自动执行跳过：建议仓位不足买入一手`
-  - `自动执行跳过：当前无可卖持仓`
-  - `自动执行跳过：缺少有效最新价`
+### 发现与研究缓存
 
-也就是说，**开启自动执行不代表一定会成交**，还必须满足最小交易单位、有效价格和持仓约束。
+- `data/selector_results/*.json`
 
 ---
 
-## 数据源与模型
+## 当前要避免的旧认知
 
-### 模型
+以下说法已经不再适用：
 
-当前主程序统一使用 `.env` 里的默认模型配置：
-
-- `DEFAULT_MODEL_NAME`
-- `DEEPSEEK_API_KEY`
-- `DEEPSEEK_BASE_URL`
-
-支持 OpenAI 兼容接口，不再要求每个页面单独选模型。
-
-### 行情数据
-
-当前 A 股行情推荐优先使用 `pytdx` 直连：
-
-- `TDX_HOST`
-- `TDX_PORT`
-- `TDX_FALLBACK_HOSTS`
-
-行情刷新、我的关注报价、量化候选池价格、历史回放等都会尽量复用这一层。
-
-### 可选数据源
-
-- `TUSHARE_TOKEN`
-- 其它研究模块内部使用的数据抓取器
+- `watchlist.db` 是主关注池数据库
+- `candidate_pool` 是独立量化池主表
+- `portfolio_stocks.db` 是持仓主表
+- 历史回放会接续到实时模拟账户
+- 实时量化默认 15 分钟调度
 
 ---
 
-## 项目里的关键页面
+## 推荐阅读
 
-| 页面 | 当前定位 |
-|---|---|
-| 工作台 | 进入系统后的主视角，围绕“我的关注”展开 |
-| 发现股票 | 统一选股入口 |
-| 研究情报 | 统一研究入口 |
-| 持仓分析 | 面向已持仓股票的分析与跟踪 |
-| 实时监控 | 规则触发式价格监控和提醒 |
-| AI盯盘 | AI 连续盯盘和决策辅助 |
-| 量化模拟 | 基于量化候选池的实时模拟 |
-| 历史回放 | 基于量化候选池的历史验证 |
-
----
-
-## 文档导航
-
-优先看这几份：
-
+- [docs/README.md](docs/README.md)
 - [docs/QUICK_START.md](docs/QUICK_START.md)
 - [docs/工作台工作流指南.md](docs/工作台工作流指南.md)
+- [docs/股票数据流说明.md](docs/股票数据流说明.md)
 - [docs/量化交易快速指南.md](docs/量化交易快速指南.md)
-- [docs/README.md](docs/README.md)
-
-如果你是第一次上手，建议顺序是：
-
-1. [docs/QUICK_START.md](docs/QUICK_START.md)
-2. [docs/工作台工作流指南.md](docs/工作台工作流指南.md)
-3. [docs/量化交易快速指南.md](docs/量化交易快速指南.md)
-
----
-
-## 社区与教程
-
-- B站本地部署教程 1：https://www.bilibili.com/video/BV1qHFPz9EXY/
-- Docker 部署教程 2：https://www.bilibili.com/video/BV1j2FNz4EAi/
-- 股票知识讲解合集：https://www.bilibili.com/video/BV1Y2FGzzEeS/
-- 投资认知提升合集：https://www.bilibili.com/video/BV1ugBMBAEbW
-
----
-
-## 风险提示
-
-本项目提供的是研究、分析和模拟工具，不构成投资建议。
-
-- 股市有风险，入市需谨慎
-- 量化模拟和历史回放是验证工具，不代表未来收益
-- 如果你接入真实交易接口，请先用小资金和测试账户验证全流程
+- [docs/前端页面与交互清单.md](docs/前端页面与交互清单.md)
+- [docs/后端能力与服务接口清单.md](docs/后端能力与服务接口清单.md)
+- [docs/superpowers/specs/2026-05-05-stock-universe-refresh-architecture-design.md](docs/superpowers/specs/2026-05-05-stock-universe-refresh-architecture-design.md)

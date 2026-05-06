@@ -50,13 +50,17 @@ The SPA uses explicit client-side routes:
 - `/live-sim` 量化模拟
 - `/his-replay` 历史回放
 - `/ai-monitor` AI盯盘
-- `/real-monitor` 实时监控
+- `/strategy-config` 策略配置
+- `/settings` 环境配置
 
 Optional future routes:
 
 - `/history`
-- `/settings`
 - `/login`
+
+Hidden internal route:
+
+- `/real-monitor` 实时监控
 
 ## Docker / nginx deployment
 

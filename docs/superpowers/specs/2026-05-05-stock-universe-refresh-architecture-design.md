@@ -1,12 +1,31 @@
 # 股票池与统一数据刷新架构设计
 
 Date: 2026-05-05
-Status: Draft for review
+Status: Partially implemented
 
 Supersedes:
 
 1. `docs/股票数据流说明.md`
 2. `docs/superpowers/specs/2026-05-04-portfolio-diagnosis-live-sim-boundary-design.md`
+
+## 当前实现快照
+
+截至 `2026-05-06`，以下内容已经在代码中落地：
+
+1. 统一股票池主表已经切到 `quant_sim.db.stock_universe`。
+2. 工作台股票列表已经读取 `watched OR quant_enabled OR registered_position_enabled` 的统一股票池视图，而不是只读 `watched=1`。
+3. `WatchlistService` 物理上已经不再使用 `watchlist.db`，而是直接操作 `stock_universe`。
+4. `CandidatePoolService` 仍保留兼容命名，但底层已经是 `stock_universe.quant_enabled` 视图。
+5. 手工录入股票时，`basic_info_missing` 会同步写入专用列。
+6. live-sim 调度默认间隔已经是 `10` 分钟。
+7. 实时刷新链路已经对 fresh runtime entry 做 local-first 命中，并对失败股票做冷却跳过。
+8. 历史回放已经使用独立 `quant_sim_replay.db`，并在准备阶段走 local-first 历史 K 线/指标复用。
+
+以下内容仍处于“目标态先行、实现逐步收敛”：
+
+1. `StockDataRefreshService` 仍未完全抽成单一统一服务对象，部分刷新逻辑还分布在现有 scheduler 和 provider 适配层里。
+2. `portfolio refresh-indicators` 仍保留旧动作名，尚未完全拆成更清晰的数据域动作。
+3. 发现股票和研究情报结果仍先写 `selector_results/*.json`，再由用户推进到统一股票池。
 
 ## 背景
 

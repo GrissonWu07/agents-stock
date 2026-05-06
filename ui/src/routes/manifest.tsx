@@ -14,6 +14,7 @@ export type AppRouteItem = {
   labelKey: string;
   groupKey: string;
   element: ReactNode;
+  hidden?: boolean;
 };
 
 export const APP_ROUTE_ITEMS: AppRouteItem[] = [
@@ -23,7 +24,7 @@ export const APP_ROUTE_ITEMS: AppRouteItem[] = [
   { path: "/portfolio", labelKey: "Portfolio", groupKey: "Portfolio", element: <PortfolioPage /> },
   { path: "/live-sim", labelKey: "Quant simulation", groupKey: "Portfolio", element: <LiveSimPage /> },
   { path: "/his-replay", labelKey: "Historical replay", groupKey: "Portfolio", element: <HisReplayPage /> },
-  { path: "/real-monitor", labelKey: "Real-time monitor", groupKey: "Portfolio", element: <RealMonitorPage /> },
+  { path: "/real-monitor", labelKey: "Real-time monitor", groupKey: "Portfolio", element: <RealMonitorPage />, hidden: true },
   { path: "/strategy-config", labelKey: "Strategy configuration", groupKey: "Settings", element: <StrategyConfigPage /> },
   { path: "/settings", labelKey: "Settings", groupKey: "Settings", element: <SettingsPage /> },
 ];
