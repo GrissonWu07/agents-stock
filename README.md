@@ -1,104 +1,10 @@
-# 玄武AI智能量化系统
+# 玄武量化系统
 
-一个围绕 A 股研究、统一股票池、持仓诊断、实时量化与历史回放的股票工作台。
+一个面向 A 股研究、股票池管理、持仓诊断、实时模拟和历史回放的工作台。
 
-当前主线已经不是旧的“关注池 + 独立量化候选池 + 回放接续实时账户”模式。  
-当前真实主线是：
+当前主流程：
 
-`发现股票 / 研究情报 / 手工录入 -> 统一股票池(stock_universe) -> 按标签筛选 -> 持仓诊断 / 实时量化 / 历史回放`
-
----
-
-## 当前模块
-
-### 工作台
-
-- 统一股票池视图
-- 合并展示 `watched / quant_enabled / registered_position_enabled`
-- 支持手工加股、批量加入实时量化、批量登记持仓
-
-### 发现股票
-
-- 聚合多种选股策略
-- 输出候选结果
-- 可批量写入统一股票池
-
-### 研究情报
-
-- 聚合板块、龙虎榜、新闻流量、宏观分析、宏观周期
-- 当模块输出明确股票时，可推进到统一股票池
-
-### 持仓分析
-
-- 面向 `registered_position_enabled=1` 的登记持仓诊断
-- 组合诊断、个股详情、分析师观点、建议汇总
-
-### 实时模拟
-
-- 面向 `quant_enabled=1` 的实时量化股票
-- 独立 live-sim 账户、成交、持仓、信号
-- 默认 10 分钟调度，行情 quote TTL 为 2 分钟
-
-### 历史回放
-
-- 启动时冻结 `quant_enabled=1` 范围
-- 结果写入 `quant_sim_replay.db`
-- 不再接续到实时模拟账户
-
-### 策略配置
-
-- 量化内核权重、阈值、BUY 分层、个股反馈、组合防守参数配置
-
-### 环境配置
-
-- 模型、数据源、运行参数统一配置
-
----
-
-## 系统截图
-
-以下截图来自当前部署环境，仅保留页面内容，不包含地址栏信息。
-
-<table>
-  <tr>
-    <td width="33%">
-      <strong>工作台</strong><br/>
-      <img src="docs/assets/screenshots/workbench-main.png" alt="工作台截图" width="100%"/>
-    </td>
-    <td width="33%">
-      <strong>发现股票</strong><br/>
-      <img src="docs/assets/screenshots/discover.png" alt="发现股票截图" width="100%"/>
-    </td>
-    <td width="33%">
-      <strong>研究情报</strong><br/>
-      <img src="docs/assets/screenshots/research.png" alt="研究情报截图" width="100%"/>
-    </td>
-  </tr>
-  <tr>
-    <td width="33%">
-      <strong>持仓分析</strong><br/>
-      <img src="docs/assets/screenshots/portfolio.png" alt="持仓分析截图" width="100%"/>
-    </td>
-    <td width="33%">
-      <strong>实时模拟</strong><br/>
-      <img src="docs/assets/screenshots/live-sim.png" alt="实时模拟截图" width="100%"/>
-    </td>
-    <td width="33%">
-      <strong>历史回放</strong><br/>
-      <img src="docs/assets/screenshots/his-replay.png" alt="历史回放截图" width="100%"/>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <strong>策略配置</strong><br/>
-      <img src="docs/assets/screenshots/strategy-config.png" alt="策略配置截图" width="100%"/>
-    </td>
-    <td width="50%">
-      <strong>环境配置</strong><br/>
-      <img src="docs/assets/screenshots/settings.png" alt="环境配置截图" width="100%"/>
-    </td>
-  </tr>
-</table>
+`发现股票 / 研究情报 / 手工录入 -> 统一股票池(stock_universe) -> 按标签筛选 -> 持仓诊断 / 实时模拟 / 历史回放`
 
 ---
 
@@ -173,18 +79,6 @@ npm run dev
 ### 发现与研究缓存
 
 - `data/selector_results/*.json`
-
----
-
-## 当前要避免的旧认知
-
-以下说法已经不再适用：
-
-- `watchlist.db` 是主关注池数据库
-- `candidate_pool` 是独立量化池主表
-- `portfolio_stocks.db` 是持仓主表
-- 历史回放会接续到实时模拟账户
-- 实时量化默认 15 分钟调度
 
 ---
 
