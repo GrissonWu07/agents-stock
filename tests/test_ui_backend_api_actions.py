@@ -13,7 +13,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 import app.gateway_api as gateway_api
-import app.discover.gateway as discover_gateway
+import app.discover.discover as discover_gateway
 from app.gateway_api import UIApiContext, create_app
 from app.selector_result_store import save_latest_result
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.discover.ai_stock_scanner import AIStockScanner, AIStockScannerConfig, ThemeInfo
-from app.discover.gateway import (
+from app.discover.discover import (
     action_discover_batch,
     action_discover_item,
     action_discover_reset,
