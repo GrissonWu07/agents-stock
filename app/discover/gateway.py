@@ -10,7 +10,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 import pandas as pd
 
-from app.ai_stock_scanner import AIStockScanner, AIStockScannerConfig
+from app.discover.ai_stock_scanner import AIStockScanner, AIStockScannerConfig
 from app.async_task_base import AsyncTaskManagerBase
 from app.gateway.common import (
     code_from_payload as _code_from_payload,

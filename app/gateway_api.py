@@ -23,8 +23,8 @@ from app.gateway.signal_detail import _find_signal_detail
 from app.gateway.signal_market import _enrich_signal_strategy_profile_with_replay_snapshot
 from app.gateway.strategy_profiles import clone_strategy_profile as _clone_strategy_profile, create_strategy_profile as _create_strategy_profile, delete_strategy_profile as _delete_strategy_profile, get_strategy_profile as _get_strategy_profile, list_strategy_profiles as _list_strategy_profiles, set_default_strategy_profile as _set_default_strategy_profile, update_strategy_profile as _update_strategy_profile, validate_strategy_profile as _validate_strategy_profile
 from app.gateway.table_query import _replay_table_query_from_request
-from app.gateway.discover import action_discover_batch as _action_discover_batch, action_discover_item as _action_discover_item, action_discover_reset as _action_discover_reset, action_discover_run_strategy as _gateway_discover_run_strategy, discover_task_manager, snapshot_discover as _snapshot_discover
-import app.gateway.discover as _gateway_discover_module
+from app.discover.gateway import action_discover_batch as _action_discover_batch, action_discover_item as _action_discover_item, action_discover_reset as _action_discover_reset, action_discover_run_strategy as _discover_run_strategy_impl, discover_task_manager, snapshot_discover as _snapshot_discover
+import app.discover.gateway as _discover_gateway_module
 from app.gateway.research import action_research_batch as _action_research_batch, action_research_item as _action_research_item, action_research_reset as _action_research_reset, action_research_run_module as _gateway_research_run_module, research_task_manager, snapshot_research as _snapshot_research
 import app.gateway.research as _gateway_research_module
 from app.gateway.workbench import action_workbench_add_watchlist as _action_workbench_add_watchlist, action_workbench_analysis as _action_workbench_analysis, action_workbench_batch_portfolio as _action_workbench_batch_portfolio, action_workbench_batch_quant as _action_workbench_batch_quant, action_workbench_delete as _action_workbench_delete, action_workbench_refresh as _action_workbench_refresh
@@ -37,11 +37,11 @@ from app.stock_refresh_scheduler import get_unified_stock_refresh_scheduler
 from app.version_info import get_version_info
 from app.workbench_analysis_tasks import analysis_task_manager
 
-MainForceStockSelector = _gateway_discover_module.MainForceStockSelector
-LowPriceBullSelector = _gateway_discover_module.LowPriceBullSelector
-SmallCapSelector = _gateway_discover_module.SmallCapSelector
-ProfitGrowthSelector = _gateway_discover_module.ProfitGrowthSelector
-ValueStockSelector = _gateway_discover_module.ValueStockSelector
+MainForceStockSelector = _discover_gateway_module.MainForceStockSelector
+LowPriceBullSelector = _discover_gateway_module.LowPriceBullSelector
+SmallCapSelector = _discover_gateway_module.SmallCapSelector
+ProfitGrowthSelector = _discover_gateway_module.ProfitGrowthSelector
+ValueStockSelector = _discover_gateway_module.ValueStockSelector
 SectorStrategyDataFetcher = _gateway_research_module.SectorStrategyDataFetcher
 SectorStrategyEngine = _gateway_research_module.SectorStrategyEngine
 LonghubangEngine = _gateway_research_module.LonghubangEngine
@@ -58,12 +58,12 @@ async def _json(request: Request) -> Any:
 
 
 def _action_discover_run_strategy(context: UIApiContext, payload: Any) -> dict[str, Any]:
-    _gateway_discover_module.MainForceStockSelector = globals().get("MainForceStockSelector")
-    _gateway_discover_module.LowPriceBullSelector = globals().get("LowPriceBullSelector")
-    _gateway_discover_module.SmallCapSelector = globals().get("SmallCapSelector")
-    _gateway_discover_module.ProfitGrowthSelector = globals().get("ProfitGrowthSelector")
-    _gateway_discover_module.ValueStockSelector = globals().get("ValueStockSelector")
-    return _gateway_discover_run_strategy(context, payload)
+    _discover_gateway_module.MainForceStockSelector = globals().get("MainForceStockSelector")
+    _discover_gateway_module.LowPriceBullSelector = globals().get("LowPriceBullSelector")
+    _discover_gateway_module.SmallCapSelector = globals().get("SmallCapSelector")
+    _discover_gateway_module.ProfitGrowthSelector = globals().get("ProfitGrowthSelector")
+    _discover_gateway_module.ValueStockSelector = globals().get("ValueStockSelector")
+    return _discover_run_strategy_impl(context, payload)
 
 
 def _action_research_run_module(context: UIApiContext, payload: Any) -> dict[str, Any]:

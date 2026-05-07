@@ -4,7 +4,7 @@ import os
 
 import pandas as pd
 
-from app.ai_stock_scanner import AIStockScanner, AIStockScannerConfig
+from app.discover.ai_stock_scanner import AIStockScanner, AIStockScannerConfig
 
 
 class FakeAkForSectors:
