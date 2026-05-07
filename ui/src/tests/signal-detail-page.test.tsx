@@ -494,6 +494,7 @@ describe("SignalDetailPage", () => {
     const guardPayload = JSON.parse(JSON.stringify(mockPayload));
     guardPayload.decision.action = "BUY";
     guardPayload.decision.finalAction = "BUY";
+    guardPayload.decision.positionSizePct = "25.0";
     guardPayload.strategyProfile.portfolio_execution_guard = {
       intent: "portfolio_execution_guard",
       status: "downgraded",
@@ -501,6 +502,12 @@ describe("SignalDetailPage", () => {
       buy_tier_label: "弱 BUY",
       buy_strength_score: 0.42,
       size_multiplier: 0.25,
+      cold_start: {
+        active: true,
+        sample_count: 0,
+        profit_sample_threshold: 1,
+        recent_realized_pnl: 0,
+      },
       is_late_rebound: true,
       reasons: ["边缘 BUY，先轻仓试错"],
       portfolio_guard: {
@@ -508,6 +515,15 @@ describe("SignalDetailPage", () => {
         reasons: ["组合近期连续止损，BUY 自动降级"],
       },
       late_rebound_reasons: ["RSI 偏热且距离 MA20 过远，疑似反弹尾段"],
+    };
+    guardPayload.strategyProfile.position_sizing = {
+      buy_budget: 19200,
+      quantity: 300,
+      skip_reason: null,
+      sizing: {
+        slot_units: 0.5,
+        reentry_size_multiplier: 0.25,
+      },
     };
 
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
@@ -521,5 +537,10 @@ describe("SignalDetailPage", () => {
     expect(screen.getByText(/分数 0\.42 · 倍率 0\.25/)).toBeInTheDocument();
     expect(screen.getByText(/组合近期连续止损/)).toBeInTheDocument();
     expect(screen.getByText(/疑似反弹尾段/)).toBeInTheDocument();
+    expect(screen.getByText("执行倍率")).toBeInTheDocument();
+    expect(screen.getByText("0.25x")).toBeInTheDocument();
+    expect(screen.getByText("预估数量")).toBeInTheDocument();
+    expect(screen.getByText("300股")).toBeInTheDocument();
+    expect(screen.getByText(/冷启动：盈利样本 0\/1 · 当前按冷启动规则限仓 · 倍率 0\.25x/)).toBeInTheDocument();
   });
 });

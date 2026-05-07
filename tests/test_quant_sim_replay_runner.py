@@ -2,6 +2,7 @@ import json
 import time
 from pathlib import Path
 
+from app.db.bootstrap import bootstrap_database_runtime
 from app.quant_sim.db import QuantSimReplayDB
 from app.quant_sim.replay_runner import get_quant_sim_replay_runner
 
@@ -119,3 +120,11 @@ def test_replay_runner_marks_silent_worker_exit_as_failed(tmp_path):
     assert terminal_run["status"] == "failed"
     assert "worker 进程已退出，但任务未写入最终状态" in str(terminal_run["status_message"])
     assert any("worker 进程已退出，但任务未写入最终状态" in str(event["message"]) for event in events)
+
+
+def test_replay_runner_resolves_runtime_replay_store_path(tmp_path):
+    runtime = bootstrap_database_runtime({}, data_dir=tmp_path)
+
+    runner = get_quant_sim_replay_runner(db_runtime=runtime)
+
+    assert Path(runner.db_file) == runtime.replay_path

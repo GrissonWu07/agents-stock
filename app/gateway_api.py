@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import akshare_client, smart_monitor_tdx_data
+from app.db.bootstrap import bootstrap_database_runtime
 from app.gateway.constants import REPLAY_TABLE_PAGE_SIZE, SERVICE_NAME, UI_DIST_DIR
 from app.gateway.context import UIApiContext
 from app.gateway.deps import _int, _now, _payload_dict, _txt, normalize_stock_code
@@ -215,7 +216,7 @@ def _resolve_task_manager(task_id: str):
 
 
 def create_app(context: UIApiContext | None = None) -> FastAPI:
-    api_context = context or UIApiContext()
+    api_context = context or UIApiContext(db_runtime=bootstrap_database_runtime())
 
     @asynccontextmanager
     async def app_lifespan(app: FastAPI):
@@ -247,6 +248,7 @@ def create_app(context: UIApiContext | None = None) -> FastAPI:
 
     app = FastAPI(title="玄武AI智能体股票团队分析系统 Backend API", version="0.1.0", lifespan=app_lifespan)
     app.state.ui_context = api_context
+    app.state.db_runtime = api_context.db_runtime
 
     @app.get("/api/health")
     def api_health() -> dict[str, str]:

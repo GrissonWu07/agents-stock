@@ -1858,6 +1858,43 @@ def test_his_replay_progress_endpoint_reports_database_busy(tmp_path, monkeypatc
     assert response.json()["detail"] == "历史回放正在写入数据库，请稍后刷新。"
 
 
+def test_his_replay_progress_endpoint_is_read_only_for_terminal_reconciliation(tmp_path):
+    context = _make_context(tmp_path)
+    db = context.replay_db()
+    run_id = db.create_sim_run(
+        mode="historical_range",
+        timeframe="30m",
+        market="CN",
+        start_datetime="2025-12-01 09:30:00",
+        end_datetime="2026-01-06 15:00:00",
+        initial_cash=100000,
+        status="running",
+        progress_current=1,
+        progress_total=1,
+        status_message="已完成第 1/1 个检查点",
+        metadata={"selected_strategy_mode": "auto"},
+    )
+    db.add_sim_run_checkpoint(
+        run_id,
+        checkpoint_at="2026-01-06 15:00:00",
+        candidates_scanned=5,
+        positions_checked=1,
+        signals_created=0,
+        auto_executed=0,
+        available_cash=100000.0,
+        market_value=0.0,
+        total_equity=100000.0,
+        metadata={},
+    )
+
+    response = TestClient(create_app(context=context)).get(f"/api/v1/quant/his-replay/progress?runId={run_id}")
+
+    assert response.status_code == 200
+    refreshed = context.replay_db().get_sim_run(run_id)
+    assert refreshed is not None
+    assert refreshed["status"] == "running"
+
+
 def test_live_sim_snapshot_exposes_trade_cost_ledger(tmp_path):
     context = _make_context(tmp_path)
     db = context.quant_db()
@@ -2735,7 +2772,7 @@ def test_his_replay_signal_filters_are_applied_by_database(tmp_path):
     assert buy_only["signals"]["pagination"]["totalRows"] == 1
 
 
-def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_failed(tmp_path):
+def test_his_replay_snapshot_keeps_stale_completed_run_read_only(tmp_path):
     context = _make_context(tmp_path)
     db = context.replay_db()
     run_id = db.create_sim_run(
@@ -2787,13 +2824,15 @@ def test_his_replay_snapshot_marks_completed_stale_run_with_missing_trades_as_fa
 
     task = payload["tasks"][0]
     assert task["runId"] == str(run_id)
-    assert task["status"] == "failed"
-    assert "最终成交汇总未落库" in task["stage"]
-    assert task["finalEquity"] == "51000"
+    assert task["status"] == "running"
+    assert "10/10" in task["stage"]
+    assert task["finalEquity"] == "0"
     assert task["tradeCount"] == "0"
+    stored_run = db.get_sim_run(run_id)
+    assert stored_run["status"] == "running"
 
 
-def test_his_replay_snapshot_marks_incomplete_stale_worker_as_failed(tmp_path):
+def test_his_replay_snapshot_keeps_stale_incomplete_worker_read_only(tmp_path):
     context = _make_context(tmp_path)
     db = context.replay_db()
     run_id = db.create_sim_run(
@@ -2831,10 +2870,10 @@ def test_his_replay_snapshot_marks_incomplete_stale_worker_as_failed(tmp_path):
 
     task = payload["tasks"][0]
     assert task["runId"] == str(run_id)
-    assert task["status"] == "failed"
-    assert "worker 已退出" in task["stage"]
+    assert task["status"] == "running"
+    assert "13/30" in task["stage"]
     stored_run = db.get_sim_run(run_id)
-    assert stored_run["worker_pid"] is None
+    assert stored_run["worker_pid"] == 99999999
 
 
 def test_his_replay_start_returns_400_when_active_replay_exists(tmp_path):

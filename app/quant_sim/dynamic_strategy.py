@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.news_flow_db import news_flow_db
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.sector_strategy_db import DEFAULT_DB_PATH as DEFAULT_SECTOR_DB_PATH
@@ -73,13 +74,21 @@ class DynamicStrategyController:
         *,
         smart_monitor_db_file: str | Path = DEFAULT_SMART_MONITOR_DB_FILE,
         sector_db_file: str | Path = DEFAULT_SECTOR_DB_PATH,
+        db_runtime: DatabaseRuntime | None = None,
     ):
-        self.db = QuantSimDB(db_file=db_file)
+        self.db_runtime = db_runtime
+        self.db = QuantSimDB(db_file=db_file, db_runtime=db_runtime)
         self.smart_monitor_db_file = str(smart_monitor_db_file)
         self.sector_db_file = str(sector_db_file)
         self.logger = logging.getLogger(__name__)
         self._smart_monitor_db: SmartMonitorDB | None = None
         self._sector_db: SectorStrategyDatabase | None = None
+        if db_runtime is not None:
+            news_flow_db.db_runtime = db_runtime
+            try:
+                news_flow_db.init_database()
+            except Exception:
+                self.logger.debug("dynamic strategy skipped eager news-flow init for current runtime", exc_info=True)
 
     @staticmethod
     def normalize_strategy(value: Any) -> str:
@@ -212,12 +221,12 @@ class DynamicStrategyController:
 
     def _smart_db(self) -> SmartMonitorDB:
         if self._smart_monitor_db is None:
-            self._smart_monitor_db = SmartMonitorDB(self.smart_monitor_db_file)
+            self._smart_monitor_db = SmartMonitorDB(self.smart_monitor_db_file, db_runtime=self.db_runtime)
         return self._smart_monitor_db
 
     def _sector_db_instance(self) -> SectorStrategyDatabase:
         if self._sector_db is None:
-            self._sector_db = SectorStrategyDatabase(self.sector_db_file)
+            self._sector_db = SectorStrategyDatabase(self.sector_db_file, db_runtime=self.db_runtime)
         return self._sector_db
 
     def _build_dynamic_signal(

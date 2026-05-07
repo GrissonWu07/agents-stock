@@ -1,7 +1,9 @@
 import json
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
+from app.db.bootstrap import bootstrap_database_runtime
 from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_sim.db import QuantSimDB, QuantSimReplayDB
 
@@ -83,6 +85,45 @@ def test_quant_replay_db_only_creates_replay_tables(tmp_path):
         "sim_run_signals",
         "sim_run_signal_details",
     }
+
+
+def test_quant_replay_db_resolves_runtime_replay_store_path(tmp_path):
+    runtime = bootstrap_database_runtime({}, data_dir=tmp_path)
+
+    db = QuantSimReplayDB(db_runtime=runtime)
+
+    assert Path(db.db_file) == runtime.replay_path
+
+
+def test_quant_replay_db_write_batch_defers_inner_commits(tmp_path):
+    db_file = tmp_path / "quant_sim_replay.db"
+    db = QuantSimReplayDB(db_file, pin_connection=True)
+
+    with db.write_batch():
+        run_id = db.create_sim_run(
+            mode="historical_range",
+            timeframe="30m",
+            market="CN",
+            start_datetime="2026-04-01 09:30:00",
+            end_datetime="2026-04-01 15:00:00",
+            initial_cash=50000,
+            status="running",
+        )
+        reader = sqlite3.connect(db_file)
+        try:
+            visible_count = reader.execute("SELECT COUNT(*) FROM sim_runs WHERE id = ?", (run_id,)).fetchone()[0]
+        finally:
+            reader.close()
+
+        assert visible_count == 0
+
+    reader = sqlite3.connect(db_file)
+    try:
+        committed_count = reader.execute("SELECT COUNT(*) FROM sim_runs WHERE id = ?", (run_id,)).fetchone()[0]
+    finally:
+        reader.close()
+
+    assert committed_count == 1
 
 
 def test_quant_db_reuses_initialized_schema_when_database_is_locked(tmp_path):

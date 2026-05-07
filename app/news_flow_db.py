@@ -12,25 +12,42 @@ from typing import Dict, List, Optional
 from collections import Counter
 from pathlib import Path
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.runtime_paths import default_db_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-DEFAULT_DB_PATH = str(default_db_path("news_flow.db"))
+DEFAULT_DB_PATH = str(default_db_path("xuanwu_stock.db"))
 
 
 class NewsFlowDatabase:
     """新闻流量数据库管理类"""
     
-    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
-        self.db_path = str(db_path)
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
+        self.db_path = resolve_legacy_sqlite_db_path(
+            db_path=db_path,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_DB_PATH,
+        )
+        self.db_runtime = db_runtime
         self.init_database()
     
     def get_connection(self):
         """获取数据库连接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode="readwrite",
+            row_factory=True,
+        )
 
     @staticmethod
     def _parse_as_of(as_of) -> Optional[datetime]:

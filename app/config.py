@@ -2,6 +2,7 @@ import os
 import sqlite3
 from pathlib import Path
 from dotenv import load_dotenv
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
 from app.runtime_paths import default_db_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,12 +13,11 @@ load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=True)
 
 def _load_settings_from_db() -> None:
     """从数据库覆盖运行环境配置（数据库优先于 .env）。"""
-    db_path = default_db_path("settings.db")
+    db_path = default_db_path("xuanwu_stock.db")
     if not db_path.exists():
         return
     try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
+        conn = legacy_dbapi_connection(db_path=str(db_path), access_mode="readonly", row_factory=True)
         rows = conn.execute("SELECT key, value FROM system_settings").fetchall()
         conn.close()
         for row in rows:

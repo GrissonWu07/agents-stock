@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from app.console_utils import safe_print as print
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.registry import DatabaseRuntime
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 
 
@@ -17,17 +19,21 @@ DB_PATH = str(DEFAULT_DB_FILE)
 class PortfolioDB:
     """Registered holding profile operations on ``stock_universe``."""
 
-    def __init__(self, db_path: str | Path = DB_PATH):
+    def __init__(self, db_path: str | Path = DB_PATH, *, db_runtime: DatabaseRuntime | None = None):
         self.db_path = str(db_path)
+        self.db_runtime = db_runtime
         self._init_database()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode="readwrite",
+            row_factory=True,
+        )
 
     def _init_database(self) -> None:
-        QuantSimDB(self.db_path)
+        QuantSimDB(self.db_path, db_runtime=self.db_runtime)
         conn = self._get_connection()
         cursor = conn.cursor()
         try:

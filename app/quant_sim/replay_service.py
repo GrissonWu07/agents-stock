@@ -11,6 +11,7 @@ from typing import Optional
 
 import pandas as pd
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.data_source_manager import data_source_manager
 from app.quant_kernel import ReplayTimepointGenerator
 from app.quant_sim.candidate_pool_service import CandidatePoolService
@@ -254,20 +255,22 @@ class QuantSimReplayService:
 
     def __init__(
         self,
-        db_file: str | Path = DEFAULT_DB_FILE,
+        db_file: str | Path | None = None,
         *,
+        db_runtime: DatabaseRuntime | None = None,
         replay_db_file: str | Path | None = None,
         snapshot_provider: Optional[MainProjectHistoricalSnapshotProvider] = None,
         adapter: Optional[StockPolicyAdapter] = None,
         timepoint_generator: Optional[ReplayTimepointGenerator] = None,
         corporate_action_provider: Optional[AkshareCorporateActionProvider] = None,
     ):
-        self.db_file = str(db_file)
+        self.db_runtime = db_runtime
+        self.shared_db = QuantSimDB(db_file, db_runtime=db_runtime)
+        self.db_file = self.shared_db.db_file
         if replay_db_file is None:
-            replay_db_file = DEFAULT_REPLAY_DB_FILE if str(db_file) == str(DEFAULT_DB_FILE) else Path(db_file).with_name("quant_sim_replay.db")
-        self.replay_db_file = str(replay_db_file)
-        self.shared_db = QuantSimDB(db_file)
-        self.db = QuantSimReplayDB(replay_db_file)
+            replay_db_file = None if db_runtime is not None else (DEFAULT_REPLAY_DB_FILE if self.db_file == str(DEFAULT_DB_FILE) else Path(self.db_file).with_name("xuanwu_stock_replay.db"))
+        self.db = QuantSimReplayDB(replay_db_file, db_runtime=db_runtime, pin_connection=True)
+        self.replay_db_file = self.db.db_file
         self.snapshot_provider = snapshot_provider or MainProjectHistoricalSnapshotProvider()
         self.adapter = adapter or StockPolicyAdapter()
         self.timepoint_generator = timepoint_generator or ReplayTimepointGenerator()
@@ -398,7 +401,10 @@ class QuantSimReplayService:
             status="queued",
             status_message="等待后台任务启动",
         )
-        runner = get_quant_sim_replay_runner(db_file=self.replay_db_file)
+        if self.db_runtime is None:
+            runner = get_quant_sim_replay_runner(db_file=self.replay_db_file)
+        else:
+            runner = get_quant_sim_replay_runner(db_file=self.replay_db_file, db_runtime=self.db_runtime)
         started = runner.start_run(
             run_id,
             execute_prepared_replay_worker,
@@ -769,61 +775,62 @@ class QuantSimReplayService:
                     portfolio=temp_portfolio,
                     signal_service=temp_signal_service,
                 )
-                if checkpoint_summary.get("cancelled"):
-                    cancelled = True
+                with self.db.write_batch():
+                    if checkpoint_summary.get("cancelled"):
+                        cancelled = True
+                        self.db.append_sim_run_event(
+                            run_id,
+                            f"已在第 {checkpoint_index}/{len(checkpoints)} 个检查点内响应取消请求。",
+                            level="warning",
+                        )
+                        break
+                    checkpoint_signals = checkpoint_summary.get("signals") or []
+                    replay_signals.extend(checkpoint_signals)
+                    if checkpoint_signals:
+                        self.db.upsert_sim_run_signals(run_id, checkpoint_signals)
+                    if int(checkpoint_summary.get("auto_executed") or 0) > 0:
+                        incremental_trades = temp_db.get_trade_history(limit=10000)
+                        incremental_snapshots = self._sort_snapshots_chronologically(
+                            [
+                                snapshot
+                                for snapshot in temp_db.get_account_snapshots(limit=10000)
+                                if str(snapshot.get("run_reason") or "").startswith("historical_range@")
+                            ]
+                        )
+                        self.db.replace_sim_run_runtime_results(
+                            run_id,
+                            trades=incremental_trades,
+                            snapshots=incremental_snapshots,
+                            positions=temp_portfolio.list_positions(),
+                        )
+                    self.db.add_sim_run_checkpoint(
+                        run_id,
+                        checkpoint_at=checkpoint_text,
+                        candidates_scanned=int(checkpoint_summary["candidates_scanned"]),
+                        positions_checked=int(checkpoint_summary["positions_checked"]),
+                        signals_created=int(checkpoint_summary["signals_created"]),
+                        auto_executed=int(checkpoint_summary["auto_executed"]),
+                        available_cash=float(checkpoint_summary["available_cash"]),
+                        market_value=float(checkpoint_summary["market_value"]),
+                        total_equity=float(checkpoint_summary["total_equity"]),
+                        metadata={
+                            "positions": checkpoint_summary.get("positions") or [],
+                            "realized_pnl": checkpoint_summary.get("realized_pnl") or 0,
+                            "unrealized_pnl": checkpoint_summary.get("unrealized_pnl") or 0,
+                            "slot_summary": checkpoint_summary.get("slot_summary") or {},
+                        },
+                    )
+                    self.db.update_sim_run_progress(
+                        run_id,
+                        progress_current=checkpoint_index,
+                        progress_total=len(checkpoints),
+                        latest_checkpoint_at=checkpoint_text,
+                        status_message=f"已完成第 {checkpoint_index}/{len(checkpoints)} 个检查点",
+                    )
                     self.db.append_sim_run_event(
                         run_id,
-                        f"已在第 {checkpoint_index}/{len(checkpoints)} 个检查点内响应取消请求。",
-                        level="warning",
+                        f"已完成第 {checkpoint_index}/{len(checkpoints)} 个检查点，当前总权益 {float(checkpoint_summary['total_equity']):.2f}。",
                     )
-                    break
-                checkpoint_signals = checkpoint_summary.get("signals") or []
-                replay_signals.extend(checkpoint_signals)
-                if checkpoint_signals:
-                    self.db.upsert_sim_run_signals(run_id, checkpoint_signals)
-                if int(checkpoint_summary.get("auto_executed") or 0) > 0:
-                    incremental_trades = temp_db.get_trade_history(limit=10000)
-                    incremental_snapshots = self._sort_snapshots_chronologically(
-                        [
-                            snapshot
-                            for snapshot in temp_db.get_account_snapshots(limit=10000)
-                            if str(snapshot.get("run_reason") or "").startswith("historical_range@")
-                        ]
-                    )
-                    self.db.replace_sim_run_runtime_results(
-                        run_id,
-                        trades=incremental_trades,
-                        snapshots=incremental_snapshots,
-                        positions=temp_portfolio.list_positions(),
-                    )
-                self.db.add_sim_run_checkpoint(
-                    run_id,
-                    checkpoint_at=checkpoint_text,
-                    candidates_scanned=int(checkpoint_summary["candidates_scanned"]),
-                    positions_checked=int(checkpoint_summary["positions_checked"]),
-                    signals_created=int(checkpoint_summary["signals_created"]),
-                    auto_executed=int(checkpoint_summary["auto_executed"]),
-                    available_cash=float(checkpoint_summary["available_cash"]),
-                    market_value=float(checkpoint_summary["market_value"]),
-                    total_equity=float(checkpoint_summary["total_equity"]),
-                    metadata={
-                        "positions": checkpoint_summary.get("positions") or [],
-                        "realized_pnl": checkpoint_summary.get("realized_pnl") or 0,
-                        "unrealized_pnl": checkpoint_summary.get("unrealized_pnl") or 0,
-                        "slot_summary": checkpoint_summary.get("slot_summary") or {},
-                    },
-                )
-                self.db.update_sim_run_progress(
-                    run_id,
-                    progress_current=checkpoint_index,
-                    progress_total=len(checkpoints),
-                    latest_checkpoint_at=checkpoint_text,
-                    status_message=f"已完成第 {checkpoint_index}/{len(checkpoints)} 个检查点",
-                )
-                self.db.append_sim_run_event(
-                    run_id,
-                    f"已完成第 {checkpoint_index}/{len(checkpoints)} 个检查点，当前总权益 {float(checkpoint_summary['total_equity']):.2f}。",
-                )
 
             trades = temp_db.get_trade_history(limit=10000)
             snapshots = self._sort_snapshots_chronologically(
@@ -834,25 +841,31 @@ class QuantSimReplayService:
                 ]
             )
             positions = temp_portfolio.list_positions()
-            self.db.replace_sim_run_results(run_id, trades=trades, snapshots=snapshots, positions=positions, signals=replay_signals)
-
             metrics = self._calculate_run_metrics(account_summary["initial_cash"], trades, snapshots)
             final_slot_summary = self._collect_slot_summary(temp_db)
 
             if cancelled:
                 completed_checkpoints = len(self.db.get_sim_run_checkpoints(run_id))
-                self.db.finalize_sim_run(
-                    run_id,
-                    status="cancelled",
-                    final_equity=float(metrics["final_equity"]),
-                    total_return_pct=float(metrics["total_return_pct"]),
-                    max_drawdown_pct=float(metrics["max_drawdown_pct"]),
-                    win_rate=float(metrics["win_rate"]),
-                    trade_count=len(trades),
-                    status_message="回放任务已取消",
-                    metadata={"checkpoint_count": completed_checkpoints, "final_slot_summary": final_slot_summary},
-                )
-                self.db.append_sim_run_event(run_id, "回放任务已取消。", level="warning")
+                with self.db.write_batch():
+                    self.db.replace_sim_run_results(
+                        run_id,
+                        trades=trades,
+                        snapshots=snapshots,
+                        positions=positions,
+                        signals=replay_signals,
+                    )
+                    self.db.finalize_sim_run(
+                        run_id,
+                        status="cancelled",
+                        final_equity=float(metrics["final_equity"]),
+                        total_return_pct=float(metrics["total_return_pct"]),
+                        max_drawdown_pct=float(metrics["max_drawdown_pct"]),
+                        win_rate=float(metrics["win_rate"]),
+                        trade_count=len(trades),
+                        status_message="回放任务已取消",
+                        metadata={"checkpoint_count": completed_checkpoints, "final_slot_summary": final_slot_summary},
+                    )
+                    self.db.append_sim_run_event(run_id, "回放任务已取消。", level="warning")
                 return {
                     "run_id": run_id,
                     "status": "cancelled",
@@ -865,18 +878,26 @@ class QuantSimReplayService:
                     "handoff_to_live": False,
                 }
 
-            self.db.finalize_sim_run(
-                run_id,
-                status="completed",
-                final_equity=float(metrics["final_equity"]),
-                total_return_pct=float(metrics["total_return_pct"]),
-                max_drawdown_pct=float(metrics["max_drawdown_pct"]),
-                win_rate=float(metrics["win_rate"]),
-                trade_count=len(trades),
-                status_message="回放任务已完成",
-                metadata={"checkpoint_count": len(checkpoints), "final_slot_summary": final_slot_summary},
-            )
-            self.db.append_sim_run_event(run_id, f"回放任务已完成，共生成 {len(trades)} 笔交易。", level="success")
+            with self.db.write_batch():
+                self.db.replace_sim_run_results(
+                    run_id,
+                    trades=trades,
+                    snapshots=snapshots,
+                    positions=positions,
+                    signals=replay_signals,
+                )
+                self.db.finalize_sim_run(
+                    run_id,
+                    status="completed",
+                    final_equity=float(metrics["final_equity"]),
+                    total_return_pct=float(metrics["total_return_pct"]),
+                    max_drawdown_pct=float(metrics["max_drawdown_pct"]),
+                    win_rate=float(metrics["win_rate"]),
+                    trade_count=len(trades),
+                    status_message="回放任务已完成",
+                    metadata={"checkpoint_count": len(checkpoints), "final_slot_summary": final_slot_summary},
+                )
+                self.db.append_sim_run_event(run_id, f"回放任务已完成，共生成 {len(trades)} 笔交易。", level="success")
 
             return {
                 "run_id": run_id,
@@ -906,13 +927,6 @@ class QuantSimReplayService:
                 )
                 partial_positions = temp_portfolio.list_positions()
                 partial_slot_summary = self._collect_slot_summary(temp_db)
-                self.db.replace_sim_run_results(
-                    run_id,
-                    trades=partial_trades,
-                    snapshots=partial_snapshots,
-                    positions=partial_positions,
-                    signals=partial_signals,
-                )
 
             metrics = self._calculate_run_metrics(account_summary["initial_cash"], partial_trades, partial_snapshots)
             failure_context = ""
@@ -922,23 +936,32 @@ class QuantSimReplayService:
                     failure_context = f"{failure_context}（{last_checkpoint_text}）"
                 failure_context = f"{failure_context} 失败："
             status_message = f"{failure_context}{exc}" if failure_context else f"回放任务失败：{exc}"
-            self.db.finalize_sim_run(
-                run_id,
-                status="failed",
-                final_equity=float(metrics["final_equity"]),
-                total_return_pct=float(metrics["total_return_pct"]),
-                max_drawdown_pct=float(metrics["max_drawdown_pct"]),
-                win_rate=float(metrics["win_rate"]),
-                trade_count=len(partial_trades),
-                status_message=status_message,
-                metadata={
-                    "error": str(exc),
-                    "failed_checkpoint_index": locals().get("last_checkpoint_index", 0),
-                    "failed_checkpoint_at": locals().get("last_checkpoint_text", ""),
-                    "final_slot_summary": partial_slot_summary,
-                },
-            )
-            self.db.append_sim_run_event(run_id, status_message, level="error")
+            with self.db.write_batch():
+                if partial_trades or partial_snapshots or partial_positions or partial_signals:
+                    self.db.replace_sim_run_results(
+                        run_id,
+                        trades=partial_trades,
+                        snapshots=partial_snapshots,
+                        positions=partial_positions,
+                        signals=partial_signals,
+                    )
+                self.db.finalize_sim_run(
+                    run_id,
+                    status="failed",
+                    final_equity=float(metrics["final_equity"]),
+                    total_return_pct=float(metrics["total_return_pct"]),
+                    max_drawdown_pct=float(metrics["max_drawdown_pct"]),
+                    win_rate=float(metrics["win_rate"]),
+                    trade_count=len(partial_trades),
+                    status_message=status_message,
+                    metadata={
+                        "error": str(exc),
+                        "failed_checkpoint_index": locals().get("last_checkpoint_index", 0),
+                        "failed_checkpoint_at": locals().get("last_checkpoint_text", ""),
+                        "final_slot_summary": partial_slot_summary,
+                    },
+                )
+                self.db.append_sim_run_event(run_id, status_message, level="error")
             raise
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)

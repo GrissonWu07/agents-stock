@@ -15,6 +15,32 @@ from app.gateway.signal_indicators import (
 from app.gateway.signal_market import _build_signal_ai_monitor_payload, _enrich_signal_strategy_profile_with_replay_snapshot, _fetch_signal_market_snapshot
 from app.gateway.signal_parameters import _build_parameter_details
 
+
+def _with_live_position_sizing_preview(
+    context: UIApiContext,
+    signal: dict[str, Any],
+    *,
+    source: str,
+    strategy_profile: dict[str, Any],
+) -> dict[str, Any]:
+    if source != "live":
+        return strategy_profile
+    if str(signal.get("action") or "").upper() != "BUY":
+        return strategy_profile
+    existing = strategy_profile.get("position_sizing")
+    if isinstance(existing, dict) and existing:
+        return strategy_profile
+    try:
+        preview_signal = dict(signal)
+        preview_signal["strategy_profile"] = strategy_profile
+        sizing_preview = context.portfolio().preview_signal_sizing(preview_signal, settle_slots=False)
+    except Exception:
+        return strategy_profile
+    if not isinstance(sizing_preview, dict) or not sizing_preview:
+        return strategy_profile
+    return {**strategy_profile, "position_sizing": sizing_preview}
+
+
 def _build_signal_detail_payload(
     context: UIApiContext,
     signal: dict[str, Any],
@@ -29,6 +55,12 @@ def _build_signal_detail_payload(
         signal=signal,
         source=source,
         replay_run=replay_run,
+        strategy_profile=strategy_profile,
+    )
+    strategy_profile = _with_live_position_sizing_preview(
+        context=context,
+        signal=signal,
+        source=source,
         strategy_profile=strategy_profile,
     )
     selected_strategy_profile = _safe_json_load(strategy_profile.get("selected_strategy_profile"))

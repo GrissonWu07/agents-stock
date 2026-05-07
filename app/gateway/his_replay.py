@@ -550,7 +550,6 @@ def _reconcile_stale_his_replay_runs(db: QuantSimDB) -> None:
 
 def _snapshot_his_replay_progress(context: UIApiContext, table_query: dict[str, Any] | None = None) -> dict[str, Any]:
     db = context.replay_db()
-    _reconcile_stale_his_replay_runs(db)
     query = table_query or {}
     runs = db.get_sim_runs(limit=20)
     requested_run_id = _int(query.get("run_id"))
@@ -655,7 +654,6 @@ def _snapshot_his_replay_capital_pool(context: UIApiContext, table_query: dict[s
 
 def _snapshot_his_replay(context: UIApiContext, table_query: dict[str, Any] | None = None) -> dict[str, Any]:
     db = context.replay_db()
-    _reconcile_stale_his_replay_runs(db)
     scheduler_status = context.scheduler().get_status()
     quant_db = context.quant_db()
     strategy_profiles = [

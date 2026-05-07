@@ -8,7 +8,7 @@
 
 当前实现里：
 
-- 股票主对象：`quant_sim.db.stock_universe`
+- 股票主对象：`xuanwu_stock.db.stock_universe`
 - 登记持仓标签：`registered_position_enabled`
 - 个股详情接口：`/api/v1/portfolio_v2/positions/{symbol}`
 - 页面快照接口：`/api/v1/portfolio_v2`
@@ -29,7 +29,7 @@
 
 - 持仓诊断看登记持仓字段。
 - 实时量化看 live-sim 自己的 `sim_*` 状态。
-- 历史回放看 `quant_sim_replay.db` 的 `sim_run_*`。
+- 历史回放看 `xuanwu_stock_replay.db` 的 `sim_run_*`。
 
 所以：
 
@@ -45,7 +45,7 @@
 
 当前如果需要备份与持仓诊断相关的数据，至少要关注：
 
-- `data/quant_sim.db`
+- `data/xuanwu_stock.db`
 - `data/stock_analysis.db`
 
 ## 5. 进一步说明

@@ -23,6 +23,8 @@ KNOWN_DB_FILENAMES = (
     "stock_analysis.db",
     "stock_monitor.db",
     "watchlist_perf.db",
+    "xuanwu_stock.db",
+    "xuanwu_stock_replay.db",
 )
 
 KNOWN_LOG_FILENAMES = (

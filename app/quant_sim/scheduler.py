@@ -9,6 +9,7 @@ from pathlib import Path
 
 import schedule
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.quant_sim.dynamic_strategy import (
     DEFAULT_AI_DYNAMIC_LOOKBACK,
@@ -18,9 +19,6 @@ from app.quant_sim.dynamic_strategy import (
 from app.quant_sim.engine import QuantSimEngine
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.time_utils import format_utc_iso_z, market_timezone
-from app.runtime_paths import default_db_path
-
-
 TRADING_HOURS = {
     "CN": [("09:30", "11:30"), ("13:00", "15:00")],
     "HK": [("09:30", "12:00"), ("13:00", "16:00")],
@@ -28,7 +26,6 @@ TRADING_HOURS = {
 }
 TRADING_DAYS = {1, 2, 3, 4, 5}
 _SCHEDULER_INSTANCES: dict[str, "QuantSimScheduler"] = {}
-DEFAULT_STOCK_ANALYSIS_DB_FILE = str(default_db_path("stock_analysis.db"))
 logger = logging.getLogger(__name__)
 
 
@@ -39,16 +36,19 @@ class QuantSimScheduler:
         self,
         db_file: str | Path = DEFAULT_DB_FILE,
         poll_seconds: float = 30.0,
-        stock_analysis_db_file: str | Path = DEFAULT_STOCK_ANALYSIS_DB_FILE,
+        stock_analysis_db_file: str | Path | None = None,
+        db_runtime: DatabaseRuntime | None = None,
     ):
         self.db_file = str(db_file)
-        self.stock_analysis_db_file = str(stock_analysis_db_file)
-        self.db = QuantSimDB(db_file)
+        self.stock_analysis_db_file = str(stock_analysis_db_file or db_file)
+        self.db_runtime = db_runtime
+        self.db = QuantSimDB(db_file, db_runtime=db_runtime)
         self.engine = QuantSimEngine(
             db_file=db_file,
-            stock_analysis_db_file=stock_analysis_db_file,
+            stock_analysis_db_file=self.stock_analysis_db_file,
+            db_runtime=db_runtime,
         )
-        self.portfolio = PortfolioService(db_file=db_file)
+        self.portfolio = PortfolioService(db_file=db_file, db_runtime=db_runtime)
         self.scheduler = schedule.Scheduler()
         self.poll_seconds = poll_seconds
         self.running = False
@@ -333,14 +333,20 @@ class QuantSimScheduler:
 
 def get_quant_sim_scheduler(
     db_file: str | Path = DEFAULT_DB_FILE,
-    stock_analysis_db_file: str | Path = DEFAULT_STOCK_ANALYSIS_DB_FILE,
+    stock_analysis_db_file: str | Path | None = None,
+    db_runtime: DatabaseRuntime | None = None,
 ) -> QuantSimScheduler:
-    key = f"{db_file}::{stock_analysis_db_file}"
+    runtime_key = ""
+    if db_runtime is not None:
+        runtime_key = f"::{db_runtime.config.backend}:{db_runtime.config.primary_url}:{db_runtime.config.replay_url}"
+    effective_stock_analysis_db_file = stock_analysis_db_file or db_file
+    key = f"{db_file}::{effective_stock_analysis_db_file}{runtime_key}"
     scheduler = _SCHEDULER_INSTANCES.get(key)
     if scheduler is None:
         scheduler = QuantSimScheduler(
             db_file=db_file,
-            stock_analysis_db_file=stock_analysis_db_file,
+            stock_analysis_db_file=effective_stock_analysis_db_file,
+            db_runtime=db_runtime,
         )
         _SCHEDULER_INSTANCES[key] = scheduler
     return scheduler

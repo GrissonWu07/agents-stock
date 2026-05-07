@@ -314,7 +314,7 @@ def _load_market_focus_news(context: "UIApiContext", limit: int = 8) -> list[dic
     try:
         from app.sector_strategy_db import SectorStrategyDatabase
 
-        db = SectorStrategyDatabase(default_db_path("sector_strategy.db", data_dir=context.data_dir))
+        db = SectorStrategyDatabase(db_runtime=context.db_runtime)
         payload = db.get_latest_news_data(within_hours=24)
         content = payload.get("data_content") if isinstance(payload, dict) else []
         items: list[dict[str, Any]] = []

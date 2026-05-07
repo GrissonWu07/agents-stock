@@ -244,12 +244,51 @@ def evaluate_portfolio_execution_guard(
     metrics = _metrics(signal, market)
     trend = _trend_confirmation(metrics, market, resolved)
     buy_edge, edge_source = _buy_edge(signal, fusion, thresholds)
+    has_signal_context = bool(market) or bool(fusion) or any(
+        _maybe_float(thresholds.get(key)) is not None
+        for key in ("fusion_buy_threshold", "tech_buy_threshold", "candidate_buy_threshold")
+    )
     edge_strength = _clamp(buy_edge / max(float(resolved["full_edge"]), 0.0001), 0.0, 1.0)
     volume_score, volume_confirmed = _volume_score(metrics.get("volume_ratio"), resolved)
     track_alignment = _track_alignment(signal, fusion)
     is_late_rebound, late_reasons = _late_rebound(metrics, trend, resolved)
     t1_active = _t1_risk(signal, trend, resolved)
     portfolio = _portfolio_state(portfolio_summary or {}, resolved)
+    if not has_signal_context:
+        status = "passed"
+        tier = "none"
+        multiplier = 1.0
+        if portfolio["loss_budget_triggered"] or portfolio["blocked"]:
+            status = "blocked"
+            multiplier = 0.0
+        elif portfolio["drawdown_guard_triggered"] or portfolio["cooldown_active"]:
+            status = "downgraded"
+            multiplier = float(resolved["cooldown_size_multiplier"])
+        return _gate(
+            status,
+            "none",
+            tier,
+            multiplier,
+            resolved,
+            list(portfolio["reasons"]),
+            {
+                "buy_edge": 0.0,
+                "edge_strength": 0.0,
+                "trend_structure_score": 0.0,
+                "confirmation_score": 0.0,
+                "volume_score": 0.0,
+                "track_alignment_score": 0.0,
+                "risk_penalty": 0.0,
+                "risk_penalties": {},
+            },
+            {**trend, "volume_confirmed": False},
+            portfolio,
+            False,
+            [],
+            cold_start={"active": False},
+            t1_active=False,
+            score=0.0,
+        )
     penalties = {
         "late_rebound": float(resolved["late_rebound_penalty"]) if is_late_rebound else 0.0,
         "t1": float(resolved["t1_risk_penalty"]) if t1_active else 0.0,

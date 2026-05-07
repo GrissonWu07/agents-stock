@@ -10,23 +10,37 @@ import pandas as pd
 import logging
 from pathlib import Path
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.runtime_paths import default_db_path
 
 
-DEFAULT_DB_PATH = str(default_db_path("sector_strategy.db"))
+DEFAULT_DB_PATH = str(default_db_path("xuanwu_stock.db"))
 
 
 class SectorStrategyDatabase:
     """智策板块数据库管理类"""
     
-    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
         """
         初始化数据库
         
         Args:
             db_path: 数据库文件路径
         """
-        self.db_path = str(db_path)
+        self.db_path = resolve_legacy_sqlite_db_path(
+            db_path=db_path,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_DB_PATH,
+        )
+        self.db_runtime = db_runtime
         # 初始化日志
         self.logger = logging.getLogger(__name__)
         if not self.logger.handlers:
@@ -35,7 +49,11 @@ class SectorStrategyDatabase:
     
     def get_connection(self):
         """获取数据库连接"""
-        return sqlite3.connect(self.db_path)
+        return legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode="readwrite",
+        )
     
     def init_database(self):
         """初始化数据库表"""

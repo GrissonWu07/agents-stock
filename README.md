@@ -1,5 +1,7 @@
 # 玄武量化系统
 
+玄武AI智能体股票团队分析系统当前以前后端分离的单页 SPA 形态运行：`ui/` 产物由 Nginx 托管，后端 gateway 由 `app/gateway_api.py` 提供页面快照和动作接口。
+
 一套面向 A 股投资研究与策略验证的工作台，把选股、研究、持仓诊断、实时模拟和历史回放放到同一条链路里。
 
 玄武量化系统要解决的不是单点问题，而是整条投资分析链路的割裂问题。很多系统能做选股，很多系统也能看回测，但研究结果、股票池、持仓判断、策略验证和执行反馈往往分散在不同页面、不同表、甚至不同工具里，最后很难回答几个关键问题：这只股票为什么进池、为什么买、为什么没卖、这次亏损到底是行情问题还是策略问题。
@@ -9,6 +11,17 @@
 当前主流程：
 
 `发现股票 / 研究情报 / 手工录入 -> 统一股票池(stock_universe) -> 按标签筛选 -> 持仓诊断 / 实时模拟 / 历史回放`
+
+当前 SPA 路由：
+
+- `/main`
+- `/discover`
+- `/research`
+- `/portfolio`
+- `/live-sim`
+- `/his-replay`
+- `/ai-monitor`
+- `/real-monitor`
 
 ## 核心能力
 
@@ -126,13 +139,19 @@ npm run dev
 
 - `http://127.0.0.1:4173`
 
+生产部署形态：
+
+- 前端单页 SPA 由 `build/Dockerfile.ui` 和 `build/nginx.conf` 承载
+- 后端 gateway 提供 `/api/v1/*` 和 `/api/health`
+- Nginx 负责静态资源、SPA 路由回退和 API 反向代理
+
 ---
 
 ## 当前数据边界
 
 ### 统一股票池
 
-- 主库：`data/quant_sim.db`
+- 主库：`data/xuanwu_stock.db`
 - 主表：`stock_universe`
 
 关键标签：
@@ -143,12 +162,12 @@ npm run dev
 
 ### 实时量化
 
-- 写入 `quant_sim.db` 的 live 状态表
+- 写入 `xuanwu_stock.db` 的 live 状态表
 - 典型表：`strategy_signals / sim_positions / sim_trades / sim_account`
 
 ### 历史回放
 
-- 写入 `data/quant_sim_replay.db`
+- 写入 `data/xuanwu_stock_replay.db`
 - 典型表：`sim_runs / sim_run_signals / sim_run_trades / sim_run_positions`
 
 ### 发现与研究缓存

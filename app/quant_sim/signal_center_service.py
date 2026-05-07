@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.notification_service import notification_service
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 from app.quant_kernel.models import Decision
@@ -23,14 +24,20 @@ from app.smart_monitor_db import SmartMonitorDB, DEFAULT_DB_FILE as SMART_MONITO
 class SignalCenterService:
     """Normalizes strategy decisions into persisted signals."""
 
-    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
+    def __init__(
+        self,
+        db_file: str | Path = DEFAULT_DB_FILE,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
         self.db_file = Path(db_file)
         self.external_side_effects_enabled = self._is_default_db_file(self.db_file)
-        self.db = QuantSimDB(db_file)
+        self.db_runtime = db_runtime
+        self.db = QuantSimDB(db_file, db_runtime=db_runtime)
         self.smart_monitor_db: SmartMonitorDB | None = None
         if self.external_side_effects_enabled:
             try:
-                self.smart_monitor_db = SmartMonitorDB(str(SMART_MONITOR_DB_FILE))
+                self.smart_monitor_db = SmartMonitorDB(str(SMART_MONITOR_DB_FILE), db_runtime=db_runtime)
             except Exception:
                 self.smart_monitor_db = None
 
@@ -322,7 +329,10 @@ class SignalCenterService:
             return normalized
 
         strategy_profile = normalized.get("strategy_profile")
-        if not isinstance(strategy_profile, dict) or not strategy_profile:
+        has_structured_profile = isinstance(strategy_profile, dict) and bool(strategy_profile)
+        if not isinstance(strategy_profile, dict):
+            strategy_profile = {}
+        if action == "SELL" and not has_structured_profile:
             return normalized
 
         scheduler_config = self.db.get_scheduler_config()
@@ -332,9 +342,6 @@ class SignalCenterService:
         sell_side_cost_pct = round((commission_rate + sell_tax_rate) * 100.0, 4)
         min_buy_edge_pct = round(roundtrip_cost_pct + 0.2, 4)
         thresholds = strategy_profile.get("effective_thresholds")
-        cost_model = strategy_profile.get("cost_model")
-        if not isinstance(thresholds, dict) and not isinstance(cost_model, dict):
-            return normalized
         if not isinstance(thresholds, dict):
             thresholds = {}
         thresholds["commission_rate"] = round(commission_rate, 8)

@@ -26,8 +26,8 @@
 - `watched` 表示持续关注。
 - `quant_enabled` 表示纳入实时量化和历史回放默认范围。
 - `registered_position_enabled` 表示纳入持仓诊断。
-- 实时量化状态落在 `quant_sim.db`。
-- 历史回放结果落在 `quant_sim_replay.db`。
+- 实时量化状态落在 `xuanwu_stock.db`。
+- 历史回放结果落在 `xuanwu_stock_replay.db`。
 
 ## 历史文档说明
 

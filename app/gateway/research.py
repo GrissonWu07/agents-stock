@@ -668,8 +668,11 @@ def _query_value(table_query: dict[str, Any] | None, key: str, default: Any = No
 
 
 def _table_cache(context: Any) -> UITableCacheDB:
+    runtime = getattr(context, "db_runtime", None)
     data_dir = getattr(context, "data_dir", None)
-    return UITableCacheDB(Path(data_dir) / "ui_table_cache.db") if data_dir else UITableCacheDB()
+    if runtime is not None:
+        return UITableCacheDB(db_runtime=runtime)
+    return UITableCacheDB(Path(data_dir) / "xuanwu_stock.db") if data_dir else UITableCacheDB()
 
 
 def _db_page_table_rows(

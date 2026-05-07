@@ -400,10 +400,12 @@ def build_workbench_snapshot(
         "summaryBody": t("Add symbols to watchlist first, then start analysis."),
         "indicators": [],
         "decision": t("Review watchlist first, then decide whether to push to quant candidates."),
+        "finalDecisionText": t("Review watchlist first, then decide whether to push to quant candidates."),
         "insights": [
             _insight(t("Current mode"), t("Workbench aggregates watchlist, analysis, and next actions.")),
             _insight(t("Execution note"), t("Once moved into candidate pool, quant simulation reads the same dataset.")),
         ],
+        "analystViews": [],
         "curve": [],
     }
     if task_results:

@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.runtime_paths import default_db_path
 
 
@@ -46,8 +49,19 @@ class StockAnalysisContextRepository:
 
     REPLAY_ALLOWED_QUALITY = {"exact", "asof_precomputed"}
 
-    def __init__(self, db_path: str | Path | None = None):
-        self.db_path = str(db_path or default_db_path("stock_analysis.db"))
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
+        self.db_path = resolve_legacy_sqlite_db_path(
+            db_path=db_path,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=default_db_path("xuanwu_stock.db"),
+        )
+        self.db_runtime = db_runtime
 
     def get_latest_valid(
         self,
@@ -63,8 +77,12 @@ class StockAnalysisContextRepository:
             return None
         as_of_dt = _parse_dt(as_of) or datetime.now()
         fallback_start = as_of_dt - timedelta(hours=max(float(ttl_hours), 0.0))
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode="readonly",
+            row_factory=True,
+        )
         try:
             cursor = conn.cursor()
             cursor.execute(

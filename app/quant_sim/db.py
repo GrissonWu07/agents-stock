@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import sqlite3
 import threading
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
+from app.db.runtime.types import AccessMode
 from app.quant_kernel.config import StrategyScoringConfig
 from app.quant_kernel.replay_engine import ReplayTimepointGenerator
 from app.quant_kernel.portfolio_engine import LotStatus, PositionLot
@@ -25,8 +30,8 @@ from app.quant_sim.time_utils import ensure_utc_datetime, format_utc_iso_z
 from app.runtime_paths import default_db_path
 
 
-DEFAULT_DB_FILE = str(default_db_path("quant_sim.db"))
-DEFAULT_REPLAY_DB_FILE = str(default_db_path("quant_sim_replay.db"))
+DEFAULT_DB_FILE = str(default_db_path("xuanwu_stock.db"))
+DEFAULT_REPLAY_DB_FILE = str(default_db_path("xuanwu_stock_replay.db"))
 TRADING_DAY_CALENDAR = ReplayTimepointGenerator()
 DEFAULT_ANALYSIS_TIMEFRAME = "30m"
 SUPPORTED_ANALYSIS_TIMEFRAMES = {"30m", "1d", "1d+30m"}
@@ -84,6 +89,25 @@ def is_sqlite_locked_error(exc: BaseException) -> bool:
     return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
 
 
+class _ManagedSQLiteConnectionProxy:
+    def __init__(self, connection: sqlite3.Connection, *, suppress_commit: bool) -> None:
+        self._connection = connection
+        self._suppress_commit = suppress_commit
+
+    def commit(self) -> None:
+        if not self._suppress_commit:
+            self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    def close(self) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+
 class QuantSimDB:
     """Persistence layer for candidate pool, strategy signals, and sim positions."""
 
@@ -91,15 +115,47 @@ class QuantSimDB:
     _initialized_db_files: set[str] = set()
     include_replay_tables = False
 
-    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
-        self.db_file = str(db_file)
+    def __init__(
+        self,
+        db_file: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+        access_mode: AccessMode = "readwrite",
+        pin_connection: bool = False,
+    ):
+        self.db_runtime = db_runtime
+        self.access_mode = access_mode
+        self.pin_connection = pin_connection
+        self.db_file = resolve_legacy_sqlite_db_path(
+            db_path=db_file,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_DB_FILE,
+        )
+        self._connection_state = threading.local()
         self._db_cache_key = self._cache_key(self.db_file)
         self._ensure_initialized()
 
     def _connect(self, *, timeout: float = DEFAULT_SQLITE_BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_file, timeout=timeout)
-        conn.execute(f"PRAGMA busy_timeout = {max(0, int(timeout * 1000))}")
-        conn.row_factory = sqlite3.Row
+        managed = self._batch_connection()
+        if managed is None and self.pin_connection:
+            managed = self._pinned_connection(timeout=timeout)
+        if managed is not None:
+            return _ManagedSQLiteConnectionProxy(managed, suppress_commit=self._batch_depth() > 0)  # type: ignore[return-value]
+        conn = self._open_connection(timeout=timeout)
+        return conn
+
+    def _open_connection(self, *, timeout: float) -> sqlite3.Connection:
+        conn = legacy_dbapi_connection(
+            db_path=self.db_file,
+            db_runtime=self.db_runtime,
+            store="replay" if self.include_replay_tables else "primary",
+            access_mode=self.access_mode,
+            row_factory=True,
+            busy_timeout_ms=max(0, int(timeout * 1000)),
+        )
+        if self.access_mode != "readonly":
+            self._configure_journal_mode(conn)
         return conn
 
     def _configure_journal_mode(self, conn: sqlite3.Connection) -> None:
@@ -107,6 +163,58 @@ class QuantSimDB:
             return
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
+
+    def _batch_depth(self) -> int:
+        return int(getattr(self._connection_state, "batch_depth", 0))
+
+    def _batch_connection(self) -> sqlite3.Connection | None:
+        return getattr(self._connection_state, "batch_connection", None)
+
+    def _set_batch_connection(self, connection: sqlite3.Connection | None) -> None:
+        self._connection_state.batch_connection = connection
+
+    def _pinned_connection(self, *, timeout: float) -> sqlite3.Connection:
+        connection = getattr(self._connection_state, "pinned_connection", None)
+        if connection is None:
+            connection = self._open_connection(timeout=timeout)
+            self._connection_state.pinned_connection = connection
+        return connection
+
+    @contextmanager
+    def write_batch(self) -> Iterator[None]:
+        if self.access_mode == "readonly":
+            raise RuntimeError("Readonly database wrapper cannot open a write batch.")
+        depth = self._batch_depth()
+        close_after = False
+        if depth == 0:
+            connection = self._pinned_connection(timeout=DEFAULT_SQLITE_BUSY_TIMEOUT_SECONDS) if self.pin_connection else self._open_connection(timeout=DEFAULT_SQLITE_BUSY_TIMEOUT_SECONDS)
+            self._set_batch_connection(connection)
+            close_after = not self.pin_connection
+        self._connection_state.batch_depth = depth + 1
+        try:
+            yield
+            if depth == 0:
+                batch_connection = self._batch_connection()
+                if batch_connection is not None:
+                    batch_connection.commit()
+        except Exception:
+            batch_connection = self._batch_connection()
+            if batch_connection is not None:
+                batch_connection.rollback()
+            raise
+        finally:
+            self._connection_state.batch_depth = depth
+            if depth == 0:
+                batch_connection = self._batch_connection()
+                self._set_batch_connection(None)
+                if close_after and batch_connection is not None:
+                    batch_connection.close()
+
+    def close(self) -> None:
+        connection = getattr(self._connection_state, "pinned_connection", None)
+        if connection is not None:
+            connection.close()
+            self._connection_state.pinned_connection = None
 
     def _ensure_initialized(self) -> None:
         if self._is_initialized():
@@ -3682,6 +3790,7 @@ class QuantSimDB:
             self._set_available_cash(cursor, self._get_available_cash(cursor) + round(total_cash_dividend, 4))
         conn.commit()
         conn.close()
+        return True
 
     def add_watch(
         self,
@@ -6209,13 +6318,32 @@ class QuantSimReplayDB(QuantSimDB):
         "sim_run_signal_details",
     }
 
-    def __init__(self, db_file: str | Path = DEFAULT_REPLAY_DB_FILE):
-        super().__init__(db_file)
+    def __init__(
+        self,
+        db_file: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+        access_mode: AccessMode = "readwrite",
+        pin_connection: bool = False,
+    ):
+        resolved_db_file = resolve_legacy_sqlite_db_path(
+            db_path=db_file,
+            db_runtime=db_runtime,
+            store="replay",
+            fallback=DEFAULT_REPLAY_DB_FILE,
+        )
+        super().__init__(
+            resolved_db_file,
+            db_runtime=None,
+            access_mode=access_mode,
+            pin_connection=pin_connection,
+        )
 
     def _init_database(self) -> None:
         super()._init_database()
         conn = self._connect(timeout=1.0)
         cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = OFF")
         cursor.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         table_names = [str(row["name"]) for row in cursor.fetchall()]
         for table_name in table_names:

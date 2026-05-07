@@ -5,14 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.quant_sim.db import DEFAULT_DB_FILE, QuantSimDB
 
 
 class CandidatePoolService:
     """Service layer for manual and selector-driven candidate management."""
 
-    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
-        self.db = QuantSimDB(db_file)
+    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE, *, db_runtime: DatabaseRuntime | None = None):
+        self.db = QuantSimDB(db_file, db_runtime=db_runtime)
 
     def add_manual_candidate(
         self,

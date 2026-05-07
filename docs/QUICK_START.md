@@ -91,8 +91,8 @@ npm run dev
 
 当前实时量化读取的是：
 
-- `quant_sim.db.stock_universe` 中 `quant_enabled=1` 的股票
-- `quant_sim.db` 中独立的 live-sim 账户、持仓、成交、信号
+- `xuanwu_stock.db.stock_universe` 中 `quant_enabled=1` 的股票
+- `xuanwu_stock.db` 中独立的 live-sim 账户、持仓、成交、信号
 
 ## 7. 使用实时量化
 
@@ -122,14 +122,14 @@ npm run dev
 
 当前历史回放：
 
-- 结果写入 `quant_sim_replay.db`
+- 结果写入 `xuanwu_stock_replay.db`
 - 不写 `sim_positions`、`sim_trades`、`sim_account`
 - 准备阶段按区间 local-first 补历史 K 线和指标
 - checkpoint 运行阶段只读准备结果，不再远程拉实时数据
 
 ## 9. 持仓诊断
 
-`/portfolio` 读取的不是独立 `portfolio_stocks.db`，而是 `quant_sim.db.stock_universe` 上的登记持仓字段。
+`/portfolio` 读取的不是独立 `portfolio_stocks.db`，而是 `xuanwu_stock.db.stock_universe` 上的登记持仓字段。
 
 你可以：
 

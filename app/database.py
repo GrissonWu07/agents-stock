@@ -4,26 +4,48 @@ from datetime import date, datetime
 import os
 from pathlib import Path
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.runtime_paths import default_db_path
 
 
-DEFAULT_DB_PATH = str(default_db_path("stock_analysis.db"))
+DEFAULT_DB_PATH = str(default_db_path("xuanwu_stock.db"))
 
 class StockAnalysisDatabase:
-    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
         """初始化数据库连接"""
-        self.db_path = str(db_path)
+        self.db_path = resolve_legacy_sqlite_db_path(
+            db_path=db_path,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_DB_PATH,
+        )
+        self.db_runtime = db_runtime
         # 确保数据库所在目录存在
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self.init_database()
-    
+
+    def _connect(self, *, access_mode: str = "readwrite") -> sqlite3.Connection:
+        return legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode=access_mode,  # type: ignore[arg-type]
+            row_factory=True,
+        )
+
     def init_database(self):
         """初始化数据库表结构"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
-        
+
         # 创建分析记录表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS analysis_records (
@@ -49,7 +71,7 @@ class StockAnalysisDatabase:
         self._ensure_column(cursor, "analysis_records", "analysis_context_json", "TEXT")
         self._ensure_column(cursor, "analysis_records", "formula_profile", "TEXT")
         self._ensure_column(cursor, "analysis_records", "indicator_version", "TEXT")
-        
+
         conn.commit()
         conn.close()
 
@@ -58,8 +80,12 @@ class StockAnalysisDatabase:
         cursor.execute(f"PRAGMA table_info({table_name})")
         columns = {row[1] for row in cursor.fetchall()}
         if column_name not in columns:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-    
+            try:
+                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+
     def save_analysis(
         self,
         symbol,
@@ -81,13 +107,13 @@ class StockAnalysisDatabase:
         replace_same_day=False,
     ):
         """保存分析记录到数据库"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
-        
+
         # 准备数据
         analysis_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = datetime.now().isoformat()
-        
+
         # 将复杂对象转换为JSON字符串
         stock_info_json = json.dumps(stock_info, ensure_ascii=False, default=str)
         agents_results_json = json.dumps(agents_results, ensure_ascii=False, default=str)
@@ -100,9 +126,9 @@ class StockAnalysisDatabase:
 
         if replace_same_day:
             self._delete_symbol_day_records(cursor, symbol, created_at)
-        
+
         cursor.execute('''
-            INSERT INTO analysis_records 
+            INSERT INTO analysis_records
             (symbol, stock_name, analysis_date, period, stock_info, agents_results, discussion_result, final_decision, indicators, historical_data, created_at, data_as_of, data_as_of_quality, valid_until, analysis_context_json, formula_profile, indicator_version)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
@@ -124,10 +150,10 @@ class StockAnalysisDatabase:
             formula_profile,
             indicator_version,
         ))
-        
+
         conn.commit()
         conn.close()
-        
+
         return cursor.lastrowid
 
     @staticmethod
@@ -155,7 +181,7 @@ class StockAnalysisDatabase:
         return int(cursor.rowcount or 0)
 
     def delete_records_for_symbol_on_date(self, symbol: str, day_value=None) -> int:
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
         deleted = self._delete_symbol_day_records(cursor, symbol, day_value)
         conn.commit()
@@ -164,7 +190,7 @@ class StockAnalysisDatabase:
 
     def has_analysis_for_symbol_on_date(self, symbol: str, day_value=None) -> bool:
         day_text = self._day_text(day_value)
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -179,7 +205,7 @@ class StockAnalysisDatabase:
         row = cursor.fetchone()
         conn.close()
         return row is not None
-    
+
     def _build_record_filters(self, search: str | None = None) -> tuple[str, list[str]]:
         keyword = str(search or "").strip()
         if not keyword:
@@ -191,7 +217,7 @@ class StockAnalysisDatabase:
         )
 
     def _analysis_summary_rows(self, where_sql: str = "", params: list[str] | None = None, *, limit: int | None = None, offset: int = 0):
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
         sql = f"""
             SELECT id, symbol, stock_name, analysis_date, period, final_decision, created_at
@@ -241,27 +267,27 @@ class StockAnalysisDatabase:
     def count_records(self, search: str | None = None) -> int:
         """统计分析记录数量，支持与分页查询相同的搜索条件。"""
         where_sql, params = self._build_record_filters(search)
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM analysis_records {where_sql}", tuple(params))
         count = cursor.fetchone()[0]
         conn.close()
         return int(count or 0)
-    
+
     def get_record_count(self):
         """获取记录总数"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
-        
+
         cursor.execute('SELECT COUNT(*) FROM analysis_records')
         count = cursor.fetchone()[0]
         conn.close()
-        
+
         return count
-    
+
     def get_record_by_id(self, record_id):
         """根据ID获取详细分析记录"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -282,7 +308,7 @@ class StockAnalysisDatabase:
 
     def get_latest_record_by_symbol(self, symbol: str):
         """根据股票代码获取最近一次分析记录"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -311,7 +337,7 @@ class StockAnalysisDatabase:
             return {}
 
         placeholders = ",".join("?" for _ in normalized_symbols)
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute(
@@ -339,7 +365,7 @@ class StockAnalysisDatabase:
 
     def get_recent_records_by_symbol(self, symbol: str, limit: int = 5) -> list[dict]:
         """根据股票代码获取最近几次分析记录"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -380,27 +406,27 @@ class StockAnalysisDatabase:
             'indicator_version': record['indicator_version'] if 'indicator_version' in record.keys() else None,
             'created_at': record['created_at'],
         }
-    
+
     def delete_record(self, record_id):
         """删除指定记录"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
-        
+
         cursor.execute('DELETE FROM analysis_records WHERE id = ?', (record_id,))
         conn.commit()
         conn.close()
-        
+
         return cursor.rowcount > 0
-    
+
     def get_record_count(self):
         """获取记录总数"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect()
         cursor = conn.cursor()
-        
+
         cursor.execute('SELECT COUNT(*) FROM analysis_records')
         count = cursor.fetchone()[0]
         conn.close()
-        
+
         return count
 
 # 全局数据库实例

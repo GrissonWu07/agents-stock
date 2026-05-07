@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.runtime_paths import default_db_path
+from app.db.runtime.registry import DatabaseRuntime
+from app.quant_sim.db import DEFAULT_DB_FILE
 
 
-DEFAULT_STOCK_UNIVERSE_DB_FILE = default_db_path("quant_sim.db")
+DEFAULT_STOCK_UNIVERSE_DB_FILE = DEFAULT_DB_FILE
 
 
 class WatchlistService:
@@ -16,10 +17,15 @@ class WatchlistService:
     realtime quant, and registered holding membership are tags on that row.
     """
 
-    def __init__(self, db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE):
+    def __init__(
+        self,
+        db_file: str | Path = DEFAULT_STOCK_UNIVERSE_DB_FILE,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
         from app.quant_sim.db import QuantSimDB
 
-        self.db = QuantSimDB(db_file)
+        self.db = QuantSimDB(db_file, db_runtime=db_runtime)
 
     def add_stock(
         self,

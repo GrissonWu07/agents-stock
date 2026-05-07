@@ -6,26 +6,43 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.runtime_paths import default_db_path
 
 
-DEFAULT_DB_FILE = str(default_db_path("ui_table_cache.db"))
+DEFAULT_DB_FILE = str(default_db_path("xuanwu_stock.db"))
 
 
 class UITableCacheDB:
     """SQLite-backed cache for UI tables whose source is a computed snapshot."""
 
-    def __init__(self, db_path: str | Path = DEFAULT_DB_FILE):
-        self.db_path = str(db_path)
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
+        self.db_path = resolve_legacy_sqlite_db_path(
+            db_path=db_path,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_DB_FILE,
+        )
+        self.db_runtime = db_runtime
         db_parent = Path(self.db_path).parent
         if db_parent and not db_parent.exists():
             db_parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return legacy_dbapi_connection(
+            db_path=self.db_path,
+            db_runtime=self.db_runtime,
+            access_mode="readwrite",
+            row_factory=True,
+        )
 
     def _init_schema(self) -> None:
         with self._connect() as conn:

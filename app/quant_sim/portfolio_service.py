@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.quant_sim.capital_slots import (
     build_sizing_explainability,
     calculate_buy_priority,
@@ -24,8 +25,8 @@ class PortfolioService:
 
     A_SHARE_LOT_SIZE = 100
 
-    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE):
-        self.db = QuantSimDB(db_file)
+    def __init__(self, db_file: str | Path = DEFAULT_DB_FILE, *, db_runtime: DatabaseRuntime | None = None):
+        self.db = QuantSimDB(db_file, db_runtime=db_runtime)
 
     def confirm_buy(
         self,
@@ -195,6 +196,21 @@ class PortfolioService:
             if did_execute:
                 executed += 1
         return executed
+
+    def preview_signal_sizing(
+        self,
+        signal: dict,
+        *,
+        settle_slots: bool = False,
+    ) -> dict:
+        action = str(signal.get("action") or "").upper()
+        if action != "BUY":
+            return {}
+        price = self._resolve_signal_price(signal)
+        if price <= 0:
+            return {"skip_reason": "缺少有效最新价", "quantity": 0}
+        _, sizing_evidence = self._estimate_buy_quantity(signal, price, settle_slots=settle_slots)
+        return sizing_evidence or {}
 
     def _estimate_buy_quantity(self, signal: dict, price: float, *, settle_slots: bool = True) -> tuple[int, dict]:
         if price <= 0:

@@ -189,13 +189,13 @@ This keeps replay I/O isolated from the operational app path even when the backe
 
 For SQLite:
 
-1. `primary` -> `data/xuanwu_primary.db`
-2. `replay` -> `data/xuanwu_replay.db`
+1. `primary` -> `data/xuanwu_stock.db`
+2. `replay` -> `data/xuanwu_stock_replay.db`
 
 For MySQL:
 
 1. `primary` -> database/schema `xuanwu`
-2. `replay` -> database/schema `xuanwu_replay`
+2. `replay` -> database/schema `xuanwu_stock_replay`
 
 The runtime may allow explicit URL overrides, but the logical store names remain `primary` and `replay`.
 
@@ -223,8 +223,8 @@ Configuration invariant:
 
 Default URL derivation:
 
-1. `sqlite:///.../xuanwu_primary.db`
-2. `sqlite:///.../xuanwu_replay.db`
+1. `sqlite:///.../xuanwu_stock.db`
+2. `sqlite:///.../xuanwu_stock_replay.db`
 
 ### MySQL configuration
 
@@ -241,7 +241,7 @@ Default URL derivation:
 Default URL derivation:
 
 1. `mysql+pymysql://user:pass@host:port/xuanwu?charset=utf8mb4`
-2. `mysql+pymysql://user:pass@host:port/xuanwu_replay?charset=utf8mb4`
+2. `mysql+pymysql://user:pass@host:port/xuanwu_stock_replay?charset=utf8mb4`
 
 Schema bootstrap rule:
 

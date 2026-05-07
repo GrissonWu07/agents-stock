@@ -9,23 +9,39 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
+from app.db.runtime.legacy_dbapi import legacy_dbapi_connection
+from app.db.runtime.legacy_sqlite import resolve_legacy_sqlite_db_path
+from app.db.runtime.registry import DatabaseRuntime
 from app.console_utils import safe_print as print
 from app.i18n import t
 from app.runtime_paths import default_db_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
-DEFAULT_SETTINGS_DB = default_db_path("settings.db")
+DEFAULT_SETTINGS_DB = default_db_path("xuanwu_stock.db")
 
 
 class ConfigManager:
     """Configuration manager (SQLite persistence)."""
 
-    def __init__(self, env_file: str = str(DEFAULT_ENV_FILE), db_file: str = str(DEFAULT_SETTINGS_DB)):
+    def __init__(
+        self,
+        env_file: str = str(DEFAULT_ENV_FILE),
+        db_file: str | Path | None = None,
+        *,
+        db_runtime: DatabaseRuntime | None = None,
+    ):
         env_path = Path(env_file)
-        db_path = Path(db_file)
+        self.db_runtime = db_runtime
+        resolved_db_file = resolve_legacy_sqlite_db_path(
+            db_path=db_file,
+            db_runtime=db_runtime,
+            store="primary",
+            fallback=DEFAULT_SETTINGS_DB,
+        )
+        db_path = Path(resolved_db_file)
         self.env_file = env_path if env_path.is_absolute() else Path(env_file).resolve()
-        self.db_file = db_path if db_path.is_absolute() else Path(db_file).resolve()
+        self.db_file = db_path if db_path.is_absolute() else Path(resolved_db_file).resolve()
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.default_config = {
@@ -156,8 +172,12 @@ class ConfigManager:
         self._bootstrap_from_env_once()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_file))
-        conn.row_factory = sqlite3.Row
+        conn = legacy_dbapi_connection(
+            db_path=str(self.db_file),
+            db_runtime=getattr(self, "db_runtime", None),
+            access_mode="readwrite",
+            row_factory=True,
+        )
         return conn
 
     def _init_db(self) -> None:
@@ -331,4 +351,3 @@ class ConfigManager:
 
 # Global singleton
 config_manager = ConfigManager()
-

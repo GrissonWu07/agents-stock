@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+from app.db.runtime.registry import DatabaseRuntime
 from app.data.analysis_context import StockAnalysisContextRepository
 from app.data.analysis_context.refresh import refresh_enabled_by_env, stock_analysis_refresh_queue
 from app.quant_kernel.config import StrategyScoringConfig
@@ -21,7 +22,6 @@ from app.quant_sim.dynamic_strategy import (
 from app.quant_sim.portfolio_service import PortfolioService
 from app.quant_sim.signal_center_service import SignalCenterService
 from app.quant_sim.stockpolicy_adapter import StockPolicyAdapter
-from app.runtime_paths import default_db_path
 from app.watchlist_service import WatchlistService
 
 
@@ -36,20 +36,23 @@ class QuantSimEngine:
         stock_analysis_db_file: str | Path | None = None,
         stock_analysis_context_enabled: bool = True,
         stock_analysis_refresh_enabled: bool | None = None,
+        db_runtime: DatabaseRuntime | None = None,
     ):
         self.db_file = db_file
-        self.stock_analysis_db_file = str(stock_analysis_db_file or default_db_path("stock_analysis.db"))
-        self.candidate_pool = CandidatePoolService(db_file=db_file)
-        self.signal_center = SignalCenterService(db_file=db_file)
-        self.portfolio = PortfolioService(db_file=db_file)
+        self.db_runtime = db_runtime
+        self.stock_analysis_db_file = str(stock_analysis_db_file or db_file)
+        self.candidate_pool = CandidatePoolService(db_file=db_file, db_runtime=db_runtime)
+        self.signal_center = SignalCenterService(db_file=db_file, db_runtime=db_runtime)
+        self.portfolio = PortfolioService(db_file=db_file, db_runtime=db_runtime)
         self.adapter = adapter or StockPolicyAdapter()
-        self.watchlist = watchlist_service or WatchlistService(db_file=db_file)
-        self.dynamic_strategy = DynamicStrategyController(db_file=db_file)
+        self.watchlist = watchlist_service or WatchlistService(db_file=db_file, db_runtime=db_runtime)
+        self.dynamic_strategy = DynamicStrategyController(db_file=db_file, db_runtime=db_runtime)
         self.stock_analysis_context_enabled = bool(stock_analysis_context_enabled)
         self.stock_analysis_refresh_enabled = refresh_enabled_by_env() if stock_analysis_refresh_enabled is None else bool(stock_analysis_refresh_enabled)
         self.stock_analysis_refresh_period = os.getenv("STOCK_ANALYSIS_REFRESH_PERIOD", "1y")
         self.stock_analysis_context = StockAnalysisContextRepository(
-            db_path=self.stock_analysis_db_file
+            db_path=self.stock_analysis_db_file,
+            db_runtime=db_runtime,
         )
 
     def analyze_candidate(

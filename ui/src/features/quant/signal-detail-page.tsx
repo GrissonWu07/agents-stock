@@ -177,6 +177,20 @@ type ExplainabilityPayload = {
 
 type StrategyProfileSnapshot = {
   explainability?: ExplainabilityPayload;
+  position_sizing?: {
+    slot_plan?: {
+      slot_count?: number | string;
+      slot_budget?: number | string;
+    };
+    sizing?: {
+      slot_units?: number | string;
+      base_slot_units?: number | string;
+      reentry_size_multiplier?: number | string;
+    };
+    buy_budget?: number | string;
+    quantity?: number | string;
+    skip_reason?: string;
+  };
   portfolio_execution_guard?: {
     intent?: string;
     status?: string;
@@ -184,6 +198,12 @@ type StrategyProfileSnapshot = {
     buy_tier_label?: string;
     buy_strength_score?: number | string;
     size_multiplier?: number | string;
+    cold_start?: {
+      active?: boolean;
+      sample_count?: number | string;
+      profit_sample_threshold?: number | string;
+      recent_realized_pnl?: number | string;
+    };
     is_late_rebound?: boolean;
     late_rebound_reasons?: string[];
     reasons?: string[];
@@ -829,6 +849,27 @@ function _parseNumberish(raw: unknown): number | null {
   return _parseNumeric(String(raw));
 }
 
+function _formatPlainNumber(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return value.toFixed(digits);
+}
+
+function _formatShareQuantity(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value <= 0) {
+    return "--";
+  }
+  return `${Math.round(value)}股`;
+}
+
+function _formatMultiplier(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "--";
+  }
+  return `${value.toFixed(2)}x`;
+}
+
 function _gateStatusLabel(status: boolean | null): string {
   if (status === true) {
     return "通过";
@@ -1298,6 +1339,7 @@ export function SignalDetailPage() {
   const positionMetricValue = String(decision.action || "").toUpperCase() === "HOLD" ? "不变" : decision.positionSizePct;
   const strategyExplainability = detail.strategyProfile?.explainability ?? {};
   const positionAddGate = detail.strategyProfile?.position_add_gate;
+  const positionSizing = detail.strategyProfile?.position_sizing;
   const portfolioExecutionGuard = detail.strategyProfile?.portfolio_execution_guard;
   const technicalBreakdown = strategyExplainability.technical_breakdown ?? {};
   const contextBreakdown = strategyExplainability.context_breakdown ?? {};
@@ -1384,6 +1426,17 @@ export function SignalDetailPage() {
   const fusionConfidenceGateReasons = weightedGateFailReasons.filter((item) => item.includes("fusion_confidence"));
   const portfolioGuardScore = _parseNumberish(portfolioExecutionGuard?.buy_strength_score);
   const portfolioGuardMultiplier = _parseNumberish(portfolioExecutionGuard?.size_multiplier);
+  const coldStartState = portfolioExecutionGuard?.cold_start;
+  const coldStartActive = Boolean(coldStartState?.active);
+  const coldStartSampleCount = _parseNumberish(coldStartState?.sample_count);
+  const coldStartSampleThreshold = _parseNumberish(coldStartState?.profit_sample_threshold);
+  const positionSizingQuantity = _parseNumberish(positionSizing?.quantity);
+  const positionSizingBuyBudget = _parseNumberish(positionSizing?.buy_budget);
+  const positionSizingSlotUnits = _parseNumberish(positionSizing?.sizing?.slot_units);
+  const positionSizingMultiplier =
+    _parseNumberish(positionSizing?.sizing?.reentry_size_multiplier)
+    ?? portfolioGuardMultiplier;
+  const positionSizingSkipReason = String(positionSizing?.skip_reason || "").trim();
   const portfolioGuardReasons = [
     ...(Array.isArray(portfolioExecutionGuard?.reasons) ? portfolioExecutionGuard.reasons : []),
     ...(Array.isArray(portfolioExecutionGuard?.portfolio_guard?.reasons) ? portfolioExecutionGuard.portfolio_guard.reasons : []),
@@ -1562,6 +1615,34 @@ export function SignalDetailPage() {
       ? `双轨融合按 技术轨 ${_formatSigned(techTrackScoreValue)} × ${(Number(fusionBreakdown.tech_weight_norm ?? 0) * 100).toFixed(1)}% 与 环境轨 ${_formatSigned(contextTrackScoreValue)} × ${(Number(fusionBreakdown.context_weight_norm ?? 0) * 100).toFixed(1)}% 计算，得到融合分 ${fusionScoreValue.toFixed(4)}。`
       : "当前快照缺少融合分，无法展开双轨合成说明。";
   const finalDecisionChainLine = `动作链路：Veto ${vetoes.length > 0 ? "命中" : "未命中"} -> 核心规则 ${localizeDecisionCode(coreRuleAction)} -> 加权阈值 ${localizeDecisionCode(weightedThresholdAction)} -> 加权门控 ${localizeDecisionCode(weightedGateAction)} -> 最终 ${localizeDecisionCode(finalActionForChain)}。`;
+  const executionPlanLine =
+    String(decision.action || "").toUpperCase() !== "BUY"
+      ? ""
+      : positionSizingQuantity !== null && positionSizingQuantity > 0
+      ? [
+          `执行：信号仓位 ${decision.positionSizePct}%`,
+          positionSizingMultiplier === null ? "" : `执行倍率 ${_formatMultiplier(positionSizingMultiplier)}`,
+          positionSizingSlotUnits === null ? "" : `slot ${_formatPlainNumber(positionSizingSlotUnits, 2)}`,
+          `预估买入 ${_formatShareQuantity(positionSizingQuantity)}`,
+          positionSizingBuyBudget === null ? "" : `预算 ${_formatPlainNumber(positionSizingBuyBudget, 2)}`,
+        ].filter(Boolean).join(" · ")
+      : positionSizingSkipReason
+      ? [
+          `执行：信号仓位 ${decision.positionSizePct}%`,
+          positionSizingMultiplier === null ? "" : `执行倍率 ${_formatMultiplier(positionSizingMultiplier)}`,
+          `当前无法形成一手：${positionSizingSkipReason}`,
+        ].filter(Boolean).join(" · ")
+      : positionSizingMultiplier !== null
+      ? `执行：信号仓位 ${decision.positionSizePct}% · 执行倍率 ${_formatMultiplier(positionSizingMultiplier)}`
+      : "";
+  const coldStartLine =
+    !coldStartActive
+      ? ""
+      : [
+          `冷启动：盈利样本 ${coldStartSampleCount === null ? "--" : String(Math.round(coldStartSampleCount))}/${coldStartSampleThreshold === null ? "--" : String(Math.round(coldStartSampleThreshold))}`,
+          `当前按冷启动规则限仓`,
+          portfolioGuardMultiplier === null ? "" : `倍率 ${_formatMultiplier(portfolioGuardMultiplier)}`,
+        ].filter(Boolean).join(" · ");
   const keyDecisionLines = [
     `策略：${_localizeDynamicText(decision.appliedProfile)} · ${localizeStrategyMode(decision.strategyMode)} · ${decision.aiProfileSwitched === "是" ? "模板已切换" : "模板未切换"}`,
     `市场：${_localizeDynamicText(decision.marketRegime)} · 风格 ${_localizeDynamicText(decision.riskStyle)} · 基本面 ${_localizeDynamicText(decision.fundamentalQuality)}`,
@@ -1569,6 +1650,8 @@ export function SignalDetailPage() {
     _isPositionAddIntent(decision.executionIntent) && positionAddGate
       ? `加仓：当前 ${_safeValue(String(positionAddGate.current_position_pct ?? ""))}% -> 目标 ${_safeValue(String(positionAddGate.target_position_pct ?? ""))}%，本次差额 ${_safeValue(String(positionAddGate.add_position_delta_pct ?? ""))}%`
       : "",
+    executionPlanLine,
+    coldStartLine,
     `链路：核心 ${localizeDecisionCode(coreRuleAction)} -> 加权 ${localizeDecisionCode(weightedThresholdAction)} -> 门控 ${localizeDecisionCode(weightedGateAction)} -> 最终 ${localizeDecisionCode(finalActionForChain)}`,
   ].filter(Boolean);
   const filteredVoteRows = voteRows.filter((item) => {
@@ -1688,6 +1771,20 @@ export function SignalDetailPage() {
                   <div className="signal-detail-summary-stat">
                     <span className="signal-detail-summary-stat__label">{positionMetricLabel}</span>
                     <strong className="signal-detail-summary-stat__value">{positionMetricValue}</strong>
+                  </div>
+                  <div className="signal-detail-summary-stat">
+                    <span className="signal-detail-summary-stat__label">执行倍率</span>
+                    <strong className="signal-detail-summary-stat__value">{_formatMultiplier(positionSizingMultiplier)}</strong>
+                  </div>
+                  <div className="signal-detail-summary-stat">
+                    <span className="signal-detail-summary-stat__label">预估数量</span>
+                    <strong className="signal-detail-summary-stat__value">
+                      {positionSizingQuantity !== null && positionSizingQuantity > 0
+                        ? _formatShareQuantity(positionSizingQuantity)
+                        : positionSizingSkipReason
+                        ? "不足一手"
+                        : "--"}
+                    </strong>
                   </div>
                 </div>
               </div>
