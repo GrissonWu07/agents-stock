@@ -13,6 +13,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 import app.gateway_api as gateway_api
+import app.gateway.discover as discover_gateway
 from app.gateway_api import UIApiContext, create_app
 from app.selector_result_store import save_latest_result
 
@@ -70,6 +71,46 @@ def _seed_simple_selector_result(base_dir: Path, strategy_key: str, rows: list[d
         },
         base_dir=base_dir,
     )
+
+
+def test_ai_scanner_strategy_uses_project_internal_scanner(tmp_path, monkeypatch):
+    context = _make_context(tmp_path)
+    captured_config: dict[str, Any] = {}
+
+    class FakeAIStockScanner:
+        def __init__(self, config):
+            captured_config["top_k_sectors"] = config.top_k_sectors
+            captured_config["max_stocks"] = config.max_stocks
+            captured_config["lookback_days"] = config.lookback_days
+
+        def scan(self):
+            return pd.DataFrame(
+                [
+                    {
+                        "股票代码": "688111",
+                        "股票简称": "金山办公",
+                        "所属行业": "AI应用",
+                        "最新价": 321.88,
+                        "总市值": 1234.0,
+                        "市盈率": 48.5,
+                        "市净率": 8.2,
+                        "reason": "内部AI扫描候选",
+                        "scanner_score": 0.91,
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(discover_gateway, "AIStockScanner", FakeAIStockScanner, raising=False)
+
+    scanner_df = discover_gateway._run_ai_scanner_strategy(
+        context,
+        {"topKSectors": 3, "lookbackDays": 60},
+        top_n=7,
+    )
+
+    assert captured_config == {"top_k_sectors": 3, "max_stocks": 7, "lookback_days": 60}
+    assert scanner_df.iloc[0]["股票代码"] == "688111"
+    assert "内部AI扫描候选" in scanner_df.iloc[0]["reason"]
 
 
 class FakeQuantScheduler:

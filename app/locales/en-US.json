@@ -222,11 +222,7 @@
   "{count} symbols added to analysis queue, task id: {task_id}": "{count} symbols added to analysis queue, task id: {task_id}"
   ,
   "Configuration validated": "Configuration validated",
-  "Stockpolicy root not found: {path}": "Stockpolicy root not found: {path}",
-  "Stockpolicy scanner import failed: {reason}": "Stockpolicy scanner import failed: {reason}",
-  "Stockpolicy scanner returned invalid result": "Stockpolicy scanner returned invalid result",
-  "Stockpolicy scanner failed: {reason}": "Stockpolicy scanner failed: {reason}",
-  "Stockpolicy scanner returned no selected stocks": "Stockpolicy scanner returned no selected stocks",
+  "AI scanner returned no selected stocks": "AI scanner returned no selected stocks",
   "Scanner score: {score}": "Scanner score: {score}",
   "AI scanner selected candidate": "AI scanner selected candidate"
 }

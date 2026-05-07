@@ -30,6 +30,10 @@ TradEnv/
 /.playwright-cli/
 /ui-dev.out.log
 /ui-dev.err.log
+/backend-dev.out.log
+/backend-dev.err.log
+/ui/vite-dev.out.log
+/ui/vite-dev.err.log
 /node_modules/
 /build/__pycache__/
 ui/node_modules/

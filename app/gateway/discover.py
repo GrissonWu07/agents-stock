@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-import os
 from pathlib import Path
-import sys
 import math
 import time
 from types import SimpleNamespace
@@ -12,6 +10,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 import pandas as pd
 
+from app.ai_stock_scanner import AIStockScanner, AIStockScannerConfig
 from app.async_task_base import AsyncTaskManagerBase
 from app.gateway.common import (
     code_from_payload as _code_from_payload,
@@ -326,74 +325,36 @@ def _discover_rows_from_simple_selector(
     return rows
 
 
-def _resolve_stockpolicy_root(payload: dict[str, Any]) -> Path:
-    configured = _txt(payload.get("stockpolicyRoot") or payload.get("stockpolicy_root") or os.getenv("STOCKPOLICY_ROOT"))
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path(__file__).resolve().parents[2] / "stockpolicy").resolve()
-
-
 def _run_ai_scanner_strategy(context: Any, payload: dict[str, Any], *, top_n: int) -> pd.DataFrame:
-    stockpolicy_root = _resolve_stockpolicy_root(payload)
-    if not stockpolicy_root.exists():
-        raise RuntimeError(t("Stockpolicy root not found: {path}", path=str(stockpolicy_root)))
-
-    stockpolicy_path = str(stockpolicy_root)
-    if stockpolicy_path not in sys.path:
-        sys.path.insert(0, stockpolicy_path)
-
-    try:
-        from src.scanner import ScannerConfig, ScannerOrchestrator  # type: ignore
-    except Exception as exc:
-        raise RuntimeError(t("Stockpolicy scanner import failed: {reason}", reason=exc)) from exc
-
     top_k_sectors = max(_int(payload.get("topKSectors"), 5) or 5, 1)
     max_stocks = max(_int(payload.get("maxStocks"), top_n) or top_n, 1)
     lookback_days = max(_int(payload.get("lookbackDays"), 180) or 180, 1)
-    live_config_path = _txt(payload.get("scannerLiveConfigPath"), "config/stock/live.yaml")
-    data_dir = _txt(payload.get("scannerDataDir"), "data")
+    max_candidates_per_sector = max(_int(payload.get("maxCandidatesPerSector"), 5) or 5, 1)
 
-    config = ScannerConfig(
+    config = AIStockScannerConfig(
         top_k_sectors=top_k_sectors,
-        max_universe_size=max_stocks,
+        max_stocks=max_stocks,
+        max_candidates_per_sector=max_candidates_per_sector,
         lookback_days=lookback_days,
-        live_config_path=live_config_path,
-        data_dir=data_dir,
     )
+    scanner_df = AIStockScanner(config).scan()
 
-    previous_cwd = os.getcwd()
-    try:
-        os.chdir(stockpolicy_path)
-        run_result = ScannerOrchestrator(config=config).run_scan()
-    finally:
-        os.chdir(previous_cwd)
-
-    if not isinstance(run_result, dict):
-        raise RuntimeError(t("Stockpolicy scanner returned invalid result"))
-
-    if not run_result.get("success"):
-        errors = run_result.get("errors") if isinstance(run_result.get("errors"), list) else []
-        reason = "; ".join(_txt(item) for item in errors if _txt(item))
-        raise RuntimeError(
-            t(
-                "Stockpolicy scanner failed: {reason}",
-                reason=reason or t("Strategy execution failed"),
-            )
-        )
-
-    selected_stocks = run_result.get("selected_stocks") if isinstance(run_result.get("selected_stocks"), list) else []
-    if not selected_stocks:
-        raise RuntimeError(t("Stockpolicy scanner returned no selected stocks"))
+    if scanner_df is None or getattr(scanner_df, "empty", False):
+        raise RuntimeError(t("AI scanner returned no selected stocks"))
 
     rows: list[dict[str, Any]] = []
+    try:
+        selected_stocks = scanner_df.to_dict(orient="records")
+    except Exception:
+        selected_stocks = []
     for item in selected_stocks:
         if not isinstance(item, dict):
             continue
-        code = _discover_code(item.get("code") or item.get("symbol"))
+        code = _discover_code(item.get("股票代码") or item.get("code") or item.get("symbol"))
         if not code:
             continue
         reasons = item.get("reasons") if isinstance(item.get("reasons"), list) else []
-        reason_text = "；".join(_txt(reason) for reason in reasons if _txt(reason))
+        reason_text = _txt(item.get("reason")) or "；".join(_txt(reason) for reason in reasons if _txt(reason))
         score_raw = item.get("scanner_score")
         reason_parts: list[str] = []
         if score_raw not in (None, ""):
@@ -406,18 +367,18 @@ def _run_ai_scanner_strategy(context: Any, payload: dict[str, Any], *, top_n: in
         rows.append(
             {
                 "股票代码": code,
-                "股票简称": _txt(item.get("name"), code),
-                "所属行业": _txt(item.get("sector")),
-                "最新价": _first_non_empty(item, ["latest_price", "current_price", "price"]),
-                "总市值": _first_non_empty(item, ["market_cap", "total_market_value", "marketCap"]),
-                "市盈率": _first_non_empty(item, ["pe", "pe_ratio", "pe_ttm"]),
-                "市净率": _first_non_empty(item, ["pb", "pb_ratio"]),
+                "股票简称": _txt(item.get("股票简称") or item.get("name"), code),
+                "所属行业": _txt(item.get("所属行业") or item.get("sector")),
+                "最新价": _first_non_empty(item, ["最新价", "latest_price", "current_price", "price"]),
+                "总市值": _first_non_empty(item, ["总市值", "market_cap", "total_market_value", "marketCap"]),
+                "市盈率": _first_non_empty(item, ["市盈率", "pe", "pe_ratio", "pe_ttm"]),
+                "市净率": _first_non_empty(item, ["市净率", "pb", "pb_ratio"]),
                 "reason": " | ".join(reason_parts),
             }
         )
 
     if not rows:
-        raise RuntimeError(t("Stockpolicy scanner returned no selected stocks"))
+        raise RuntimeError(t("AI scanner returned no selected stocks"))
 
     return pd.DataFrame(rows)
 
