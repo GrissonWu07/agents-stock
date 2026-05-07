@@ -253,10 +253,10 @@ class AIStockScanner:
                     "股票代码": code,
                     "股票简称": _text(_first(row, "股票简称", "名称", "name"), code),
                     "所属行业": _text(_first(row, "所属行业", "所属同花顺行业", "行业", "板块")),
-                    "最新价": _first(row, "最新价", "股价", "price"),
-                    "总市值": _first(row, "总市值", "市值", "market_cap"),
-                    "市盈率": _first(row, "市盈率", "市盈率(动态)", "pe"),
-                    "市净率": _first(row, "市净率", "pb"),
+                    "最新价": _first_matching(row, "最新价", "收盘价", "股价", "price"),
+                    "总市值": _first_matching(row, "总市值", "市值", "market_cap"),
+                    "市盈率": _first_matching(row, "市盈率", "pe"),
+                    "市净率": _first_matching(row, "市净率", "pb"),
                     "sector_score": 0.5,
                     "rank_score": round(score, 4),
                     "price_change_score": 0.5,
@@ -767,6 +767,35 @@ def _first(row: Any, *keys: str) -> Any:
         if value not in (None, ""):
             return value
     return None
+
+
+def _first_matching(row: Any, *keys: str) -> Any:
+    exact = _first(row, *keys)
+    if exact not in (None, ""):
+        return exact
+
+    try:
+        row_keys = list(row.keys())
+    except Exception:
+        return None
+
+    normalized_keys = [_normalize_column_key(key) for key in keys if key]
+    for column in row_keys:
+        normalized_column = _normalize_column_key(column)
+        if not normalized_column:
+            continue
+        if any(key and key in normalized_column for key in normalized_keys):
+            try:
+                value = row.get(column)
+            except Exception:
+                value = None
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _normalize_column_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace(" ", "").replace("（", "(").replace("）", ")")
 
 
 def _text(value: Any, default: str = "") -> str:

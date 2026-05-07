@@ -111,6 +111,38 @@ def test_ai_stock_scanner_falls_back_to_wencai_when_sector_data_is_empty():
     assert "main fund flow" in result.iloc[0]["reason"]
 
 
+def test_ai_stock_scanner_maps_dynamic_wencai_market_columns():
+    def fake_wencai_get(**kwargs):
+        return pd.DataFrame(
+            [
+                {
+                    "股票代码": "000988.SZ",
+                    "股票简称": "华工科技",
+                    "所属同花顺行业": "机械设备-自动化设备-激光设备",
+                    "收盘价:不复权[20260507]": 133.5,
+                    "总市值[20260507]": 134_234_600_000,
+                    "市盈率(pe)[20260507]": 52.562,
+                    "市净率(pb)[20260507]": 11.485,
+                }
+            ]
+        )
+
+    scanner = AIStockScanner(
+        AIStockScannerConfig(top_k_sectors=1, max_stocks=1, enable_llm_themes=False),
+        ak_api=FakeAkEmpty(),
+        wencai_get=fake_wencai_get,
+        history_provider=lambda code: pd.DataFrame(),
+    )
+
+    result = scanner.scan()
+
+    assert result.iloc[0]["股票代码"] == "000988"
+    assert result.iloc[0]["最新价"] == 133.5
+    assert result.iloc[0]["总市值"] == 134_234_600_000
+    assert result.iloc[0]["市盈率"] == 52.562
+    assert result.iloc[0]["市净率"] == 11.485
+
+
 def test_ai_stock_scanner_uses_project_llm_themes_for_alignment_score():
     llm = FakeLlm(
         """
